@@ -1,7 +1,7 @@
 {
   "id": "autostopper",
   "name": "AutoStopper",
-  "version": "1.0",
+  "version": "1.0.1",
   "description": "Automatically stops inactive Minecraft servers to save resources",
   "authors": ["criseda"],
   "dependencies": [],

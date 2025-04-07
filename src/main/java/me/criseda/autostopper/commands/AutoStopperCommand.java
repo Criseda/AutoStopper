@@ -31,7 +31,7 @@ public class AutoStopperCommand implements SimpleCommand {
         String[] args = invocation.arguments();
 
         if (args.length == 0) {
-            source.sendMessage(Component.text("§6AutoStopper v1.0 §7- §eServer Auto-Stop Plugin"));
+            source.sendMessage(Component.text("§6AutoStopper v1.0.1 §7- §eServer Auto-Stop Plugin"));
             source.sendMessage(Component.text("§7Use §e/autostopper help §7for more information"));
             return;
         }
