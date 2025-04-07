@@ -20,7 +20,7 @@ import org.slf4j.Logger;
 import javax.inject.Inject;
 import java.nio.file.Path;
 
-@Plugin(id = "autostopper", name = "AutoStopper", version = "1.0.1", authors = { "criseda" })
+@Plugin(id = "autostopper", name = "AutoStopper", version = "1.1.1", authors = { "criseda" })
 public class AutoStopperPlugin {
     private final ProxyServer server;
     private final Logger logger;

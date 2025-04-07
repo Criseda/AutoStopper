@@ -156,7 +156,7 @@ networks:
    mvn clean package
    ```
 
-3. Find the JAR file in `target/AutoStopper-1.0.1-SNAPSHOT.jar`
+3. Find the JAR file in `target/AutoStopper-1.1.1-SNAPSHOT.jar`
 
 ## License
 

@@ -55,7 +55,7 @@ public class AutoStopperCommandTest {
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("AutoStopper v1.0.1"));
+        assertTrue(messages.get(0).toString().contains("AutoStopper v1.1.1"));
         assertTrue(messages.get(1).toString().contains("help"));
     }
     

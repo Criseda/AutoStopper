@@ -9,7 +9,6 @@ import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
 
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerPreConnectListener {
@@ -36,9 +35,6 @@ public class ServerPreConnectListener {
             AtomicBoolean isStarting = serverManager.getServerStartingStatus(serverName);
             
             if (isStarting.compareAndSet(false, true)) {
-                // Create a deferred result that will be completed when server is ready
-                CompletableFuture<Boolean> serverReady = new CompletableFuture<>();
-                
                 // Cancel the connection attempt for now - we'll reconnect later
                 event.setResult(ServerPreConnectEvent.ServerResult.denied());
                 
