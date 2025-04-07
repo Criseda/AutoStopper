@@ -12,37 +12,26 @@ import me.criseda.autostopper.server.ServerManager;
 
 import net.kyori.adventure.text.Component;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerCommandInterceptor {
-    private final ProxyServer server;
-    private final AutoStopperPlugin plugin;
-    private final ServerManager serverManager;
-    private final ActivityTracker activityTracker;
+    // Make the ServerCommand public static so it can be accessed directly
+    public static class ServerCommand implements SimpleCommand {
+        private final ProxyServer server;
+        private final AutoStopperPlugin plugin;
+        private final ServerManager serverManager;
+        private final ActivityTracker activityTracker;
 
-    public ServerCommandInterceptor(ProxyServer server, AutoStopperPlugin plugin,
-            ServerManager serverManager, ActivityTracker activityTracker) {
-        this.server = server;
-        this.plugin = plugin;
-        this.serverManager = serverManager;
-        this.activityTracker = activityTracker;
+        public ServerCommand(ProxyServer server, AutoStopperPlugin plugin,
+                ServerManager serverManager, ActivityTracker activityTracker) {
+            this.server = server;
+            this.plugin = plugin;
+            this.serverManager = serverManager;
+            this.activityTracker = activityTracker;
+        }
 
-        registerCommand();
-    }
-
-    private void registerCommand() {
-        server.getCommandManager().register(
-                server.getCommandManager().metaBuilder("server")
-                        .aliases("join", "s")
-                        .plugin(plugin)
-                        .build(),
-                new ServerCommand());
-    }
-
-    private class ServerCommand implements SimpleCommand {
         @Override
         public void execute(Invocation invocation) {
             CommandSource source = invocation.source();
@@ -57,8 +46,20 @@ public class ServerCommandInterceptor {
             Player player = (Player) source;
 
             if (args.length != 1) {
-                // Forward to original handler
-                server.getCommandManager().executeAsync(source, "server " + String.join(" ", args));
+                // Show server list with no arguments
+                if (args.length == 0) {
+                    source.sendMessage(Component.text("§eAvailable servers:"));
+                    for (RegisteredServer rs : server.getAllServers()) {
+                        String name = rs.getServerInfo().getName();
+                        boolean running = serverManager.isServerRunning(name);
+                        String status = running ? "§a§lONLINE" : "§c§lOFFLINE";
+                        source.sendMessage(Component.text("§7- §e" + name + " §7(" + status + "§7)"));
+                    }
+                    return;
+                }
+
+                // Forward to original handler for other cases
+                source.sendMessage(Component.text("§cUsage: /server <name>"));
                 return;
             }
 
@@ -66,8 +67,8 @@ public class ServerCommandInterceptor {
             Optional<RegisteredServer> registeredServer = server.getServer(targetServer);
 
             if (!registeredServer.isPresent()) {
-                // Unknown server, let the original handler show the error
-                server.getCommandManager().executeAsync(source, "server " + targetServer);
+                // Unknown server
+                source.sendMessage(Component.text("§cServer §e" + targetServer + " §cdoes not exist."));
                 return;
             }
 
@@ -108,15 +109,38 @@ public class ServerCommandInterceptor {
                     player.sendMessage(Component.text("§eServer is already being started, please wait..."));
                 }
             } else {
-                // Server is running or not monitored, use original command
-                server.getCommandManager().executeAsync(source, "server " + targetServer);
+                // Server is running or not monitored, connect directly
+                player.sendMessage(Component.text("§aConnecting to server §e" + targetServer + "§a..."));
+                player.createConnectionRequest(registeredServer.get()).fireAndForget();
             }
         }
 
         @Override
         public List<String> suggest(Invocation invocation) {
-            // Forward suggestions to original handler
-            return Collections.emptyList();
+            // Make sure arguments aren't null
+            if (invocation.arguments() == null) {
+                return List.of();
+            }
+            
+            // Get server names for autocompletion
+            List<String> serverNames = server.getAllServers().stream()
+                .map(s -> s.getServerInfo().getName())
+                .sorted()
+                .filter(s -> {
+                    // If there's a partial input, filter by it
+                    if (invocation.arguments().length > 0 && !invocation.arguments()[0].isEmpty()) {
+                        return s.toLowerCase().startsWith(invocation.arguments()[0].toLowerCase());
+                    }
+                    return true;
+                })
+                .toList();
+                
+            // Debug log suggestion count
+            if (serverNames.size() > 0) {
+                plugin.getLogger().debug("Suggesting " + serverNames.size() + " server names for tab completion");
+            }
+            
+            return serverNames;
         }
 
         @Override

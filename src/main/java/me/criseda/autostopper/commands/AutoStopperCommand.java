@@ -29,12 +29,6 @@ public class AutoStopperCommand implements SimpleCommand {
     public void execute(Invocation invocation) {
         CommandSource source = invocation.source();
         String[] args = invocation.arguments();
-        
-        // Check if the user has admin permission before executing any command
-        if (!source.hasPermission("autostopper.admin")) {
-            source.sendMessage(Component.text("§cYou don't have permission to use this command."));
-            return;
-        }
 
         if (args.length == 0) {
             source.sendMessage(Component.text("§6AutoStopper v1.0 §7- §eServer Auto-Stop Plugin"));
@@ -92,7 +86,6 @@ public class AutoStopperCommand implements SimpleCommand {
     }
 
     private void reloadConfig(CommandSource source) {
-        // Permission check is now handled at the execute method level
         source.sendMessage(Component.text("§6Reloading AutoStopper configuration..."));
         config.loadConfig();
         source.sendMessage(Component.text("§aConfiguration reloaded successfully!"));
@@ -100,21 +93,26 @@ public class AutoStopperCommand implements SimpleCommand {
 
     @Override
     public List<String> suggest(Invocation invocation) {
-        // Only suggest commands if user has permission
-        if (!invocation.source().hasPermission("autostopper.admin")) {
-            return Collections.emptyList();
-        }
-        
+        // Allow suggestions for everyone to make tab completion work
         String[] args = invocation.arguments();
         if (args.length == 1) {
-            return List.of("help", "status", "reload");
+            String input = args[0].toLowerCase();
+            if ("help".startsWith(input)) {
+                return List.of("help");
+            } else if ("status".startsWith(input)) {
+                return List.of("status");
+            } else if ("reload".startsWith(input)) {
+                return List.of("reload");
+            } else if (input.isEmpty()) {
+                return List.of("help", "status", "reload");
+            }
         }
         return Collections.emptyList();
     }
 
     @Override
     public boolean hasPermission(Invocation invocation) {
-        // Change permission check to require autostopper.admin for all commands
-        return invocation.source().hasPermission("autostopper.admin");
+        // Always return true to show the command in autocompletion
+        return true;
     }
 }

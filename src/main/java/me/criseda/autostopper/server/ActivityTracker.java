@@ -2,6 +2,7 @@ package me.criseda.autostopper.server;
 
 import com.velocitypowered.api.proxy.ProxyServer;
 
+import me.criseda.autostopper.AutoStopperPlugin;
 import me.criseda.autostopper.config.AutoStopperConfig;
 
 import org.slf4j.Logger;
@@ -18,12 +19,14 @@ public class ActivityTracker {
     private final AutoStopperConfig config;
     private final ServerManager serverManager;
     private final Map<String, Instant> lastActivity = new HashMap<>();
+    private final AutoStopperPlugin plugin;
 
-    public ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager) {
+    public ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager, AutoStopperPlugin plugin) {
         this.server = server;
         this.logger = logger;
         this.config = config;
         this.serverManager = serverManager;
+        this.plugin = plugin;
         initializeActivityTracking();
     }
 
@@ -42,7 +45,7 @@ public class ActivityTracker {
     }
 
     public void startInactivityCheck() {
-        server.getScheduler().buildTask(this, () -> {
+        server.getScheduler().buildTask(plugin, () -> {
             logger.debug("Running inactivity check...");
             for (String serverName : config.getServerNames()) {
                 server.getServer(serverName).ifPresent(registeredServer -> {

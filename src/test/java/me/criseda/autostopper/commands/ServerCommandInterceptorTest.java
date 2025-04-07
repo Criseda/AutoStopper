@@ -1,13 +1,12 @@
 package me.criseda.autostopper.commands;
 
-import com.velocitypowered.api.command.CommandManager;
-import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.ConnectionRequestBuilder;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.proxy.server.ServerInfo;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import com.velocitypowered.api.scheduler.Scheduler;
 import me.criseda.autostopper.AutoStopperPlugin;
@@ -47,15 +46,6 @@ public class ServerCommandInterceptorTest {
     private ActivityTracker activityTracker;
     
     @Mock
-    private CommandManager commandManager;
-    
-    @Mock
-    private CommandMeta.Builder metaBuilder;
-    
-    @Mock
-    private CommandMeta commandMeta;
-    
-    @Mock
     private Logger logger;
     
     @Mock
@@ -64,31 +54,12 @@ public class ServerCommandInterceptorTest {
     @Mock
     private Scheduler.TaskBuilder taskBuilder;
     
-    @Mock
-    private ScheduledTask scheduledTask;
-    
-    private SimpleCommand capturedCommand;
+    private ServerCommandInterceptor.ServerCommand serverCommand;
 
     @BeforeEach
     public void setup() {
-        // Configure lenient mocks for common setup
-        lenient().when(proxyServer.getCommandManager()).thenReturn(commandManager);
-        lenient().when(commandManager.metaBuilder(anyString())).thenReturn(metaBuilder);
-        lenient().when(metaBuilder.aliases(anyString(), anyString())).thenReturn(metaBuilder);
-        lenient().when(metaBuilder.plugin(any())).thenReturn(metaBuilder);
-        lenient().when(metaBuilder.build()).thenReturn(commandMeta);
-        lenient().when(plugin.getLogger()).thenReturn(logger);
-        lenient().when(proxyServer.getScheduler()).thenReturn(scheduler);
-        lenient().when(scheduler.buildTask(any(), any(Runnable.class))).thenReturn(taskBuilder);
-        lenient().when(taskBuilder.schedule()).thenReturn(scheduledTask);
-        
-        // Create the interceptor
-        new ServerCommandInterceptor(proxyServer, plugin, serverManager, activityTracker);
-        
-        // Capture the registered command for later use
-        ArgumentCaptor<SimpleCommand> commandCaptor = ArgumentCaptor.forClass(SimpleCommand.class);
-        verify(commandManager).register(eq(commandMeta), commandCaptor.capture());
-        capturedCommand = commandCaptor.getValue();
+        // Create the ServerCommand instance directly without any stubbings
+        serverCommand = new ServerCommandInterceptor.ServerCommand(proxyServer, plugin, serverManager, activityTracker);
     }
     
     @Test
@@ -98,11 +69,12 @@ public class ServerCommandInterceptorTest {
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"someserver"});
         
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Assert
-        verify(source).sendMessage(any(Component.class));
-        verify(commandManager, never()).executeAsync(any(), anyString());
+        verify(source).sendMessage(argThat(component -> 
+            component.toString().contains("Only players") || 
+            component.toString().contains("can use this command")));
     }
     
     @Test
@@ -110,25 +82,33 @@ public class ServerCommandInterceptorTest {
         // Arrange
         Player player = mock(Player.class);
         SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{});
+        RegisteredServer server1 = mockRegisteredServer("server1");
+        RegisteredServer server2 = mockRegisteredServer("server2");
+        
+        when(proxyServer.getAllServers()).thenReturn(List.of(server1, server2));
         
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Assert
-        verify(commandManager).executeAsync(eq(player), eq("server "));
+        verify(player).sendMessage(argThat(component -> 
+            component.toString().contains("Available servers")));
+        verify(serverManager, times(2)).isServerRunning(anyString());
     }
     
     @Test
-    public void testMultipleArgumentsExecution() {
+    public void testInvalidArgumentsExecution() {
         // Arrange
         Player player = mock(Player.class);
-        SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{"server1", "extra", "args"});
+        SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{"server1", "extra"});
         
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Assert
-        verify(commandManager).executeAsync(eq(player), eq("server server1 extra args"));
+        verify(player).sendMessage(argThat(component -> 
+            component.toString().contains("Usage:") || 
+            component.toString().contains("/server")));
     }
     
     @Test
@@ -139,52 +119,63 @@ public class ServerCommandInterceptorTest {
         when(proxyServer.getServer("unknownserver")).thenReturn(Optional.empty());
         
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Assert
-        verify(commandManager).executeAsync(eq(player), eq("server unknownserver"));
+        verify(player).sendMessage(argThat(component -> 
+            component.toString().contains("does not exist")));
     }
     
     @Test
     public void testNonMonitoredServerExecution() {
         // Arrange
         Player player = mock(Player.class);
-        RegisteredServer registeredServer = mock(RegisteredServer.class);
+        RegisteredServer registeredServer = mockRegisteredServer("normalserver");
+        ConnectionRequestBuilder connectionRequest = mock(ConnectionRequestBuilder.class);
         SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{"normalserver"});
         
         when(proxyServer.getServer("normalserver")).thenReturn(Optional.of(registeredServer));
         when(serverManager.isMonitoredServer("normalserver")).thenReturn(false);
+        when(player.createConnectionRequest(registeredServer)).thenReturn(connectionRequest);
         
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Assert
-        verify(commandManager).executeAsync(eq(player), eq("server normalserver"));
+        verify(player).sendMessage(argThat(component -> 
+            component.toString().contains("Connecting to server")));
+        verify(player).createConnectionRequest(registeredServer);
+        verify(connectionRequest).fireAndForget();
     }
     
     @Test
     public void testRunningMonitoredServerExecution() {
         // Arrange
         Player player = mock(Player.class);
-        RegisteredServer registeredServer = mock(RegisteredServer.class);
+        RegisteredServer registeredServer = mockRegisteredServer("runningserver");
+        ConnectionRequestBuilder connectionRequest = mock(ConnectionRequestBuilder.class);
         SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{"runningserver"});
         
         when(proxyServer.getServer("runningserver")).thenReturn(Optional.of(registeredServer));
         when(serverManager.isMonitoredServer("runningserver")).thenReturn(true);
         when(serverManager.isServerRunning("runningserver")).thenReturn(true);
+        when(player.createConnectionRequest(registeredServer)).thenReturn(connectionRequest);
         
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Assert
-        verify(commandManager).executeAsync(eq(player), eq("server runningserver"));
+        verify(player).sendMessage(argThat(component -> 
+            component.toString().contains("Connecting to server")));
+        verify(player).createConnectionRequest(registeredServer);
+        verify(connectionRequest).fireAndForget();
     }
     
     @Test
     public void testStoppedMonitoredServerExecution_AlreadyStarting() {
         // Arrange
         Player player = mock(Player.class);
-        RegisteredServer registeredServer = mock(RegisteredServer.class);
+        RegisteredServer registeredServer = mockRegisteredServer("stoppedserver");
         SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{"stoppedserver"});
         
         when(proxyServer.getServer("stoppedserver")).thenReturn(Optional.of(registeredServer));
@@ -195,20 +186,22 @@ public class ServerCommandInterceptorTest {
         when(serverManager.getServerStartingStatus("stoppedserver")).thenReturn(isStarting);
         
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Assert
-        verify(player, times(1)).sendMessage(argThat(component -> 
+        verify(player).sendMessage(argThat(component -> 
+            component.toString().contains("Server is currently offline")));
+        verify(player).sendMessage(argThat(component -> 
             component.toString().contains("already being started") || 
             component.toString().contains("wait")));
-        verify(scheduler, never()).buildTask(any(), any(Runnable.class));
+        verify(proxyServer, never()).getScheduler();
     }
     
     @Test
     public void testStoppedMonitoredServerExecution_SuccessfulStart() {
         // Arrange
         Player player = mock(Player.class);
-        RegisteredServer registeredServer = mock(RegisteredServer.class);
+        RegisteredServer registeredServer = mockRegisteredServer("stoppedserver");
         ConnectionRequestBuilder connectionRequest = mock(ConnectionRequestBuilder.class);
         SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{"stoppedserver"});
         
@@ -221,8 +214,13 @@ public class ServerCommandInterceptorTest {
         when(serverManager.waitForServerReady(eq("stoppedserver"), anyInt())).thenReturn(true);
         when(player.createConnectionRequest(any(RegisteredServer.class))).thenReturn(connectionRequest);
         
+        // Setup scheduler mocks for this specific test
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+        
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Assert initial state
         verify(player).sendMessage(argThat(component -> 
@@ -260,7 +258,7 @@ public class ServerCommandInterceptorTest {
     public void testStoppedMonitoredServerExecution_FailedStart() {
         // Arrange
         Player player = mock(Player.class);
-        RegisteredServer registeredServer = mock(RegisteredServer.class);
+        RegisteredServer registeredServer = mockRegisteredServer("stoppedserver");
         SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{"stoppedserver"});
         
         when(proxyServer.getServer("stoppedserver")).thenReturn(Optional.of(registeredServer));
@@ -271,8 +269,13 @@ public class ServerCommandInterceptorTest {
         when(serverManager.getServerStartingStatus("stoppedserver")).thenReturn(isStarting);
         when(serverManager.waitForServerReady(eq("stoppedserver"), anyInt())).thenReturn(false);
         
+        // Setup scheduler mocks for this specific test
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+        
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Capture and execute the runnable
         ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
@@ -293,7 +296,7 @@ public class ServerCommandInterceptorTest {
     public void testStoppedMonitoredServerExecution_ExceptionDuringStart() {
         // Arrange
         Player player = mock(Player.class);
-        RegisteredServer registeredServer = mock(RegisteredServer.class);
+        RegisteredServer registeredServer = mockRegisteredServer("stoppedserver");
         SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{"stoppedserver"});
         
         when(proxyServer.getServer("stoppedserver")).thenReturn(Optional.of(registeredServer));
@@ -304,8 +307,14 @@ public class ServerCommandInterceptorTest {
         when(serverManager.getServerStartingStatus("stoppedserver")).thenReturn(isStarting);
         doThrow(new RuntimeException("Test exception")).when(serverManager).startServer("stoppedserver");
         
+        // Setup scheduler mocks for this specific test
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+        when(plugin.getLogger()).thenReturn(logger);
+        
         // Act
-        capturedCommand.execute(invocation);
+        serverCommand.execute(invocation);
         
         // Capture and execute the runnable
         ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
@@ -322,29 +331,46 @@ public class ServerCommandInterceptorTest {
     
     @Test
     public void testCommandSuggestions() {
+        // Arrange
+        Player player = mock(Player.class);
+        SimpleCommand.Invocation invocation = mockInvocation(player, new String[]{""});  // Use empty string instead of "partial"
+        RegisteredServer server1 = mockRegisteredServer("server1");
+        RegisteredServer server2 = mockRegisteredServer("server2");
+        
+        when(proxyServer.getAllServers()).thenReturn(List.of(server1, server2));
+        when(plugin.getLogger()).thenReturn(logger);
+        
         // Act
-        List<String> suggestions = capturedCommand.suggest(
-            mockInvocation(mock(Player.class), new String[]{"partial"}));
+        List<String> suggestions = serverCommand.suggest(invocation);
         
         // Assert
-        assertTrue(suggestions.isEmpty(), "Suggestions should be empty");
+        assertTrue(suggestions.contains("server1"), "Suggestions should include server1");
+        assertTrue(suggestions.contains("server2"), "Suggestions should include server2");
     }
     
     @Test
     public void testCommandPermission() {
         // Act
-        boolean hasPermission = capturedCommand.hasPermission(
+        boolean hasPermission = serverCommand.hasPermission(
             mockInvocation(mock(Player.class), new String[]{}));
         
         // Assert
         assertTrue(hasPermission, "Should always have permission");
     }
     
-    // Helper method
+    // Helper methods
     private SimpleCommand.Invocation mockInvocation(CommandSource source, String[] args) {
         SimpleCommand.Invocation invocation = mock(SimpleCommand.Invocation.class);
         lenient().when(invocation.source()).thenReturn(source);
         lenient().when(invocation.arguments()).thenReturn(args);
         return invocation;
+    }
+    
+    private RegisteredServer mockRegisteredServer(String name) {
+        RegisteredServer server = mock(RegisteredServer.class);
+        ServerInfo serverInfo = mock(ServerInfo.class);
+        lenient().when(server.getServerInfo()).thenReturn(serverInfo);
+        lenient().when(serverInfo.getName()).thenReturn(name);
+        return server;
     }
 }
