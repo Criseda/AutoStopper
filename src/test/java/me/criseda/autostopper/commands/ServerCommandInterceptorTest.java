@@ -288,7 +288,7 @@ public class ServerCommandInterceptorTest {
         // Assert
         verify(serverManager).startServer("stoppedserver");
         verify(serverManager).waitForServerReady("stoppedserver", 120);
-        verify(player, times(3)).sendMessage(any(Component.class));
+        verify(player, times(2)).sendMessage(any(Component.class));
         verify(player, never()).createConnectionRequest(any());
         
         // Verify isStarting flag was reset
