@@ -37,28 +37,20 @@ public class ServerCommandInterceptor {
             CommandSource source = invocation.source();
             String[] args = invocation.arguments();
 
-            if (!(source instanceof Player)) {
-                // Only players can use this command
-                source.sendMessage(Component.text("§cOnly players can use this command!"));
+            // Handle case with no arguments
+            if (args.length == 0) {
+                source.sendMessage(Component.text("§eAvailable servers:"));
+                for (RegisteredServer rs : server.getAllServers()) {
+                    String name = rs.getServerInfo().getName();
+                    boolean running = serverManager.isServerRunning(name);
+                    String status = running ? "§a§lONLINE" : "§c§lOFFLINE";
+                    source.sendMessage(Component.text("§7- §e" + name + " §7(" + status + "§7)"));
+                }
                 return;
             }
 
-            Player player = (Player) source;
-
-            if (args.length != 1) {
-                // Show server list with no arguments
-                if (args.length == 0) {
-                    source.sendMessage(Component.text("§eAvailable servers:"));
-                    for (RegisteredServer rs : server.getAllServers()) {
-                        String name = rs.getServerInfo().getName();
-                        boolean running = serverManager.isServerRunning(name);
-                        String status = running ? "§a§lONLINE" : "§c§lOFFLINE";
-                        source.sendMessage(Component.text("§7- §e" + name + " §7(" + status + "§7)"));
-                    }
-                    return;
-                }
-
-                // Forward to original handler for other cases
+            // Usage message if more than 1 argument
+            if (args.length > 1) {
                 source.sendMessage(Component.text("§cUsage: /server <name>"));
                 return;
             }
@@ -67,40 +59,112 @@ public class ServerCommandInterceptor {
             Optional<RegisteredServer> registeredServer = server.getServer(targetServer);
 
             if (!registeredServer.isPresent()) {
-                // Unknown server
                 source.sendMessage(Component.text("§cServer §e" + targetServer + " §cdoes not exist."));
                 return;
             }
 
-            // Now we know the server exists
+            // Handle player source directly
+            if (source instanceof Player) {
+                handlePlayerConnect((Player) source, targetServer, registeredServer.get());
+            }
+            // Allow command execution from other sources (like Advanced Portals)
+            else if (args.length == 1) {
+                // Log the command
+                source.sendMessage(Component.text("§7Non-player command source requesting connection to §e" + targetServer));
+                
+                // Check if server is offline and needs starting
+                if (serverManager.isMonitoredServer(targetServer) && !serverManager.isServerRunning(targetServer)) {
+                    source.sendMessage(Component.text("§eServer is currently offline. Starting it up..."));
+                    
+                    AtomicBoolean isStarting = serverManager.getServerStartingStatus(targetServer);
+                    
+                    if (isStarting.compareAndSet(false, true)) {
+                        // Start server in a separate thread
+                        server.getScheduler().buildTask(plugin, () -> {
+                            try {
+                                if (serverManager.startServer(targetServer)) {               
+                                    // Wait for server to be ready
+                                    if (serverManager.waitForServerReady(targetServer, 120)) {
+                                        source.sendMessage(Component.text("§aServer §e" + targetServer + "§a is now ready!"));
+                                    } else {
+                                        source.sendMessage(Component.text("§cServer §e" + targetServer + "§c may not be fully ready yet."));
+                                    }
+                                } else {
+                                    source.sendMessage(Component.text("§cFailed to start server §e" + targetServer));
+                                }
+                            } catch (Exception e) {
+                                plugin.getLogger().error("Error while starting server", e);
+                                source.sendMessage(Component.text("§cError starting server: " + e.getMessage()));
+                            } finally {
+                                isStarting.set(false);
+                            }
+                        }).schedule();
+                    } else {
+                        source.sendMessage(Component.text("§eServer is already being started, please wait..."));
+                    }
+                }
+                // Let the original command go through to connect the player
+            }
+        }
+
+        @Override
+        public List<String> suggest(Invocation invocation) {
+            // Make sure arguments aren't null
+            if (invocation.arguments() == null) {
+                return List.of();
+            }
+
+            // Get server names for autocompletion
+            List<String> serverNames = server.getAllServers().stream()
+                    .map(s -> s.getServerInfo().getName())
+                    .sorted()
+                    .filter(s -> {
+                        // If there's a partial input, filter by it
+                        if (invocation.arguments().length > 0 && !invocation.arguments()[0].isEmpty()) {
+                            return s.toLowerCase().startsWith(invocation.arguments()[0].toLowerCase());
+                        }
+                        return true;
+                    })
+                    .toList();
+
+            // Debug log suggestion count
+            if (serverNames.size() > 0) {
+                plugin.getLogger().debug("Suggesting " + serverNames.size() + " server names for tab completion");
+            }
+
+            return serverNames;
+        }
+
+        @Override
+        public boolean hasPermission(Invocation invocation) {
+            return true;
+        }
+
+        private void handlePlayerConnect(Player player, String targetServer, RegisteredServer registeredServer) {
             if (serverManager.isMonitoredServer(targetServer) && !serverManager.isServerRunning(targetServer)) {
                 player.sendMessage(Component.text("§eServer is currently offline. Starting it up for you..."));
-
+        
                 AtomicBoolean isStarting = serverManager.getServerStartingStatus(targetServer);
-
+        
                 if (isStarting.compareAndSet(false, true)) {
                     // Start server in a separate thread
                     server.getScheduler().buildTask(plugin, () -> {
                         try {
-                            serverManager.startServer(targetServer);
-
-                            // Wait up to 120 seconds for server to be ready
-                            boolean serverReady = serverManager.waitForServerReady(targetServer, 120);
-
-                            if (serverReady) {
-                                player.sendMessage(Component.text("§aServer is now online! Connecting..."));
-                                player.createConnectionRequest(registeredServer.get()).fireAndForget();
-
-                                // Update activity tracker
-                                activityTracker.updateActivity(targetServer);
+                            if (serverManager.startServer(targetServer)) {
+                                // Wait for server to be ready
+                                if (serverManager.waitForServerReady(targetServer, 120)) {
+                                    player.sendMessage(Component.text("§aServer §e" + targetServer + "§a is now ready!"));
+                                    player.createConnectionRequest(registeredServer).fireAndForget();
+                                    activityTracker.updateActivity(targetServer);
+                                } else {
+                                    player.sendMessage(Component.text("§cServer §e" + targetServer + "§c may not be fully ready yet."));
+                                }
                             } else {
-                                player.sendMessage(Component
-                                        .text("§cServer startup timed out. Please try again later."));
+                                player.sendMessage(Component.text("§cFailed to start server §e" + targetServer));
                             }
                         } catch (Exception e) {
                             plugin.getLogger().error("Error while starting server", e);
-                            player.sendMessage(Component.text(
-                                    "§cFailed to start the server. Please contact an administrator."));
+                            player.sendMessage(Component.text("§cError starting server: " + e.getMessage()));
                         } finally {
                             isStarting.set(false);
                         }
@@ -111,41 +175,8 @@ public class ServerCommandInterceptor {
             } else {
                 // Server is running or not monitored, connect directly
                 player.sendMessage(Component.text("§aConnecting to server §e" + targetServer + "§a..."));
-                player.createConnectionRequest(registeredServer.get()).fireAndForget();
+                player.createConnectionRequest(registeredServer).fireAndForget();
             }
-        }
-
-        @Override
-        public List<String> suggest(Invocation invocation) {
-            // Make sure arguments aren't null
-            if (invocation.arguments() == null) {
-                return List.of();
-            }
-            
-            // Get server names for autocompletion
-            List<String> serverNames = server.getAllServers().stream()
-                .map(s -> s.getServerInfo().getName())
-                .sorted()
-                .filter(s -> {
-                    // If there's a partial input, filter by it
-                    if (invocation.arguments().length > 0 && !invocation.arguments()[0].isEmpty()) {
-                        return s.toLowerCase().startsWith(invocation.arguments()[0].toLowerCase());
-                    }
-                    return true;
-                })
-                .toList();
-                
-            // Debug log suggestion count
-            if (serverNames.size() > 0) {
-                plugin.getLogger().debug("Suggesting " + serverNames.size() + " server names for tab completion");
-            }
-            
-            return serverNames;
-        }
-
-        @Override
-        public boolean hasPermission(Invocation invocation) {
-            return true;
         }
     }
 }

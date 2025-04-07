@@ -67,14 +67,14 @@ public class ServerCommandInterceptorTest {
         // Arrange
         CommandSource source = mock(CommandSource.class);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"someserver"});
+        when(proxyServer.getServer("someserver")).thenReturn(Optional.empty());
         
         // Act
         serverCommand.execute(invocation);
         
         // Assert
         verify(source).sendMessage(argThat(component -> 
-            component.toString().contains("Only players") || 
-            component.toString().contains("can use this command")));
+            component.toString().contains("does not exist")));
     }
     
     @Test
@@ -211,6 +211,8 @@ public class ServerCommandInterceptorTest {
         
         AtomicBoolean isStarting = new AtomicBoolean(false);
         when(serverManager.getServerStartingStatus("stoppedserver")).thenReturn(isStarting);
+        // Add this line:
+        when(serverManager.startServer("stoppedserver")).thenReturn(true);
         when(serverManager.waitForServerReady(eq("stoppedserver"), anyInt())).thenReturn(true);
         when(player.createConnectionRequest(any(RegisteredServer.class))).thenReturn(connectionRequest);
         
@@ -267,8 +269,9 @@ public class ServerCommandInterceptorTest {
         
         AtomicBoolean isStarting = new AtomicBoolean(false);
         when(serverManager.getServerStartingStatus("stoppedserver")).thenReturn(isStarting);
+        when(serverManager.startServer("stoppedserver")).thenReturn(true);
         when(serverManager.waitForServerReady(eq("stoppedserver"), anyInt())).thenReturn(false);
-        
+            
         // Setup scheduler mocks for this specific test
         when(proxyServer.getScheduler()).thenReturn(scheduler);
         when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
@@ -285,7 +288,7 @@ public class ServerCommandInterceptorTest {
         // Assert
         verify(serverManager).startServer("stoppedserver");
         verify(serverManager).waitForServerReady("stoppedserver", 120);
-        verify(player, times(2)).sendMessage(any(Component.class));
+        verify(player, times(3)).sendMessage(any(Component.class));
         verify(player, never()).createConnectionRequest(any());
         
         // Verify isStarting flag was reset

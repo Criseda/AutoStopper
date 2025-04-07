@@ -11,6 +11,7 @@ import me.criseda.autostopper.commands.AutoStopperCommand;
 import me.criseda.autostopper.commands.ServerCommandInterceptor;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.listeners.ConnectionListener;
+import me.criseda.autostopper.listeners.ServerPreConnectListener;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 
@@ -52,6 +53,7 @@ public class AutoStopperPlugin {
 	
 		// Register event listeners
 		server.getEventManager().register(this, new ConnectionListener(activityTracker));
+		server.getEventManager().register(this, new ServerPreConnectListener(this, serverManager, activityTracker));
 	
 		// Register commands with the new non-deprecated method
 		registerCommands();
