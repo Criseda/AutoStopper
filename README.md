@@ -19,7 +19,7 @@ AutoStopper is a Velocity proxy plugin that automatically stops and starts Minec
 
 ## Installation
 
-1. Download the latest AutoStopper JAR from the [releases](https://github.com/YourUsername/AutoStopper/releases) page
+1. Download the latest AutoStopper JAR from the [releases](https://github.com/criseda/AutoStopper/releases) page
 2. Place the JAR in your Velocity server's `plugins` directory
 3. Start (or restart) your Velocity server
 4. Edit the generated configuration file to match your setup
