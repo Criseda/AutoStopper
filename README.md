@@ -2,6 +2,9 @@
 
 AutoStopper is a Velocity proxy plugin that automatically stops and starts Minecraft server containers based on player activity. It helps server administrators save resources by shutting down inactive Docker-based Minecraft servers.
 
+## Download links
+- [Modrinth](https://modrinth.com/plugin/autostopper)
+
 ## Features
 
 - Automatically monitors server activity
