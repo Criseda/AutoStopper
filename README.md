@@ -164,9 +164,10 @@ networks:
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the [MIT License](LICENSE). See the LICENSE file for details.
 
 ## Credits
 
-- Built for Velocity by Criseda
-- Uses itzg/minecraft-server Docker images
+- Built for Velocity by [Criseda](https://criseda.com)
+- Uses [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server)
+- Uses [itzg/mc-proxy](https://github.com/itzg/docker-mc-proxy)
