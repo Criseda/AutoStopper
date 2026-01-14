@@ -17,8 +17,8 @@ public class DockerManager {
     public boolean isContainerRunning(String containerName) {
         CommandResult result = runCommand("docker", "inspect", "-f", "{{.State.Running}}", containerName);
         if (result.exitCode != 0) {
-            logger.warn("Could not check status for container {}: {} (Exit Code: {})", 
-                containerName, result.stderr.trim(), result.exitCode);
+            logger.warn("Could not check status for container {}: {} (Exit Code: {})",
+                    containerName, result.stderr.trim(), result.exitCode);
             return false;
         }
         return "true".equalsIgnoreCase(result.stdout.trim());
@@ -26,10 +26,10 @@ public class DockerManager {
 
     public boolean startContainer(String containerName) {
         logger.info("Starting container: " + containerName);
-        
+
         if (isContainerRunning(containerName)) {
-             logger.info("Container " + containerName + " is already running.");
-             return true;
+            logger.info("Container " + containerName + " is already running.");
+            return true;
         }
 
         CommandResult result = runCommand("docker", "start", containerName);
@@ -37,7 +37,8 @@ public class DockerManager {
             logger.info("Started container: " + containerName);
             return true;
         } else {
-            logger.error("Failed to start container: " + containerName + ", exit code: " + result.exitCode + ", error: " + result.stderr.trim());
+            logger.error("Failed to start container: " + containerName + ", exit code: " + result.exitCode + ", error: "
+                    + result.stderr.trim());
             return false;
         }
     }
@@ -48,7 +49,8 @@ public class DockerManager {
             logger.info("Stopped container: " + containerName);
             return true;
         } else {
-            logger.error("Failed to stop container: " + containerName + ", exit code: " + result.exitCode + ", error: " + result.stderr.trim());
+            logger.error("Failed to stop container: " + containerName + ", exit code: " + result.exitCode + ", error: "
+                    + result.stderr.trim());
             return false;
         }
     }
@@ -62,14 +64,15 @@ public class DockerManager {
             Process process = new ProcessBuilder("docker", "logs", "--follow", "--tail=0", containerName)
                     .redirectErrorStream(true) // Merge stderr into stdout
                     .start();
-            
+
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((System.currentTimeMillis() - startTime) < timeoutMillis) {
                     if (reader.ready()) {
                         line = reader.readLine();
-                        if (line == null) break;
-                        
+                        if (line == null)
+                            break;
+
                         for (String pattern : readyPatterns) {
                             if (line.contains(pattern)) {
                                 logger.info("Container " + containerName + " is ready (found: " + pattern + ")");
@@ -85,19 +88,19 @@ public class DockerManager {
                             break;
                         }
                         if (!process.isAlive()) {
-                             break;
+                            break;
                         }
                     }
                 }
             } finally {
                 process.destroy();
             }
-            
+
             logger.warn("Timeout waiting for container " + containerName);
             return false;
         } catch (IOException e) {
-             logger.error("Error waiting for container ready: " + containerName, e);
-             return false;
+            logger.error("Error waiting for container ready: " + containerName, e);
+            return false;
         }
     }
 
@@ -119,6 +122,9 @@ public class DockerManager {
 
         } catch (IOException | InterruptedException e) {
             logger.error("Error executing command: " + String.join(" ", command), e);
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             return new CommandResult(-1, "", e.getMessage());
         }
     }
