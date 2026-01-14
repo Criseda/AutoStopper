@@ -55,7 +55,7 @@ public class AutoStopperCommandTest {
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("AutoStopper v1.1.1"));
+        assertTrue(messages.get(0).toString().contains("AutoStopper 1.1.2"));
         assertTrue(messages.get(1).toString().contains("help"));
     }
     
@@ -172,8 +172,11 @@ public class AutoStopperCommandTest {
         List<String> suggestions = command.suggest(invocation);
         
         // Assert
-        assertEquals(1, suggestions.size());
+        // Now expecting all three commands as suggestions when input is empty/partial
+        assertEquals(3, suggestions.size());
         assertTrue(suggestions.contains("help"));
+        assertTrue(suggestions.contains("status"));
+        assertTrue(suggestions.contains("reload"));
     }
     
     @Test
@@ -185,9 +188,11 @@ public class AutoStopperCommandTest {
         List<String> suggestions = command.suggest(invocation);
         
         // Assert
-        // Now we expect suggestions even without permissions
-        assertEquals(1, suggestions.size());
+        // Now expecting all three commands even without permissions
+        assertEquals(3, suggestions.size());
         assertTrue(suggestions.contains("help"));
+        assertTrue(suggestions.contains("status"));
+        assertTrue(suggestions.contains("reload"));
     }
     
     @Test

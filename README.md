@@ -3,6 +3,7 @@
 AutoStopper is a Velocity proxy plugin that automatically stops and starts Minecraft server containers based on player activity. It helps server administrators save resources by shutting down inactive Docker-based Minecraft servers.
 
 ## Download links
+
 - [Modrinth](https://modrinth.com/plugin/autostopper)
 
 ## Features
@@ -59,6 +60,7 @@ services:
   velocity:
     image: itzg/mc-proxy
     container_name: velocity-server
+    user: root
     environment:
       TYPE: "VELOCITY"
       ONLINE_MODE: "true"
@@ -78,11 +80,10 @@ services:
     command: >
       "if [ ! -f /usr/bin/docker ]; then
         apt-get update && 
-        apt-get install -y curl &&
-        curl -fsSL https://get.docker.com -o get-docker.sh &&
-        sh get-docker.sh &&
+        apt-get install -y docker.io &&
         apt-get clean;
       fi &&
+      chmod 666 /var/run/docker.sock &&
       exec /usr/bin/run-bungeecord.sh"
 
   # Example Minecraft servers that can be managed by AutoStopper
@@ -159,7 +160,7 @@ networks:
    mvn clean package
    ```
 
-3. Find the JAR file in `target/AutoStopper-1.1.1-SNAPSHOT.jar`
+3. Find the JAR file in `target/AutoStopper-1.1.2.jar`
 
 ## License
 

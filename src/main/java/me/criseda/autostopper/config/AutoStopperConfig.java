@@ -71,7 +71,7 @@ public class AutoStopperConfig {
                 "# Servers to monitor for inactivity\n" +
                 "# Each entry must have:\n" +
                 "#   - server_name: The name of the server in Velocity (what players type in /server command)\n" +
-                "#   - container_name: The Docker container name for this server\n" +
+                "#     container_name: The Docker container name for this server\n" +
                 "monitored_servers:\n";
 
         try (BufferedWriter writer = Files.newBufferedWriter(configFile)) {

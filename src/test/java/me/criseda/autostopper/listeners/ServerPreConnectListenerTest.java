@@ -79,6 +79,8 @@ public class ServerPreConnectListenerTest {
     public void testOnServerPreConnect_ServerRunning() {
         // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
+        AtomicBoolean isStarting = new AtomicBoolean(false);
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
         when(serverManager.isServerRunning("testserver")).thenReturn(true);
         
         // Execute
@@ -86,6 +88,7 @@ public class ServerPreConnectListenerTest {
         
         // Verify
         verify(serverManager).isMonitoredServer("testserver");
+        verify(serverManager).getServerStartingStatus("testserver");
         verify(serverManager).isServerRunning("testserver");
         verify(event, never()).setResult(any(ServerPreConnectEvent.ServerResult.class));
         verifyNoInteractions(activityTracker);
@@ -110,7 +113,6 @@ public class ServerPreConnectListenerTest {
     public void testOnServerPreConnect_AlreadyStarting() {
         // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.isServerRunning("testserver")).thenReturn(false);
         
         AtomicBoolean isStarting = new AtomicBoolean(true);
         when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
@@ -120,10 +122,8 @@ public class ServerPreConnectListenerTest {
         
         // Verify
         verify(serverManager).isMonitoredServer("testserver");
-        verify(serverManager).isServerRunning("testserver");
         verify(serverManager).getServerStartingStatus("testserver");
-        verify(player).sendMessage(argThat(component -> 
-            component.toString().contains("offline") || component.toString().contains("Starting")));
+        verify(serverManager, never()).isServerRunning("testserver");
         verify(player).sendMessage(argThat(component -> 
             component.toString().contains("already being started") || component.toString().contains("wait")));
         verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));

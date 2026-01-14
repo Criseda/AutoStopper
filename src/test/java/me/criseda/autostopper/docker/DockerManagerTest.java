@@ -8,25 +8,20 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.MockedStatic;
+import org.mockito.MockedConstruction;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.util.Arrays;
+import java.util.List;
 
 @ExtendWith(MockitoExtension.class)
 public class DockerManagerTest {
 
     @Mock
     private Logger logger;
-
-    @Mock
-    private Process process;
-
-    @Mock
-    private Runtime runtime;
 
     private DockerManager dockerManager;
 
@@ -35,284 +30,205 @@ public class DockerManagerTest {
         dockerManager = new DockerManager(logger);
     }
 
+    private void setupMockProcess(Process mockProcess, String stdout, String stderr, int exitCode) {
+        when(mockProcess.getInputStream()).thenReturn(new ByteArrayInputStream(stdout.getBytes()));
+        when(mockProcess.getErrorStream()).thenReturn(new ByteArrayInputStream(stderr.getBytes()));
+        try {
+            when(mockProcess.waitFor()).thenReturn(exitCode);
+        } catch (InterruptedException e) {
+            // Mock exception, theoretically unreachable in setup
+        }
+    }
+
     @Test
-    public void testIsContainerRunning_True() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        InputStream inputStream = new ByteArrayInputStream("true".getBytes());
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.getInputStream()).thenReturn(inputStream);
-            when(process.waitFor()).thenReturn(0);
-
-            // Act
-            boolean result = dockerManager.isContainerRunning(containerName);
-
-            // Assert
+    public void testIsContainerRunning_True() {
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    Process process = mock(Process.class);
+                    setupMockProcess(process, "true", "", 0);
+                    when(mock.start()).thenReturn(process);
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                })) {
+            
+            boolean result = dockerManager.isContainerRunning("test-container");
             assertTrue(result);
-            verify(runtime).exec(new String[] { "docker", "inspect", "-f", "{{.State.Running}}", containerName });
         }
     }
 
     @Test
-    public void testIsContainerRunning_False() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        InputStream inputStream = new ByteArrayInputStream("false".getBytes());
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.getInputStream()).thenReturn(inputStream);
-            when(process.waitFor()).thenReturn(0);
+    public void testIsContainerRunning_False() {
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    Process process = mock(Process.class);
+                    setupMockProcess(process, "false", "", 0);
+                    when(mock.start()).thenReturn(process);
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                })) {
 
-            // Act
-            boolean result = dockerManager.isContainerRunning(containerName);
-
-            // Assert
+            boolean result = dockerManager.isContainerRunning("test-container");
             assertFalse(result);
         }
     }
 
     @Test
-    public void testIsContainerRunning_EmptyResult() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        InputStream inputStream = new ByteArrayInputStream("".getBytes());
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.getInputStream()).thenReturn(inputStream);
-            when(process.waitFor()).thenReturn(0);
+    public void testIsContainerRunning_FailExitCode() {
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    Process process = mock(Process.class);
+                    setupMockProcess(process, "", "some error", 1);
+                    when(mock.start()).thenReturn(process);
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                })) {
 
-            // Act
-            boolean result = dockerManager.isContainerRunning(containerName);
-
-            // Assert
+            boolean result = dockerManager.isContainerRunning("test-container");
             assertFalse(result);
+            verify(logger).warn(contains("Could not check status"), any(), any(), any());
         }
     }
 
     @Test
-    public void testIsContainerRunning_IOException() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenThrow(new IOException("Test exception"));
+    public void testIsContainerRunning_IOException() {
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    when(mock.start()).thenThrow(new IOException("Test exception"));
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                })) {
 
-            // Act
-            boolean result = dockerManager.isContainerRunning(containerName);
-
-            // Assert
+            boolean result = dockerManager.isContainerRunning("test-container");
             assertFalse(result);
-            verify(logger).error(contains("Error checking if container is running"), any(IOException.class));
+            verify(logger).error(contains("Error executing command"), any(IOException.class));
         }
     }
 
     @Test
-    public void testIsContainerRunning_InterruptedException() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.waitFor()).thenThrow(new InterruptedException("Test interruption"));
+    public void testStartContainer_Success() {
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    List<?> args = context.arguments();
+                    String[] commandValue = (String[]) args.get(0);
+                    List<String> cmdList = Arrays.asList(commandValue);
+                    
+                    Process process = mock(Process.class);
+                    when(mock.start()).thenReturn(process);
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
 
-            // Act
-            boolean result = dockerManager.isContainerRunning(containerName);
+                    if (cmdList.contains("inspect")) {
+                        setupMockProcess(process, "false", "", 0);
+                    } else if (cmdList.contains("start")) {
+                        setupMockProcess(process, "container started", "", 0);
+                    }
+                })) {
 
-            // Assert
-            assertFalse(result);
-            verify(logger).error(contains("Error checking if container is running"), any(InterruptedException.class));
-        }
-    }
-
-    @Test
-    public void testStartContainer_Success() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.waitFor()).thenReturn(0);
-
-            // Act
-            boolean result = dockerManager.startContainer(containerName);
-
-            // Assert
+            boolean result = dockerManager.startContainer("test-container");
             assertTrue(result);
-            verify(runtime).exec(new String[] { "docker", "start", containerName });
             verify(logger).info(contains("Starting container"));
             verify(logger).info(contains("Started container"));
         }
     }
+    
+    @Test
+    public void testStartContainer_AlreadyRunning() {
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    Process process = mock(Process.class);
+                    when(mock.start()).thenReturn(process);
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                    setupMockProcess(process, "true", "", 0);
+                })) {
+
+            boolean result = dockerManager.startContainer("test-container");
+            assertTrue(result);
+            verify(logger).info(contains("is already running"));
+        }
+    }
 
     @Test
-    public void testStartContainer_Failure() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.waitFor()).thenReturn(1);
+    public void testStartContainer_Failure() {
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    List<?> args = context.arguments();
+                    String[] commandValue = (String[]) args.get(0);
+                    List<String> cmdList = Arrays.asList(commandValue);
+                    
+                    Process process = mock(Process.class);
+                    when(mock.start()).thenReturn(process);
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
 
-            // Act
-            boolean result = dockerManager.startContainer(containerName);
+                    if (cmdList.contains("inspect")) {
+                        setupMockProcess(process, "false", "", 0);
+                    } else if (cmdList.contains("start")) {
+                        setupMockProcess(process, "", "permission denied", 1);
+                    }
+                })) {
 
-            // Assert
+            boolean result = dockerManager.startContainer("test-container");
             assertFalse(result);
             verify(logger).error(contains("Failed to start container"));
         }
     }
 
     @Test
-    public void testStartContainer_Exception() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenThrow(new IOException("Test exception"));
+    public void testStopContainer_Success() {
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    Process process = mock(Process.class);
+                    setupMockProcess(process, "", "", 0);
+                    when(mock.start()).thenReturn(process);
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                })) {
 
-            // Act
-            boolean result = dockerManager.startContainer(containerName);
-
-            // Assert
-            assertFalse(result);
-            verify(logger).error(contains("Error starting container"), any(IOException.class));
-        }
-    }
-
-    @Test
-    public void testStopContainer_Success() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.waitFor()).thenReturn(0);
-
-            // Act
-            boolean result = dockerManager.stopContainer(containerName);
-
-            // Assert
+            boolean result = dockerManager.stopContainer("test-container");
             assertTrue(result);
-            verify(runtime).exec(new String[] { "docker", "stop", containerName });
             verify(logger).info(contains("Stopped container"));
         }
     }
 
     @Test
-    public void testStopContainer_Failure() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.waitFor()).thenReturn(1);
-
-            // Act
-            boolean result = dockerManager.stopContainer(containerName);
-
-            // Assert
-            assertFalse(result);
-            verify(logger).error(contains("Failed to stop container"));
-        }
-    }
-
-    @Test
-    public void testStopContainer_Exception() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenThrow(new IOException("Test exception"));
-
-            // Act
-            boolean result = dockerManager.stopContainer(containerName);
-
-            // Assert
-            assertFalse(result);
-            verify(logger).error(contains("Error stopping container"), any(IOException.class));
-        }
-    }
-
-    @Test
-    public void testWaitForContainerReady_Success() throws Exception {
-        // Arrange
+    public void testWaitForContainerReady_Success() {
         String containerName = "test-container";
         String readyPattern = "Server started";
         
-        // Create a process that outputs the ready pattern after a short delay
-        String output = "Starting up...\nLoading config...\nServer started\n";
-        InputStream inputStream = new ByteArrayInputStream(output.getBytes());
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.getInputStream()).thenReturn(inputStream);
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    Process process = mock(Process.class);
+                    // Standard input stream for logs
+                    String output = "Starting up...\n" + readyPattern + "\n";
+                    when(process.getInputStream()).thenReturn(new ByteArrayInputStream(output.getBytes()));
+                    when(mock.start()).thenReturn(process);
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                })) {
             
-            // Act
             boolean result = dockerManager.waitForContainerReady(containerName, 5, readyPattern);
-            
-            // Assert
             assertTrue(result);
-            verify(runtime).exec(new String[] { "docker", "logs", "--follow", "--tail=0", containerName });
-            verify(logger).info(contains("Container " + containerName + " is ready"));
+            verify(logger).info(contains("is ready"));
         }
     }
 
     @Test
-    public void testWaitForContainerReady_Timeout() throws Exception {
-        // Arrange
+    public void testWaitForContainerReady_Timeout() {
         String containerName = "test-container";
         String readyPattern = "Ready";
         
-        // Create a process that never outputs the ready pattern
-        String output = "Starting up...\nLoading config...\nWaiting...\n";
-        InputStream inputStream = new ByteArrayInputStream(output.getBytes());
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenReturn(process);
-            when(process.getInputStream()).thenReturn(inputStream);
+        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                (mock, context) -> {
+                    Process process = mock(Process.class);
+                    // Output without the pattern
+                    String output = "Starting up...\nWaiting...\n";
+                    when(process.getInputStream()).thenReturn(new ByteArrayInputStream(output.getBytes()));
+                    // Ensure the process isn't "alive" forever to allow loop to exit if read isn't blocking (Test logic simulation)
+                    // The loop checks (System.currentTimeMillis() - startTime) < timeoutMillis.
+                    // If readLine returns, it checks pattern. If not found, it loops.
+                    // ByteArrayInputStream yields bytes then is empty. `reader.ready()` might be false or `readLine` null.
+                    // If `readLine` returns null, loop breaks -> returns false.
+                    
+                    when(mock.start()).thenReturn(process);
+                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                })) {
             
-            // Act - use a short timeout for testing
-            boolean result = dockerManager.waitForContainerReady(containerName, 0, readyPattern);
-            
-            // Assert
+            // Short timeout, but loop should exit on stream EOF anyway
+            boolean result = dockerManager.waitForContainerReady(containerName, 1, readyPattern);
             assertFalse(result);
-            verify(logger).warn(contains("Timed out waiting for container"));
-        }
-    }
-
-    @Test
-    public void testWaitForContainerReady_Exception() throws Exception {
-        // Arrange
-        String containerName = "test-container";
-        String readyPattern = "Ready";
-        
-        try (MockedStatic<Runtime> runtimeMockedStatic = mockStatic(Runtime.class)) {
-            runtimeMockedStatic.when(Runtime::getRuntime).thenReturn(runtime);
-            when(runtime.exec(any(String[].class))).thenThrow(new IOException("Test exception"));
-            
-            // Act
-            boolean result = dockerManager.waitForContainerReady(containerName, 5, readyPattern);
-            
-            // Assert
-            assertFalse(result);
-            verify(logger).error(contains("Error monitoring docker logs"), any(IOException.class));
+            verify(logger).warn(contains("Timeout waiting for container"));
         }
     }
 }

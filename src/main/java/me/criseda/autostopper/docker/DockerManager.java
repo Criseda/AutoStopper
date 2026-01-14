@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 
 public class DockerManager {
@@ -14,54 +15,40 @@ public class DockerManager {
     }
 
     public boolean isContainerRunning(String containerName) {
-        try {
-            Process process = Runtime.getRuntime()
-                    .exec(new String[] { "docker", "inspect", "-f", "{{.State.Running}}", containerName });
-            process.waitFor();
-
-            try (java.util.Scanner scanner = new java.util.Scanner(process.getInputStream()).useDelimiter("\\A")) {
-                String result = scanner.hasNext() ? scanner.next().trim() : "";
-                return "true".equals(result);
-            }
-        } catch (IOException | InterruptedException e) {
-            logger.error("Error checking if container is running: " + containerName, e);
+        CommandResult result = runCommand("docker", "inspect", "-f", "{{.State.Running}}", containerName);
+        if (result.exitCode != 0) {
+            logger.warn("Could not check status for container {}: {} (Exit Code: {})", 
+                containerName, result.stderr.trim(), result.exitCode);
             return false;
         }
+        return "true".equalsIgnoreCase(result.stdout.trim());
     }
 
     public boolean startContainer(String containerName) {
-        try {
-            logger.info("Starting container: " + containerName);
-            Process process = Runtime.getRuntime().exec(new String[] { "docker", "start", containerName });
-            int exitCode = process.waitFor();
+        logger.info("Starting container: " + containerName);
+        
+        if (isContainerRunning(containerName)) {
+             logger.info("Container " + containerName + " is already running.");
+             return true;
+        }
 
-            if (exitCode == 0) {
-                logger.info("Started container: " + containerName);
-                return true;
-            } else {
-                logger.error("Failed to start container: " + containerName + ", exit code: " + exitCode);
-                return false;
-            }
-        } catch (IOException | InterruptedException e) {
-            logger.error("Error starting container: " + containerName, e);
+        CommandResult result = runCommand("docker", "start", containerName);
+        if (result.exitCode == 0) {
+            logger.info("Started container: " + containerName);
+            return true;
+        } else {
+            logger.error("Failed to start container: " + containerName + ", exit code: " + result.exitCode + ", error: " + result.stderr.trim());
             return false;
         }
     }
 
     public boolean stopContainer(String containerName) {
-        try {
-            Process process = Runtime.getRuntime().exec(new String[] { "docker", "stop", containerName });
-            int exitCode = process.waitFor();
-
-            if (exitCode == 0) {
-                logger.info("Stopped container: " + containerName);
-                return true;
-            } else {
-                logger.error("Failed to stop container: " + containerName + ", exit code: " + exitCode);
-                return false;
-            }
-        } catch (IOException | InterruptedException e) {
-            logger.error("Error stopping container: " + containerName, e);
+        CommandResult result = runCommand("docker", "stop", containerName);
+        if (result.exitCode == 0) {
+            logger.info("Stopped container: " + containerName);
+            return true;
+        } else {
+            logger.error("Failed to stop container: " + containerName + ", exit code: " + result.exitCode + ", error: " + result.stderr.trim());
             return false;
         }
     }
@@ -72,38 +59,104 @@ public class DockerManager {
         final long timeoutMillis = timeoutSeconds * 1000L;
 
         try {
-            // Use --tail=0 to only show NEW logs generated after this command starts
-            Process logProcess = Runtime.getRuntime().exec(
-                    new String[] { "docker", "logs", "--follow", "--tail=0", containerName });
-
-            // Read the output asynchronously
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(logProcess.getInputStream()))) {
+            Process process = new ProcessBuilder("docker", "logs", "--follow", "--tail=0", containerName)
+                    .redirectErrorStream(true) // Merge stderr into stdout
+                    .start();
+            
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line;
-                while ((System.currentTimeMillis() - startTime) < timeoutMillis &&
-                        (line = reader.readLine()) != null) {
-
-                    // Check for any of the ready patterns
-                    for (String pattern : readyPatterns) {
-                        if (line.contains(pattern)) {
-                            // Container is ready!
-                            logger.info("Container " + containerName + " is ready (found: " + pattern + ")");
-                            logProcess.destroy(); // Stop following logs
-                            return true;
+                while ((System.currentTimeMillis() - startTime) < timeoutMillis) {
+                    if (reader.ready()) {
+                        line = reader.readLine();
+                        if (line == null) break;
+                        
+                        for (String pattern : readyPatterns) {
+                            if (line.contains(pattern)) {
+                                logger.info("Container " + containerName + " is ready (found: " + pattern + ")");
+                                process.destroy();
+                                return true;
+                            }
+                        }
+                    } else {
+                        try {
+                            Thread.sleep(100);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                        if (!process.isAlive()) {
+                             break;
                         }
                     }
                 }
+            } finally {
+                process.destroy();
             }
-
-            // Make sure to stop the log process if we exit the loop
-            logProcess.destroy();
-
-            // If we got here without returning, we timed out
-            logger.warn("Timed out waiting for container " + containerName + " to initialize");
+            
+            logger.warn("Timeout waiting for container " + containerName);
             return false;
-
         } catch (IOException e) {
-            logger.error("Error monitoring docker logs for " + containerName, e);
-            return false;
+             logger.error("Error waiting for container ready: " + containerName, e);
+             return false;
+        }
+    }
+
+    private CommandResult runCommand(String... command) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(command);
+            Process process = pb.start();
+
+            StreamGobbler stdoutGobbler = new StreamGobbler(process.getInputStream());
+            StreamGobbler stderrGobbler = new StreamGobbler(process.getErrorStream());
+            stdoutGobbler.start();
+            stderrGobbler.start();
+
+            int exitCode = process.waitFor();
+            stdoutGobbler.join();
+            stderrGobbler.join();
+
+            return new CommandResult(exitCode, stdoutGobbler.getOutput(), stderrGobbler.getOutput());
+
+        } catch (IOException | InterruptedException e) {
+            logger.error("Error executing command: " + String.join(" ", command), e);
+            return new CommandResult(-1, "", e.getMessage());
+        }
+    }
+
+    private static class CommandResult {
+        final int exitCode;
+        final String stdout;
+        final String stderr;
+
+        CommandResult(int exitCode, String stdout, String stderr) {
+            this.exitCode = exitCode;
+            this.stdout = stdout;
+            this.stderr = stderr;
+        }
+    }
+
+    private static class StreamGobbler extends Thread {
+        private final InputStream stream;
+        private final StringBuilder output = new StringBuilder();
+
+        StreamGobbler(InputStream stream) {
+            this.stream = stream;
+        }
+
+        @Override
+        public void run() {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append(System.lineSeparator());
+                }
+            } catch (IOException e) {
+                // Ignore
+            }
+        }
+
+        public String getOutput() {
+            return output.toString();
         }
     }
 }
