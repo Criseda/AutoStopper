@@ -21,7 +21,8 @@ public class ActivityTracker {
     private final Map<String, Instant> lastActivity = new HashMap<>();
     private final AutoStopperPlugin plugin;
 
-    public ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager, AutoStopperPlugin plugin) {
+    public ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager,
+            AutoStopperPlugin plugin) {
         this.server = server;
         this.logger = logger;
         this.config = config;
@@ -54,6 +55,17 @@ public class ActivityTracker {
                         updateActivity(serverName);
                         logger.debug("Players active on " + serverName + ", refreshing timestamp");
                         return;
+                    }
+
+                    // If no players are connected, check if the server is actually running
+                    if (!serverManager.isServerRunning(serverName)) {
+                        removeActivity(serverName);
+                        return;
+                    }
+
+                    // If it is running but not being tracked, start tracking it now
+                    if (!lastActivity.containsKey(serverName)) {
+                        lastActivity.put(serverName, Instant.now());
                     }
 
                     // Otherwise check if the server has been inactive for too long

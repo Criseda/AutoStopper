@@ -2,6 +2,7 @@ package me.criseda.autostopper.commands;
 
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
+import com.velocitypowered.api.plugin.PluginContainer;
 
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.server.ActivityTracker;
@@ -10,6 +11,7 @@ import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Collections;
 
@@ -17,12 +19,14 @@ public class AutoStopperCommand implements SimpleCommand {
     private final AutoStopperConfig config;
     private final ServerManager serverManager;
     private final ActivityTracker activityTracker;
+    private final PluginContainer pluginContainer;
 
     public AutoStopperCommand(AutoStopperConfig config,
-            ServerManager serverManager, ActivityTracker activityTracker) {
+            ServerManager serverManager, ActivityTracker activityTracker, PluginContainer pluginContainer) {
         this.config = config;
         this.serverManager = serverManager;
         this.activityTracker = activityTracker;
+        this.pluginContainer = pluginContainer;
     }
 
     @Override
@@ -31,7 +35,8 @@ public class AutoStopperCommand implements SimpleCommand {
         String[] args = invocation.arguments();
 
         if (args.length == 0) {
-            source.sendMessage(Component.text("§6AutoStopper v1.1.1 §7- §eServer Auto-Stop Plugin"));
+            String version = pluginContainer.getDescription().getVersion().orElse("Unknown");
+            source.sendMessage(Component.text("§6AutoStopper " + version + " §7- §eServer Auto-Stop Plugin"));
             source.sendMessage(Component.text("§7Use §e/autostopper help §7for more information"));
             return;
         }
@@ -95,17 +100,17 @@ public class AutoStopperCommand implements SimpleCommand {
     public List<String> suggest(Invocation invocation) {
         // Allow suggestions for everyone to make tab completion work
         String[] args = invocation.arguments();
-        if (args.length == 1) {
-            String input = args[0].toLowerCase();
-            if ("help".startsWith(input)) {
-                return List.of("help");
-            } else if ("status".startsWith(input)) {
-                return List.of("status");
-            } else if ("reload".startsWith(input)) {
-                return List.of("reload");
-            } else if (input.isEmpty()) {
-                return List.of("help", "status", "reload");
-            }
+        
+        // If user hasn't typed anything yet or is typing the first argument
+        if (args.length == 0 || args.length == 1) {
+            String input = args.length == 1 ? args[0].toLowerCase() : "";
+            List<String> suggestions = new ArrayList<>();
+            
+            if ("help".startsWith(input)) suggestions.add("help");
+            if ("status".startsWith(input)) suggestions.add("status");
+            if ("reload".startsWith(input)) suggestions.add("reload");
+            
+            return suggestions;
         }
         return Collections.emptyList();
     }

@@ -175,6 +175,10 @@ public class ActivityTrackerTest {
         // Configure both getServer calls
         when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
         when(proxyServer.getServer("server2")).thenReturn(Optional.of(server2));
+
+        // Ensure Server Manager says server is running so it can be stopped
+        when(serverManager.isServerRunning("server2")).thenReturn(true);
+        lenient().when(serverManager.isServerRunning("server1")).thenReturn(true);
         
         // Configure timeout
         when(config.getInactivityTimeout()).thenReturn(60); // 1 minute timeout
@@ -201,6 +205,85 @@ public class ActivityTrackerTest {
         verify(serverManager).stopServer("server2");
     }
 
-    // The rest of the test methods can remain unchanged as they don't interact with the scheduler
-    // ...existing code...
+    @Test
+    public void testInactivityCheckEvaluatesStoppedServer() {
+        // Mock scheduler chain
+        Scheduler scheduler = mock(Scheduler.class);
+        Scheduler.TaskBuilder taskBuilder = mock(Scheduler.TaskBuilder.class);
+
+        // Capture the runnable passed to the scheduler
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), runnableCaptor.capture())).thenReturn(taskBuilder);
+        when(taskBuilder.repeat(anyLong(), any(TimeUnit.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+
+        // Start inactivity check
+        activityTracker.startInactivityCheck();
+
+        // Setup server mocks
+        RegisteredServer server1 = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
+        
+        // Server has no players
+        when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
+
+        // CRITICAL: Server is reported as NOT RUNNING
+        when(serverManager.isServerRunning("server1")).thenReturn(false);
+
+        // Manually place server in tracking map to verify it gets removed
+        try {
+            var field = ActivityTracker.class.getDeclaredField("lastActivity");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, Instant> activityMap = (Map<String, Instant>) field.get(activityTracker);
+            activityMap.put("server1", Instant.now().minus(Duration.ofHours(1))); // Very old activity
+        } catch (Exception e) {
+            fail("Reflection setup failed");
+        }
+
+        // Run check
+        Runnable inactivityCheck = runnableCaptor.getValue();
+        inactivityCheck.run();
+
+        // Verify:
+        // 1. stopServer was NEVER called (because it's already stopped)
+        verify(serverManager, never()).stopServer("server1");
+        
+        // 2. The server was removed from tracking (Activity map should actully contain it initially from setup, but we want to verify removal)
+        Instant activity = activityTracker.getLastActivity("server1");
+        assertNull(activity, "Server should have been removed from tracking because it is stopped");
+    }
+
+    @Test
+    public void testInactivityCheckTracksManuallyStartedServer() {
+        // Mock scheduler chain
+        Scheduler scheduler = mock(Scheduler.class);
+        Scheduler.TaskBuilder taskBuilder = mock(Scheduler.TaskBuilder.class);
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+        
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), runnableCaptor.capture())).thenReturn(taskBuilder);
+        when(taskBuilder.repeat(anyLong(), any(TimeUnit.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+
+        activityTracker.startInactivityCheck();
+
+        RegisteredServer server1 = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
+        when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
+
+        // CRITICAL: Server IS running, but NOT in our tracking map (simulating manual start)
+        when(serverManager.isServerRunning("server1")).thenReturn(true);
+        activityTracker.removeActivity("server1"); // Ensure map is empty
+
+        // Run check
+        runnableCaptor.getValue().run();
+
+        // Verify it was added to the map
+        assertNotNull(activityTracker.getLastActivity("server1"), "Manually started server should be auto-tracked");
+        
+        // Verify it was NOT stopped immediately (timeout hasn't passed)
+        verify(serverManager, never()).stopServer("server1");
+    }
 }

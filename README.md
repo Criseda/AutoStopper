@@ -3,6 +3,7 @@
 AutoStopper is a Velocity proxy plugin that automatically stops and starts Minecraft server containers based on player activity. It helps server administrators save resources by shutting down inactive Docker-based Minecraft servers.
 
 ## Download links
+
 - [Modrinth](https://modrinth.com/plugin/autostopper)
 
 ## Features
@@ -73,16 +74,15 @@ services:
     networks:
       - mc-network
     restart: unless-stopped
-    # Install Docker CLI in the container
     entrypoint: bash -c
     command: >
       "if [ ! -f /usr/bin/docker ]; then
-        apt-get update && 
-        apt-get install -y curl &&
-        curl -fsSL https://get.docker.com -o get-docker.sh &&
-        sh get-docker.sh &&
-        apt-get clean;
+        apt-get update && apt-get install -y docker.io && apt-get clean;
       fi &&
+      SOCKET_GID=$$(stat -c '%g' /var/run/docker.sock) &&
+      if ! getent group $$SOCKET_GID > /dev/null; then groupadd -g $$SOCKET_GID docker_sock; fi &&
+      GROUP_NAME=$$(getent group $$SOCKET_GID | cut -d: -f1) &&
+      usermod -aG $$GROUP_NAME bungeecord &&
       exec /usr/bin/run-bungeecord.sh"
 
   # Example Minecraft servers that can be managed by AutoStopper
@@ -123,8 +123,9 @@ networks:
 
 1. The Velocity container must have Docker CLI installed, which is why the entrypoint script installs it
 2. The Docker socket must be mounted (`/var/run/docker.sock:/var/run/docker.sock`)
-3. Set `restart: "no"` for managed servers so Docker doesn't automatically restart them
-4. Keep any hub/lobby servers with `restart: unless-stopped` if you want them to always be available
+3. The script automatically handles permissions by detecting the socket group ID and adding the server user to it.
+4. Set `restart: "no"` for managed servers so Docker doesn't automatically restart them
+5. Keep any hub/lobby servers with `restart: unless-stopped` if you want them to always be available
 
 ## Commands
 
@@ -159,13 +160,14 @@ networks:
    mvn clean package
    ```
 
-3. Find the JAR file in `target/AutoStopper-1.1.1-SNAPSHOT.jar`
+3. Find the JAR file in `target/AutoStopper-1.1.2.jar`
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the [MIT License](LICENSE). See the LICENSE file for details.
 
 ## Credits
 
-- Built for Velocity by Criseda
-- Uses itzg/minecraft-server Docker images
+- Built for Velocity by [Criseda](https://criseda.com)
+- Uses [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server)
+- Uses [itzg/mc-proxy](https://github.com/itzg/docker-mc-proxy)

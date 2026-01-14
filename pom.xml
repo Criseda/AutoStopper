@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>me.criseda</groupId>
     <artifactId>AutoStopper</artifactId>
-    <version>1.1.1-SNAPSHOT</version>
+    <version>1.1.2</version>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
@@ -65,6 +65,12 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

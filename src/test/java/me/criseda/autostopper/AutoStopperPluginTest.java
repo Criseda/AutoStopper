@@ -1,5 +1,6 @@
 package me.criseda.autostopper;
 
+import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.command.CommandManager;
@@ -48,6 +49,9 @@ public class AutoStopperPluginTest {
 
     @Mock
     private Logger logger;
+
+    @Mock
+    private PluginContainer pluginContainer;
 
     @Mock
     private EventManager eventManager;
@@ -106,7 +110,7 @@ public class AutoStopperPluginTest {
         when(repeatingTaskBuilder.schedule()).thenReturn(scheduledTask);
 
         // Create plugin instance with real temp directory
-        plugin = new AutoStopperPlugin(server, logger, tempDir);
+        plugin = new AutoStopperPlugin(server, logger, tempDir, pluginContainer);
 
         // Create a spy of the plugin to allow partial mocking
         spyPlugin = spy(plugin);
