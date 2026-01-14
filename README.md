@@ -60,7 +60,6 @@ services:
   velocity:
     image: itzg/mc-proxy
     container_name: velocity-server
-    user: root
     environment:
       TYPE: "VELOCITY"
       ONLINE_MODE: "true"
@@ -75,15 +74,15 @@ services:
     networks:
       - mc-network
     restart: unless-stopped
-    # Install Docker CLI in the container
     entrypoint: bash -c
     command: >
       "if [ ! -f /usr/bin/docker ]; then
-        apt-get update && 
-        apt-get install -y docker.io &&
-        apt-get clean;
+        apt-get update && apt-get install -y docker.io && apt-get clean;
       fi &&
-      chmod 666 /var/run/docker.sock &&
+      SOCKET_GID=$$(stat -c '%g' /var/run/docker.sock) &&
+      if ! getent group $$SOCKET_GID > /dev/null; then groupadd -g $$SOCKET_GID docker_sock; fi &&
+      GROUP_NAME=$$(getent group $$SOCKET_GID | cut -d: -f1) &&
+      usermod -aG $$GROUP_NAME bungeecord &&
       exec /usr/bin/run-bungeecord.sh"
 
   # Example Minecraft servers that can be managed by AutoStopper
@@ -124,8 +123,9 @@ networks:
 
 1. The Velocity container must have Docker CLI installed, which is why the entrypoint script installs it
 2. The Docker socket must be mounted (`/var/run/docker.sock:/var/run/docker.sock`)
-3. Set `restart: "no"` for managed servers so Docker doesn't automatically restart them
-4. Keep any hub/lobby servers with `restart: unless-stopped` if you want them to always be available
+3. The script automatically handles permissions by detecting the socket group ID and adding the server user to it.
+4. Set `restart: "no"` for managed servers so Docker doesn't automatically restart them
+5. Keep any hub/lobby servers with `restart: unless-stopped` if you want them to always be available
 
 ## Commands
 
