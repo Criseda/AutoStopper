@@ -48,7 +48,7 @@ public class AutoStopperCommandTest {
     @BeforeEach
     public void setup() {
         lenient().when(pluginContainer.getDescription()).thenReturn(pluginDescription);
-        lenient().when(pluginDescription.getVersion()).thenReturn(Optional.of("1.1.2-rc1"));
+        lenient().when(pluginDescription.getVersion()).thenReturn(Optional.of("1.1.2"));
         
         command = new AutoStopperCommand(config, serverManager, activityTracker, pluginContainer);
         // Removed default permission setup - will be set in individual tests when needed
@@ -67,7 +67,7 @@ public class AutoStopperCommandTest {
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("AutoStopper 1.1.2-rc1"));
+        assertTrue(messages.get(0).toString().contains("AutoStopper 1.1.2"));
         assertTrue(messages.get(1).toString().contains("help"));
     }
 
