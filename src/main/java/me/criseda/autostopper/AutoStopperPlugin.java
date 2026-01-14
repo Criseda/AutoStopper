@@ -4,6 +4,7 @@ import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.plugin.Plugin;
+import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 
@@ -20,21 +21,23 @@ import org.slf4j.Logger;
 import javax.inject.Inject;
 import java.nio.file.Path;
 
-@Plugin(id = "autostopper", name = "AutoStopper", version = "1.1.2", authors = { "criseda" })
+@Plugin(id = "autostopper", name = "AutoStopper", version = "1.1.2-rc1", authors = { "criseda" })
 public class AutoStopperPlugin {
     private final ProxyServer server;
     private final Logger logger;
     private final Path dataDirectory;
+    private final PluginContainer pluginContainer;
 
     private AutoStopperConfig config;
     private ServerManager serverManager;
     private ActivityTracker activityTracker;
 
     @Inject
-    public AutoStopperPlugin(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory) {
+    public AutoStopperPlugin(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory, PluginContainer pluginContainer) {
         this.server = server;
         this.logger = logger;
         this.dataDirectory = dataDirectory;
+        this.pluginContainer = pluginContainer;
     }
 
 	@Subscribe
@@ -106,7 +109,7 @@ public class AutoStopperPlugin {
 			.build();
 			
 		server.getCommandManager().register(autoStopperMeta,
-			new AutoStopperCommand(config, serverManager, activityTracker));
+			new AutoStopperCommand(config, serverManager, activityTracker, pluginContainer));
 		logger.info("Registered command: /autostopper");
 		
 		// Register server command interceptor

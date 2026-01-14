@@ -2,6 +2,8 @@ package me.criseda.autostopper.commands;
 
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
+import com.velocitypowered.api.plugin.PluginContainer;
+import com.velocitypowered.api.plugin.PluginDescription;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
@@ -15,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -33,12 +36,21 @@ public class AutoStopperCommandTest {
     
     @Mock
     private CommandSource source;
+
+    @Mock
+    private PluginContainer pluginContainer;
+
+    @Mock
+    private PluginDescription pluginDescription;
     
     private AutoStopperCommand command;
     
     @BeforeEach
     public void setup() {
-        command = new AutoStopperCommand(config, serverManager, activityTracker);
+        lenient().when(pluginContainer.getDescription()).thenReturn(pluginDescription);
+        lenient().when(pluginDescription.getVersion()).thenReturn(Optional.of("1.1.2-rc1"));
+        
+        command = new AutoStopperCommand(config, serverManager, activityTracker, pluginContainer);
         // Removed default permission setup - will be set in individual tests when needed
     }
     
@@ -55,7 +67,25 @@ public class AutoStopperCommandTest {
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("AutoStopper 1.1.2"));
+        assertTrue(messages.get(0).toString().contains("AutoStopper 1.1.2-rc1"));
+        assertTrue(messages.get(1).toString().contains("help"));
+    }
+
+    @Test
+    public void testExecuteWithNoArgs_UnknownVersion() {
+        // Arrange
+        when(pluginDescription.getVersion()).thenReturn(Optional.empty());
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{});
+        
+        // Act
+        command.execute(invocation);
+        
+        // Assert
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(messageCaptor.capture());
+        
+        List<Component> messages = messageCaptor.getAllValues();
+        assertTrue(messages.get(0).toString().contains("AutoStopper Unknown"));
         assertTrue(messages.get(1).toString().contains("help"));
     }
     

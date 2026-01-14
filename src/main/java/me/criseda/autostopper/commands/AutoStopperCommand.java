@@ -2,6 +2,7 @@ package me.criseda.autostopper.commands;
 
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
+import com.velocitypowered.api.plugin.PluginContainer;
 
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.server.ActivityTracker;
@@ -18,12 +19,14 @@ public class AutoStopperCommand implements SimpleCommand {
     private final AutoStopperConfig config;
     private final ServerManager serverManager;
     private final ActivityTracker activityTracker;
+    private final PluginContainer pluginContainer;
 
     public AutoStopperCommand(AutoStopperConfig config,
-            ServerManager serverManager, ActivityTracker activityTracker) {
+            ServerManager serverManager, ActivityTracker activityTracker, PluginContainer pluginContainer) {
         this.config = config;
         this.serverManager = serverManager;
         this.activityTracker = activityTracker;
+        this.pluginContainer = pluginContainer;
     }
 
     @Override
@@ -32,7 +35,8 @@ public class AutoStopperCommand implements SimpleCommand {
         String[] args = invocation.arguments();
 
         if (args.length == 0) {
-            source.sendMessage(Component.text("§6AutoStopper 1.1.2 §7- §eServer Auto-Stop Plugin"));
+            String version = pluginContainer.getDescription().getVersion().orElse("Unknown");
+            source.sendMessage(Component.text("§6AutoStopper " + version + " §7- §eServer Auto-Stop Plugin"));
             source.sendMessage(Component.text("§7Use §e/autostopper help §7for more information"));
             return;
         }
