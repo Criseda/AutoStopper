@@ -3,6 +3,8 @@ package me.criseda.autostopper.server;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.config.ConfigSnapshot;
+import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerManager;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
@@ -59,7 +61,7 @@ public class ServerManagerTest {
     @Test
     public void testGetServerStatus_Running() {
         // Setup
-        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.RUNNING);
         
         // Execute
@@ -73,7 +75,7 @@ public class ServerManagerTest {
     @Test
     public void testGetServerStatus_Stopped() {
         // Setup
-        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.STOPPED);
         
         // Execute
@@ -87,7 +89,7 @@ public class ServerManagerTest {
     @Test
     public void testStartServer() {
         // Setup
-        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.startContainer("container1")).thenReturn(ContainerStatus.RUNNING);
         
         // Execute
@@ -101,7 +103,7 @@ public class ServerManagerTest {
     @Test
     public void testStopServer() {
         // Setup
-        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.stopContainer("container1")).thenReturn(ContainerStatus.STOPPED);
         
         // Execute
@@ -116,7 +118,7 @@ public class ServerManagerTest {
     @Test
     public void testWaitForServerReady() {
         // Setup
-        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.waitForContainerReady(eq("container1"), eq(30), anyString(), anyString(), anyString()))
             .thenReturn(true);
         
@@ -137,7 +139,7 @@ public class ServerManagerTest {
     @Test
     public void testIsMonitoredServer() {
         // Setup
-        when(config.getServerNames()).thenReturn(new String[]{"server1", "server2"});
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1", "server2", "container2")));
         
         // Execute & Verify
         assertTrue(serverManager.isMonitoredServer("server1"));
@@ -150,7 +152,7 @@ public class ServerManagerTest {
         // Setup
         Map<String, String> mapping = new HashMap<>();
         mapping.put("server1", "container1");
-        when(config.getServerToContainerMap()).thenReturn(mapping);
+        when(config.snapshot()).thenReturn(snapshot(mapping));
 
         // Execute & Verify
         assertEquals("container1", serverManager.getContainerName("server1"));
@@ -160,7 +162,7 @@ public class ServerManagerTest {
     @Test
     public void testUnmappedServerIsNeverInspectedStartedOrStopped() {
         // Setup - no mapping for "server2"
-        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
 
         // Execute & Verify
         assertEquals(Optional.empty(), serverManager.getServerStatus("server2"));
@@ -209,7 +211,7 @@ public class ServerManagerTest {
     @Test
     public void testGetServerStatusAsync() {
         // Setup
-        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.STOPPED);
 
         // Execute
@@ -223,7 +225,7 @@ public class ServerManagerTest {
     @Test
     public void testStartServerAsync() {
         // Setup
-        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.startContainer("container1")).thenReturn(ContainerStatus.RUNNING);
 
         // Execute
@@ -237,7 +239,7 @@ public class ServerManagerTest {
     @Test
     public void testWaitForServerReadyAsync() {
         // Setup
-        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.waitForContainerReady(
                 eq("container1"), eq(30), anyString(), anyString(), anyString())).thenReturn(true);
 
@@ -256,7 +258,7 @@ public class ServerManagerTest {
         Map<String, String> mapping = new LinkedHashMap<>();
         mapping.put("server1", "container1");
         mapping.put("server2", "container2");
-        when(config.getServerToContainerMap()).thenReturn(mapping);
+        when(config.snapshot()).thenReturn(snapshot(mapping));
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.RUNNING);
         when(dockerManager.getContainerStatus("container2")).thenReturn(ContainerStatus.TIMED_OUT);
 
@@ -277,7 +279,7 @@ public class ServerManagerTest {
         Map<String, String> mapping = Map.of(
                 "server1", "container1",
                 "server2", "container2");
-        when(config.getServerToContainerMap()).thenReturn(mapping);
+        when(config.snapshot()).thenReturn(snapshot(mapping));
         CountDownLatch started = new CountDownLatch(2);
         CountDownLatch interrupted = new CountDownLatch(2);
         when(dockerManager.getContainerStatus(anyString())).thenAnswer(invocation -> {
@@ -299,5 +301,70 @@ public class ServerManagerTest {
         assertTrue(interrupted.await(2, TimeUnit.SECONDS),
                 "cancelling the fan-in should interrupt every outstanding status check");
         assertTrue(statuses.isCancelled());
+    }
+
+    @Test
+    public void testCapturedMappingPinsContainerAcrossReload() {
+        ConfigSnapshot previous = snapshot(Map.of("server1", "old-container"));
+        ConfigSnapshot current = snapshot(Map.of("server1", "new-container"));
+        when(config.snapshot()).thenReturn(previous, current);
+        when(dockerManager.getContainerStatus("old-container")).thenReturn(ContainerStatus.STOPPED);
+        when(dockerManager.startContainer("old-container")).thenReturn(ContainerStatus.RUNNING);
+        when(dockerManager.waitForContainerReady(
+                eq("old-container"), eq(30), anyString(), anyString(), anyString())).thenReturn(true);
+
+        ServerMapping captured = serverManager.getServerMapping("server1").orElseThrow();
+        assertEquals("new-container", serverManager.getContainerName("server1"));
+
+        assertEquals(Optional.of(ContainerStatus.STOPPED), serverManager.getServerStatus(captured));
+        assertEquals(ContainerStatus.RUNNING, serverManager.startServer(captured));
+        assertTrue(serverManager.waitForServerReady(captured, 30));
+        verify(dockerManager, never()).getContainerStatus("new-container");
+        verify(dockerManager, never()).startContainer("new-container");
+    }
+
+    @Test
+    public void testGetStatusesAsyncUsesProvidedSnapshot() {
+        Map<String, String> mappings = new LinkedHashMap<>();
+        mappings.put("server1", "old-container-1");
+        mappings.put("server2", "old-container-2");
+        ConfigSnapshot captured = snapshot(mappings);
+        when(dockerManager.getContainerStatus("old-container-1")).thenReturn(ContainerStatus.RUNNING);
+        when(dockerManager.getContainerStatus("old-container-2")).thenReturn(ContainerStatus.STOPPED);
+
+        Map<String, Optional<ContainerStatus>> result = serverManager.getStatusesAsync(captured).join();
+
+        assertEquals(List.of("server1", "server2"), new java.util.ArrayList<>(result.keySet()));
+        verifyNoInteractions(config);
+        verify(dockerManager).getContainerStatus("old-container-1");
+        verify(dockerManager).getContainerStatus("old-container-2");
+    }
+
+    @Test
+    public void testReconcileRemovesIdleStateButRetainsActiveStateUntilReleased() {
+        ConfigSnapshot previous = snapshot(Map.of("server1", "container1"));
+        ConfigSnapshot current = ConfigSnapshot.emptyDefault();
+
+        AtomicBoolean idle = serverManager.getServerStartingStatus("server1");
+        serverManager.reconcileConfig(previous, current);
+        assertNotSame(idle, serverManager.getServerStartingStatus("server1"));
+
+        AtomicBoolean active = serverManager.getServerStartingStatus("server1");
+        active.set(true);
+        serverManager.reconcileConfig(previous, current);
+        assertSame(active, serverManager.getServerStartingStatus("server1"));
+
+        when(config.snapshot()).thenReturn(current);
+        serverManager.releaseServerStartingStatus("server1", active);
+        assertFalse(active.get());
+        assertNotSame(active, serverManager.getServerStartingStatus("server1"));
+    }
+
+    private ConfigSnapshot snapshot(Map<String, String> mappings) {
+        return new ConfigSnapshot(
+                ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS,
+                mappings.entrySet().stream()
+                        .map(entry -> new ServerMapping(entry.getKey(), entry.getValue()))
+                        .toList());
     }
 }

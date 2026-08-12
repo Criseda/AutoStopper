@@ -7,6 +7,8 @@ import com.velocitypowered.api.scheduler.ScheduledTask;
 import com.velocitypowered.api.scheduler.Scheduler;
 import me.criseda.autostopper.AutoStopperPlugin;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.config.ConfigSnapshot;
+import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import org.junit.jupiter.api.AfterEach;
@@ -48,12 +50,15 @@ public class ActivityTrackerTest {
 
     private ActivityTracker activityTracker;
     private AutoStopperExecutor executor;
+    private ServerMapping mapping1;
+    private ServerMapping mapping2;
 
     @BeforeEach
     public void setup() {
         // Configure only what's needed for initialization
-        String[] serverNames = {"server1", "server2"};
-        when(config.getServerNames()).thenReturn(serverNames);
+        mapping1 = new ServerMapping("server1", "container1");
+        mapping2 = new ServerMapping("server2", "container2");
+        when(config.snapshot()).thenReturn(new ConfigSnapshot(300, List.of(mapping1, mapping2)));
         
         executor = new AutoStopperExecutor();
         activityTracker = new ActivityTracker(proxyServer, logger, config, serverManager, executor, plugin);
@@ -128,7 +133,6 @@ public class ActivityTrackerTest {
         players.add(mock(Player.class));
         when(server1.getPlayersConnected()).thenReturn(players);
         when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
-        when(serverManager.isMonitoredServer("server1")).thenReturn(true);
         
         // Execute the captured runnable
         Runnable inactivityCheck = runnableCaptor.getValue();
@@ -188,11 +192,11 @@ public class ActivityTrackerTest {
         when(proxyServer.getServer("server2")).thenReturn(Optional.of(server2));
 
         // Ensure Server Manager says server is running so it can be stopped
-        when(serverManager.getServerStatus("server2")).thenReturn(Optional.of(ContainerStatus.RUNNING));
-        lenient().when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        when(serverManager.getServerStatus(mapping2)).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        lenient().when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.RUNNING));
         
         // Configure timeout
-        when(config.getInactivityTimeout()).thenReturn(60); // 1 minute timeout
+        when(config.snapshot()).thenReturn(new ConfigSnapshot(60, List.of(mapping1, mapping2)));
         
         // Set inactivity time to 70 seconds ago
         Map<String, Instant> lastActivity = new HashMap<>();
@@ -203,7 +207,10 @@ public class ActivityTrackerTest {
         try {
             var field = ActivityTracker.class.getDeclaredField("lastActivity");
             field.setAccessible(true);
-            field.set(activityTracker, lastActivity);
+            @SuppressWarnings("unchecked")
+            Map<String, Instant> activityMap = (Map<String, Instant>) field.get(activityTracker);
+            activityMap.clear();
+            activityMap.putAll(lastActivity);
         } catch (Exception e) {
             fail("Failed to set lastActivity field: " + e.getMessage());
         }
@@ -213,7 +220,7 @@ public class ActivityTrackerTest {
         runAndWait(inactivityCheck);
         
         // Verify server was stopped
-        verify(serverManager).stopServer("server2");
+        verify(serverManager).stopServer(mapping2);
     }
 
     @Test
@@ -240,7 +247,7 @@ public class ActivityTrackerTest {
         when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
 
         // CRITICAL: Server is reported as NOT RUNNING (stopped)
-        when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.STOPPED));
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.STOPPED));
 
         // Manually place server in tracking map to verify it gets removed
         try {
@@ -259,7 +266,7 @@ public class ActivityTrackerTest {
 
         // Verify:
         // 1. stopServer was NEVER called (because it's already stopped)
-        verify(serverManager, never()).stopServer("server1");
+        verify(serverManager, never()).stopServer(mapping1);
         
         // 2. The server was removed from tracking (Activity map should actully contain it initially from setup, but we want to verify removal)
         Instant activity = activityTracker.getLastActivity("server1");
@@ -285,7 +292,7 @@ public class ActivityTrackerTest {
         when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
 
         // Indeterminate status: Docker daemon unreachable
-        when(serverManager.getServerStatus("server1"))
+        when(serverManager.getServerStatus(mapping1))
                 .thenReturn(Optional.of(ContainerStatus.INACCESSIBLE));
 
         // Server is in tracking map with old activity
@@ -303,7 +310,7 @@ public class ActivityTrackerTest {
         runAndWait(runnableCaptor.getValue());
 
         // Verify: no shutdown attempted, tracking removed, operator warned
-        verify(serverManager, never()).stopServer("server1");
+        verify(serverManager, never()).stopServer(mapping1);
         assertNull(activityTracker.getLastActivity("server1"),
                 "Server should be removed from tracking on indeterminate status");
         verify(logger).warn(contains("skipping inactivity shutdown"), eq("server1"),
@@ -327,12 +334,12 @@ public class ActivityTrackerTest {
         RegisteredServer server1 = mock(RegisteredServer.class);
         when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
         when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
-        when(serverManager.getServerStatus("server1")).thenReturn(Optional.empty());
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.empty());
 
         // Run check
         runAndWait(runnableCaptor.getValue());
 
-        verify(serverManager, never()).stopServer("server1");
+        verify(serverManager, never()).stopServer(mapping1);
         assertNull(activityTracker.getLastActivity("server1"));
     }
 
@@ -355,7 +362,7 @@ public class ActivityTrackerTest {
         when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
 
         // CRITICAL: Server IS running, but NOT in our tracking map (simulating manual start)
-        when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.RUNNING));
         activityTracker.removeActivity("server1"); // Ensure map is empty
 
         // Run check
@@ -365,7 +372,45 @@ public class ActivityTrackerTest {
         assertNotNull(activityTracker.getLastActivity("server1"), "Manually started server should be auto-tracked");
         
         // Verify it was NOT stopped immediately (timeout hasn't passed)
-        verify(serverManager, never()).stopServer("server1");
+        verify(serverManager, never()).stopServer(mapping1);
+    }
+
+    @Test
+    public void testInactivityScanUsesOneSnapshotAcrossConcurrentReload() throws ReflectiveOperationException {
+        Scheduler scheduler = mock(Scheduler.class);
+        Scheduler.TaskBuilder taskBuilder = mock(Scheduler.TaskBuilder.class);
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), runnableCaptor.capture())).thenReturn(taskBuilder);
+        when(taskBuilder.repeat(anyLong(), any(TimeUnit.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+
+        ConfigSnapshot oldSnapshot = new ConfigSnapshot(60, List.of(mapping1));
+        ServerMapping replacement = new ServerMapping("server1", "replacement-container");
+        ConfigSnapshot newSnapshot = new ConfigSnapshot(3_600, List.of(replacement));
+        java.util.concurrent.atomic.AtomicReference<ConfigSnapshot> visibleSnapshot =
+                new java.util.concurrent.atomic.AtomicReference<>(oldSnapshot);
+        when(config.snapshot()).thenAnswer(ignored -> visibleSnapshot.get());
+
+        RegisteredServer server1 = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
+        when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
+        when(serverManager.getServerStatus(mapping1)).thenAnswer(ignored -> {
+            visibleSnapshot.set(newSnapshot);
+            return Optional.of(ContainerStatus.RUNNING);
+        });
+
+        var field = ActivityTracker.class.getDeclaredField("lastActivity");
+        field.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<String, Instant> activityMap = (Map<String, Instant>) field.get(activityTracker);
+        activityMap.put("server1", Instant.now().minusSeconds(70));
+
+        activityTracker.startInactivityCheck();
+        runAndWait(runnableCaptor.getValue());
+
+        verify(serverManager).stopServer(mapping1);
+        verify(serverManager, never()).stopServer(replacement);
     }
 
     @Test
@@ -385,7 +430,7 @@ public class ActivityTrackerTest {
 
         CountDownLatch statusStarted = new CountDownLatch(1);
         CountDownLatch releaseStatus = new CountDownLatch(1);
-        when(serverManager.getServerStatus("server1")).thenAnswer(invocation -> {
+        when(serverManager.getServerStatus(mapping1)).thenAnswer(invocation -> {
             statusStarted.countDown();
             releaseStatus.await();
             return Optional.of(ContainerStatus.STOPPED);
@@ -400,7 +445,7 @@ public class ActivityTrackerTest {
         assertTrue(statusStarted.await(1, TimeUnit.SECONDS));
 
         scheduledCallback.run();
-        verify(serverManager, times(1)).getServerStatus("server1");
+        verify(serverManager, times(1)).getServerStatus(mapping1);
         verify(logger).debug(contains("previous scan is still running"));
 
         releaseStatus.countDown();
@@ -422,6 +467,19 @@ public class ActivityTrackerTest {
         assertTrue(tracker.requestInactivityCheck().isCompletedExceptionally());
         assertTrue(tracker.requestInactivityCheck().isDone());
         verify(rejectingExecutor, times(2)).supply(any());
+    }
+
+    @Test
+    public void testReconcileConfigPrunesRemovedAndInitializesAddedServers() {
+        ConfigSnapshot previous = new ConfigSnapshot(300, List.of(mapping1, mapping2));
+        ServerMapping mapping3 = new ServerMapping("server3", "container3");
+        ConfigSnapshot current = new ConfigSnapshot(300, List.of(mapping2, mapping3));
+
+        activityTracker.reconcileConfig(previous, current);
+
+        assertNull(activityTracker.getLastActivity("server1"));
+        assertNotNull(activityTracker.getLastActivity("server2"));
+        assertNotNull(activityTracker.getLastActivity("server3"));
     }
 
     private void runAndWait(Runnable inactivityCheck) {

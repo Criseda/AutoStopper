@@ -62,6 +62,23 @@ function Get-PluginJarPath {
     return $jar.FullName
 }
 
+function Write-SmokeConfig([string]$pluginsDirectory) {
+    # The plugins directory is persisted between smoke runs. Always replace
+    # older generated/sample mappings so the bare proxy starts from a known,
+    # valid configuration with no registered backend servers.
+    $dataDirectory = Join-Path $pluginsDirectory "autostopper"
+    New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
+    $config = @(
+        "inactivity_timeout_seconds: 300"
+        "monitored_servers: []"
+        ""
+    ) -join "`n"
+    [IO.File]::WriteAllText(
+        (Join-Path $dataDirectory "config.yml"),
+        $config,
+        [Text.UTF8Encoding]::new($false))
+}
+
 function Get-VelocityJar($profile, $dir) {
     $runtime = Join-Path $dir "runtime"
     New-Item -ItemType Directory -Path $runtime -Force | Out-Null
@@ -102,6 +119,7 @@ function Invoke-SmokeProfile($name, $profile) {
     $plugins = Join-Path $dir "plugins"
     New-Item -ItemType Directory -Path $plugins -Force | Out-Null
     Copy-Item -LiteralPath (Get-PluginJarPath) -Destination (Join-Path $plugins "AutoStopper.jar") -Force
+    Write-SmokeConfig $plugins
     Get-VelocityJar $profile $dir | Out-Null
 
     Write-Host ""

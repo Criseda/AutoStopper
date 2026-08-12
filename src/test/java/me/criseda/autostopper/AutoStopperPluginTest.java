@@ -12,6 +12,9 @@ import com.velocitypowered.api.scheduler.Scheduler.TaskBuilder;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import me.criseda.autostopper.commands.AutoStopperCommand;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.config.ConfigLoadResult;
+import me.criseda.autostopper.config.ConfigSnapshot;
+import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.server.ActivityTracker;
@@ -133,6 +136,7 @@ public class AutoStopperPluginTest {
         ServerManager mockServerManager = mock(ServerManager.class);
         ActivityTracker mockActivityTracker = mock(ActivityTracker.class);
         AutoStopperExecutor mockExecutor = mock(AutoStopperExecutor.class);
+        when(mockConfig.loadConfig()).thenReturn(ConfigLoadResult.success(ConfigSnapshot.emptyDefault()));
         
         // Create a partial mock of the plugin to stub out the object creation
         AutoStopperPlugin spyPlugin = spy(plugin);
@@ -154,6 +158,24 @@ public class AutoStopperPluginTest {
         verify(commandManager).register(eq(commandMeta), any(AutoStopperCommand.class));
         verify(commandManager, never()).unregister(anyString());
         verify(mockActivityTracker).startInactivityCheck();
+    }
+
+    @Test
+    void testInvalidInitialConfigAbortsBeforeRuntimeRegistration() {
+        AutoStopperConfig mockConfig = mock(AutoStopperConfig.class);
+        ConfigSnapshot retained = ConfigSnapshot.emptyDefault();
+        when(mockConfig.loadConfig()).thenReturn(
+                ConfigLoadResult.failure(retained, java.util.List.of("config.yml: invalid YAML")));
+
+        AutoStopperPlugin spyPlugin = spy(plugin);
+        doReturn(mockConfig).when(spyPlugin).createConfig();
+
+        spyPlugin.onProxyInitialize(mock(ProxyInitializeEvent.class));
+
+        verify(spyPlugin, never()).createExecutor();
+        verify(eventManager, never()).register(any(), any());
+        verify(commandManager, never()).register(any(CommandMeta.class), any(AutoStopperCommand.class));
+        verify(logger).error(contains("initialization aborted"), contains("invalid YAML"));
     }
 
     @Test
@@ -223,11 +245,9 @@ public class AutoStopperPluginTest {
     @Test
     void testCreateActivityTracker() {
         // Prepare - important to set up configuration for activity tracker initialization
-        when(config.getInactivityTimeout()).thenReturn(300);
-        when(config.getServerNames()).thenReturn(new String[]{"test-server"});
-        Map<String, String> serverMap = new HashMap<>();
-        serverMap.put("test-server", "test-container");
-        when(config.getServerToContainerMap()).thenReturn(serverMap);
+        ConfigSnapshot snapshot = new ConfigSnapshot(300,
+                java.util.List.of(new ServerMapping("test-server", "test-container")));
+        when(config.snapshot()).thenReturn(snapshot);
         
         AutoStopperExecutor executor = new AutoStopperExecutor();
         try {

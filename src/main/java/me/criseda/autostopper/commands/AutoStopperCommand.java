@@ -5,6 +5,8 @@ import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.plugin.PluginContainer;
 
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.config.ConfigLoadResult;
+import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
@@ -69,10 +71,11 @@ public class AutoStopperCommand implements SimpleCommand {
     private void showStatus(CommandSource source) {
         source.sendMessage(Component.text("§6AutoStopper Server Status:"));
 
-        String[] serverNames = config.getServerNames();
+        ConfigSnapshot snapshot = config.snapshot();
+        List<String> serverNames = snapshot.serverNames();
         // All Docker status checks run on the plugin-owned executor and fan
         // back in here, never blocking the command thread.
-        serverManager.getStatusesAsync(List.of(serverNames)).whenComplete((statuses, error) -> {
+        serverManager.getStatusesAsync(snapshot).whenComplete((statuses, error) -> {
             if (error != null) {
                 source.sendMessage(Component.text("§cCould not collect server statuses."));
                 return;
@@ -128,7 +131,15 @@ public class AutoStopperCommand implements SimpleCommand {
 
     private void reloadConfig(CommandSource source) {
         source.sendMessage(Component.text("§6Reloading AutoStopper configuration..."));
-        config.loadConfig();
+        ConfigSnapshot previous = config.snapshot();
+        ConfigLoadResult result = config.loadConfig();
+        if (!result.successful()) {
+            source.sendMessage(Component.text("§cConfiguration reload failed: " + result.errorSummary()));
+            return;
+        }
+
+        serverManager.reconcileConfig(previous, result.snapshot());
+        activityTracker.reconcileConfig(previous, result.snapshot());
         source.sendMessage(Component.text("§aConfiguration reloaded successfully!"));
     }
 

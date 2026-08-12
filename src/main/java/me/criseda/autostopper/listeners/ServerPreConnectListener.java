@@ -5,6 +5,7 @@ import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import me.criseda.autostopper.AutoStopperPlugin;
+import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.server.ActivityTracker;
@@ -43,7 +44,8 @@ public class ServerPreConnectListener {
         RegisteredServer targetServer = target.get();
         String serverName = targetServer.getServerInfo().getName();
 
-        if (!serverManager.isMonitoredServer(serverName)) {
+        Optional<ServerMapping> mapping = serverManager.getServerMapping(serverName);
+        if (mapping.isEmpty()) {
             return;
         }
 
@@ -71,12 +73,14 @@ public class ServerPreConnectListener {
         // connection asynchronously, so this event thread is never blocked.
         event.setResult(ServerPreConnectEvent.ServerResult.denied());
 
-        serverManager.getServerStatusAsync(serverName).whenComplete((status, error) ->
-                handleStatusResult(player, targetServer, serverName, status, error, isStarting));
+        ServerMapping capturedMapping = mapping.get();
+        serverManager.getServerStatusAsync(capturedMapping).whenComplete((status, error) ->
+                handleStatusResult(player, targetServer, capturedMapping, status, error, isStarting));
     }
 
-    private void handleStatusResult(Player player, RegisteredServer targetServer, String serverName,
+    private void handleStatusResult(Player player, RegisteredServer targetServer, ServerMapping mapping,
             Optional<ContainerStatus> status, Throwable error, AtomicBoolean isStarting) {
+        String serverName = mapping.serverName();
         if (error != null) {
             if (error instanceof AutoStopperExecutor.SaturationException) {
                 player.sendMessage(Component
@@ -86,13 +90,13 @@ public class ServerPreConnectListener {
                 player.sendMessage(Component
                         .text("§cError checking status of server §e" + serverName + "§c."));
             }
-            isStarting.set(false);
+            releaseStarting(serverName, isStarting);
             return;
         }
 
         if (status.isEmpty()) {
             player.sendMessage(Component.text("§cServer §e" + serverName + "§c has no container mapping."));
-            isStarting.set(false);
+            releaseStarting(serverName, isStarting);
             return;
         }
 
@@ -100,42 +104,43 @@ public class ServerPreConnectListener {
             case RUNNING: {
                 // Server is up - connect the player now.
                 reconnectPlayer(player, targetServer, serverName);
-                isStarting.set(false);
+                releaseStarting(serverName, isStarting);
                 break;
             }
             case STOPPED:
                 // The start chain clears the starting flag when it completes.
-                startServerForPlayer(player, targetServer, serverName, isStarting);
+                startServerForPlayer(player, targetServer, mapping, isStarting);
                 break;
             case MISSING:
                 player.sendMessage(Component
                         .text("§cThe container for server §e" + serverName + "§c does not exist."));
-                isStarting.set(false);
+                releaseStarting(serverName, isStarting);
                 break;
             case INACCESSIBLE:
                 player.sendMessage(Component
                         .text("§cCannot reach the Docker daemon to manage server §e" + serverName + "§c."));
-                isStarting.set(false);
+                releaseStarting(serverName, isStarting);
                 break;
             case TIMED_OUT:
                 player.sendMessage(Component
                         .text("§cCould not check the status of server §e" + serverName
                                 + "§c in time. Try again."));
-                isStarting.set(false);
+                releaseStarting(serverName, isStarting);
                 break;
             case FAILED:
                 player.sendMessage(Component
                         .text("§cCould not check the status of server §e" + serverName + "§c."));
-                isStarting.set(false);
+                releaseStarting(serverName, isStarting);
                 break;
         }
     }
 
-    private void startServerForPlayer(Player player, RegisteredServer targetServer, String serverName,
+    private void startServerForPlayer(Player player, RegisteredServer targetServer, ServerMapping mapping,
             AtomicBoolean isStarting) {
+        String serverName = mapping.serverName();
         player.sendMessage(Component.text("§eServer is currently offline. Starting it up for you..."));
 
-        CompletableFuture<ContainerStatus> startFuture = serverManager.startServerAsync(serverName);
+        CompletableFuture<ContainerStatus> startFuture = serverManager.startServerAsync(mapping);
         startFuture.whenComplete((startResult, error) -> {
             if (error != null) {
                 if (error instanceof AutoStopperExecutor.SaturationException) {
@@ -145,13 +150,13 @@ public class ServerPreConnectListener {
                     plugin.getLogger().error("Error while starting server {}", serverName, error);
                     player.sendMessage(Component.text("§cError starting server §e" + serverName + "§c."));
                 }
-                isStarting.set(false);
+                releaseStarting(serverName, isStarting);
                 return;
             }
 
             if (startResult == ContainerStatus.RUNNING) {
                 // The readiness chain clears the starting flag when it completes.
-                waitForServerReady(player, targetServer, serverName, isStarting);
+                waitForServerReady(player, targetServer, mapping, isStarting);
                 return;
             }
 
@@ -172,14 +177,15 @@ public class ServerPreConnectListener {
                     player.sendMessage(Component.text("§cFailed to start server §e" + serverName));
                     break;
             }
-            isStarting.set(false);
+            releaseStarting(serverName, isStarting);
         });
     }
 
-    private void waitForServerReady(Player player, RegisteredServer targetServer, String serverName,
+    private void waitForServerReady(Player player, RegisteredServer targetServer, ServerMapping mapping,
             AtomicBoolean isStarting) {
+        String serverName = mapping.serverName();
         CompletableFuture<Boolean> readyFuture =
-                serverManager.waitForServerReadyAsync(serverName, SERVER_READY_TIMEOUT_SECONDS);
+                serverManager.waitForServerReadyAsync(mapping, SERVER_READY_TIMEOUT_SECONDS);
         readyFuture.whenComplete((ready, error) -> {
             try {
                 if (error != null) {
@@ -203,9 +209,14 @@ public class ServerPreConnectListener {
                             Component.text("§eTry again in a moment with §b/server " + serverName));
                 }
             } finally {
-                isStarting.set(false);
+                releaseStarting(serverName, isStarting);
             }
         });
+    }
+
+    private void releaseStarting(String serverName, AtomicBoolean isStarting) {
+        isStarting.set(false);
+        serverManager.releaseServerStartingStatus(serverName, isStarting);
     }
 
     private void reconnectPlayer(Player player, RegisteredServer targetServer, String serverName) {

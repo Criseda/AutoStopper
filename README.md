@@ -73,7 +73,7 @@ monitored_servers:
 
 ### Configuration Options
 
-- `inactivity_timeout_seconds`: Time in seconds a server must be inactive before being shut down (default: 900 seconds/15 minutes)
+- `inactivity_timeout_seconds`: Time in seconds a server must be inactive before being shut down (default: 300 seconds/5 minutes)
 - `monitored_servers`: List of server mappings
   - `server_name`: Name of the server in Velocity configuration
   - `container_name`: Corresponding Docker container name
