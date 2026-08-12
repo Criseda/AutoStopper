@@ -2,6 +2,7 @@ package me.criseda.autostopper;
 
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
+import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.command.CommandMeta;
@@ -11,6 +12,7 @@ import com.velocitypowered.api.scheduler.Scheduler.TaskBuilder;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import me.criseda.autostopper.commands.AutoStopperCommand;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
@@ -130,13 +132,15 @@ public class AutoStopperPluginTest {
         AutoStopperConfig mockConfig = mock(AutoStopperConfig.class);
         ServerManager mockServerManager = mock(ServerManager.class);
         ActivityTracker mockActivityTracker = mock(ActivityTracker.class);
+        AutoStopperExecutor mockExecutor = mock(AutoStopperExecutor.class);
         
         // Create a partial mock of the plugin to stub out the object creation
         AutoStopperPlugin spyPlugin = spy(plugin);
         
         // Stub the creation of new objects
         doReturn(mockConfig).when(spyPlugin).createConfig();
-        doReturn(mockServerManager).when(spyPlugin).createServerManager(mockConfig);
+        doReturn(mockExecutor).when(spyPlugin).createExecutor();
+        doReturn(mockServerManager).when(spyPlugin).createServerManager(mockConfig, mockExecutor);
         doReturn(mockActivityTracker).when(spyPlugin).createActivityTracker(mockConfig, mockServerManager);
         
         // Execute
@@ -149,6 +153,21 @@ public class AutoStopperPluginTest {
         verify(commandManager).register(eq(commandMeta), any(AutoStopperCommand.class));
         verify(commandManager, never()).unregister(anyString());
         verify(mockActivityTracker).startInactivityCheck();
+    }
+
+    @Test
+    void testOnProxyShutdownShutsDownExecutor() {
+        // Prepare
+        AutoStopperExecutor mockExecutor = mock(AutoStopperExecutor.class);
+        setPrivateField(plugin, "executor", mockExecutor);
+        when(mockExecutor.shutdown()).thenReturn(true);
+
+        // Execute
+        plugin.onProxyShutdown(new ProxyShutdownEvent());
+
+        // Verify
+        verify(mockExecutor).shutdown();
+        verify(logger).info(contains("executor shut down"));
     }
 
     @Test
@@ -184,15 +203,20 @@ public class AutoStopperPluginTest {
         // Prepare
         when(config.getServerNames()).thenReturn(new String[]{"test-server"});
         when(config.getServerToContainerMap()).thenReturn(java.util.Map.of("test-server", "test-container"));
-        
-        // Execute
-        ServerManager createdServerManager = plugin.createServerManager(config);
-        
-        // Verify
-        assertNotNull(createdServerManager, "Created server manager should not be null");
-        assertEquals(server, getPrivateField(createdServerManager, "server"));
-        assertEquals(logger, getPrivateField(createdServerManager, "logger"));
-        assertEquals(config, getPrivateField(createdServerManager, "config"));
+        AutoStopperExecutor executor = new AutoStopperExecutor();
+        try {
+            // Execute
+            ServerManager createdServerManager = plugin.createServerManager(config, executor);
+
+            // Verify
+            assertNotNull(createdServerManager, "Created server manager should not be null");
+            assertEquals(server, getPrivateField(createdServerManager, "server"));
+            assertEquals(logger, getPrivateField(createdServerManager, "logger"));
+            assertEquals(config, getPrivateField(createdServerManager, "config"));
+            assertEquals(executor, getPrivateField(createdServerManager, "executor"));
+        } finally {
+            executor.shutdown();
+        }
     }
     
     @Test

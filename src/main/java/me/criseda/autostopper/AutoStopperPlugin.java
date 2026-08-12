@@ -3,6 +3,7 @@ package me.criseda.autostopper;
 import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
+import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
@@ -12,6 +13,7 @@ import me.criseda.autostopper.commands.AutoStopperCommand;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.docker.DockerManager;
 import me.criseda.autostopper.docker.ProcessCommandRunner;
+import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.listeners.ServerPreConnectListener;
 import me.criseda.autostopper.server.ActivityTracker;
@@ -32,6 +34,7 @@ public class AutoStopperPlugin {
     private AutoStopperConfig config;
     private ServerManager serverManager;
     private ActivityTracker activityTracker;
+    private AutoStopperExecutor executor;
 
     @Inject
     public AutoStopperPlugin(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory, PluginContainer pluginContainer) {
@@ -50,7 +53,8 @@ public class AutoStopperPlugin {
 		config.loadConfig(); // Make sure config is loaded before using it
 	
 		// Initialize server management
-		this.serverManager = createServerManager(config);
+		this.executor = createExecutor();
+		this.serverManager = createServerManager(config, executor);
 		
 		// Initialize activity tracking but DON'T start the inactivity check yet
 		this.activityTracker = createActivityTracker(config, serverManager);
@@ -66,6 +70,14 @@ public class AutoStopperPlugin {
 		activityTracker.startInactivityCheck();
 	
 		logger.info("AutoStopper plugin initialized!");
+	}
+
+	@Subscribe
+	public void onProxyShutdown(ProxyShutdownEvent event) {
+		if (executor != null) {
+			executor.shutdown();
+			logger.info("AutoStopper executor shut down.");
+		}
 	}
 
     public ProxyServer getServer() {
@@ -92,9 +104,13 @@ public class AutoStopperPlugin {
         return new AutoStopperConfig(dataDirectory, logger);
     }
 
-    protected ServerManager createServerManager(AutoStopperConfig config) {
+    protected AutoStopperExecutor createExecutor() {
+        return new AutoStopperExecutor();
+    }
+
+    protected ServerManager createServerManager(AutoStopperConfig config, AutoStopperExecutor executor) {
         DockerManager dockerManager = new DockerManager(logger, new ProcessCommandRunner());
-        return new ServerManager(server, logger, config, dockerManager);
+        return new ServerManager(server, logger, config, dockerManager, executor);
     }
 
     protected ActivityTracker createActivityTracker(AutoStopperConfig config, ServerManager serverManager) {

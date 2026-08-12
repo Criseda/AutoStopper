@@ -4,8 +4,6 @@ import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
-import com.velocitypowered.api.scheduler.Scheduler;
-import com.velocitypowered.api.scheduler.ScheduledTask;
 import com.velocitypowered.api.proxy.ConnectionRequestBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,14 +15,19 @@ import org.slf4j.Logger;
 
 import me.criseda.autostopper.AutoStopperPlugin;
 import me.criseda.autostopper.docker.ContainerStatus;
+import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @ExtendWith(MockitoExtension.class)
@@ -32,282 +35,281 @@ public class ServerPreConnectListenerTest {
 
     @Mock
     private AutoStopperPlugin plugin;
-    
+
     @Mock
     private ServerManager serverManager;
-    
+
     @Mock
     private ActivityTracker activityTracker;
-    
+
     @Mock
     private Player player;
-    
+
     @Mock
     private ServerPreConnectEvent event;
-    
+
     @Mock
     private RegisteredServer targetServer;
-    
+
     @Mock
     private ServerInfo serverInfo;
-    
-    @Mock
-    private Scheduler scheduler;
-    
-    @Mock
-    private Scheduler.TaskBuilder taskBuilder;
-    
+
     @Mock
     private Logger logger;
-    
+
     @Mock
     private ConnectionRequestBuilder connectionRequest;
-    
+
+    @Mock
+    private ConnectionRequestBuilder.Result connectionResult;
+
     private ServerPreConnectListener listener;
-    
+
+    private AtomicBoolean isStarting;
+    private CompletableFuture<ConnectionRequestBuilder.Result> connectionResultFuture;
+
     @BeforeEach
     public void setup() {
         listener = new ServerPreConnectListener(plugin, serverManager, activityTracker);
-        
+
         // Common setup for all tests
         lenient().when(event.getPlayer()).thenReturn(player);
         lenient().when(event.getResult()).thenReturn(ServerPreConnectEvent.ServerResult.allowed(targetServer));
         lenient().when(targetServer.getServerInfo()).thenReturn(serverInfo);
         lenient().when(serverInfo.getName()).thenReturn("testserver");
-        lenient().when(plugin.getServer()).thenReturn(mock(com.velocitypowered.api.proxy.ProxyServer.class));
+        lenient().when(player.createConnectionRequest(targetServer)).thenReturn(connectionRequest);
+        connectionResultFuture = new CompletableFuture<>();
+        lenient().when(connectionRequest.connect()).thenReturn(connectionResultFuture);
+        lenient().when(connectionResult.isSuccessful()).thenReturn(true);
+        isStarting = new AtomicBoolean(false);
     }
-    
+
     @Test
     public void testOnServerPreConnect_ServerRunning() {
         // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        AtomicBoolean isStarting = new AtomicBoolean(false);
         when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
-        when(serverManager.getServerStatus("testserver"))
-                .thenReturn(Optional.of(ContainerStatus.RUNNING));
-        
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+
         // Execute
         listener.onServerPreConnect(event);
-        
+
         // Verify
         verify(serverManager).isMonitoredServer("testserver");
-        verify(serverManager).getServerStartingStatus("testserver");
-        verify(serverManager).getServerStatus("testserver");
-        verify(serverManager, never()).startServer(anyString());
-        verify(event, never()).setResult(any(ServerPreConnectEvent.ServerResult.class));
+        verify(serverManager).getServerStatusAsync("testserver");
+        verify(serverManager, never()).startServerAsync(anyString());
+        verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
+        verify(player).createConnectionRequest(targetServer);
+        verify(connectionRequest).connect();
+        assertFalse(isStarting.get(), "starting flag should be cleared after reconnecting");
         verifyNoInteractions(activityTracker);
     }
-    
+
     @Test
     public void testOnServerPreConnect_NotMonitored() {
         // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(false);
-        
+
         // Execute
         listener.onServerPreConnect(event);
-        
+
         // Verify
         verify(serverManager).isMonitoredServer("testserver");
-        verify(serverManager, never()).getServerStatus(anyString());
+        verify(serverManager, never()).getServerStatusAsync(anyString());
         verify(event, never()).setResult(any(ServerPreConnectEvent.ServerResult.class));
         verifyNoInteractions(activityTracker);
     }
-    
+
     @Test
     public void testOnServerPreConnect_AlreadyStarting() {
         // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        
-        AtomicBoolean isStarting = new AtomicBoolean(true);
+        isStarting.set(true);
         when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
-        
+
         // Execute
         listener.onServerPreConnect(event);
-        
+
         // Verify
-        verify(serverManager).isMonitoredServer("testserver");
         verify(serverManager).getServerStartingStatus("testserver");
-        verify(serverManager, never()).getServerStatus("testserver");
-        verify(player).sendMessage(argThat(component -> 
-            component.toString().contains("already being started") || component.toString().contains("wait")));
+        verify(serverManager, never()).getServerStatusAsync(anyString());
+        verify(player).sendMessage(argThat(component ->
+                component.toString().contains("already being started") || component.toString().contains("wait")));
         verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
-        verifyNoMoreInteractions(plugin.getServer());
+        verifyNoMoreInteractions(plugin);
     }
-    
+
+    @Test
+    public void testOnServerPreConnect_ReturnsPromptlyWhileStatusInFlight() {
+        // Setup - a controlled future that stays incomplete while the handler runs
+        when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
+        CompletableFuture<Optional<ContainerStatus>> pendingStatus = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync("testserver")).thenReturn(pendingStatus);
+
+        // Execute - the handler must return without waiting on docker I/O
+        listener.onServerPreConnect(event);
+
+        // Handler returned and deferred resolution: connection denied, flag held, nothing sent yet
+        verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
+        assertTrue(isStarting.get(), "starting flag should stay set while status is in flight");
+        verify(player, never()).sendMessage(any(Component.class));
+        verify(player, never()).createConnectionRequest(any());
+
+        // Now resolve the status asynchronously
+        pendingStatus.complete(Optional.of(ContainerStatus.RUNNING));
+
+        verify(player).createConnectionRequest(targetServer);
+        verify(connectionRequest).connect();
+        assertFalse(isStarting.get(), "starting flag should be cleared after resolution");
+    }
+
     @Test
     public void testOnServerPreConnect_StartServerSuccess_ServerReady() {
         // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.getServerStatus("testserver"))
-                .thenReturn(Optional.of(ContainerStatus.STOPPED));
-        
-        AtomicBoolean isStarting = new AtomicBoolean(false);
         when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
-        
-        when(plugin.getServer().getScheduler()).thenReturn(scheduler);
-        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
-        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
-        
-        when(serverManager.startServer("testserver")).thenReturn(ContainerStatus.RUNNING);
-        when(serverManager.waitForServerReady(eq("testserver"), anyInt())).thenReturn(true);
-        
-        when(player.createConnectionRequest(targetServer)).thenReturn(connectionRequest);
-        
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(eq("testserver"), anyInt()))
+                .thenReturn(CompletableFuture.completedFuture(true));
+
         // Execute
         listener.onServerPreConnect(event);
-        
-        // Verify initial setup
-        verify(serverManager).isMonitoredServer("testserver");
-        verify(serverManager).getServerStatus("testserver");
-        verify(serverManager).getServerStartingStatus("testserver");
-        verify(player).sendMessage(argThat(component -> 
-            component.toString().contains("offline") || component.toString().contains("Starting")));
-        verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
-        
-        // Capture and run the task
-        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
-        verify(scheduler).buildTask(eq(plugin), runnableCaptor.capture());
-        
-        // Verify isStarting was set
-        assertTrue(isStarting.get(), "isStarting flag should be set to true");
-        
-        // Run the task
-        runnableCaptor.getValue().run();
-        
-        // Verify server operations
-        verify(serverManager).startServer("testserver");
-        verify(serverManager).waitForServerReady("testserver", 120);
-        
-        // Verify player notification and connection
-        verify(player, times(2)).sendMessage(any(Component.class)); // Initial + success message
+
+        // Verify start chain
+        verify(serverManager).startServerAsync("testserver");
+        verify(serverManager).waitForServerReadyAsync("testserver", 120);
         verify(player).createConnectionRequest(targetServer);
-        verify(connectionRequest).fireAndForget();
-        
-        // Verify activity tracking
+        verify(connectionRequest).connect();
         verify(activityTracker).updateActivity("testserver");
-        
-        // Verify isStarting was reset
-        assertFalse(isStarting.get(), "isStarting flag should be reset to false");
+
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(player, times(2)).sendMessage(messageCaptor.capture());
+        List<Component> messages = messageCaptor.getAllValues();
+        assertTrue(messages.get(0).toString().contains("offline"), "should announce startup");
+        assertTrue(messages.get(1).toString().contains("now ready"), "should announce readiness");
+        assertFalse(isStarting.get(), "starting flag should be cleared after the full chain");
     }
-    
+
     @Test
     public void testOnServerPreConnect_StartServerSuccess_ServerNotReady() {
         // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.getServerStatus("testserver"))
-                .thenReturn(Optional.of(ContainerStatus.STOPPED));
-        
-        AtomicBoolean isStarting = new AtomicBoolean(false);
         when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
-        
-        when(plugin.getServer().getScheduler()).thenReturn(scheduler);
-        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
-        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
-        
-        when(serverManager.startServer("testserver")).thenReturn(ContainerStatus.RUNNING);
-        when(serverManager.waitForServerReady(eq("testserver"), anyInt())).thenReturn(false);
-        
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(eq("testserver"), anyInt()))
+                .thenReturn(CompletableFuture.completedFuture(false));
+
         // Execute
         listener.onServerPreConnect(event);
-        
-        // Capture and run the task
-        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
-        verify(scheduler).buildTask(eq(plugin), runnableCaptor.capture());
-        runnableCaptor.getValue().run();
-        
-        // Verify server operations
-        verify(serverManager).startServer("testserver");
-        verify(serverManager).waitForServerReady("testserver", 120);
-        
-        // Verify player notification
-        verify(player, times(3)).sendMessage(any(Component.class)); // Initial + not ready + try again messages
+
+        // Verify
+        verify(serverManager).startServerAsync("testserver");
+        verify(serverManager).waitForServerReadyAsync("testserver", 120);
         verify(player, never()).createConnectionRequest(any());
-        
-        // Verify no activity tracking
         verifyNoInteractions(activityTracker);
-        
-        // Verify isStarting was reset
-        assertFalse(isStarting.get(), "isStarting flag should be reset to false");
+
+        verify(player, times(3)).sendMessage(any(Component.class)); // offline + not ready + try again
+        assertFalse(isStarting.get());
     }
-    
+
     @Test
     public void testOnServerPreConnect_StartServerFailed() {
         // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.getServerStatus("testserver"))
-                .thenReturn(Optional.of(ContainerStatus.STOPPED));
-        
-        AtomicBoolean isStarting = new AtomicBoolean(false);
         when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
-        
-        when(plugin.getServer().getScheduler()).thenReturn(scheduler);
-        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
-        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
-        
-        when(serverManager.startServer("testserver")).thenReturn(ContainerStatus.FAILED);
-        
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.FAILED));
+
         // Execute
         listener.onServerPreConnect(event);
-        
-        // Capture and run the task
-        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
-        verify(scheduler).buildTask(eq(plugin), runnableCaptor.capture());
-        runnableCaptor.getValue().run();
-        
-        // Verify server operations
-        verify(serverManager).startServer("testserver");
-        verify(serverManager, never()).waitForServerReady(anyString(), anyInt());
-        
-        // Verify player notification
-        verify(player, times(2)).sendMessage(any(Component.class)); // Initial + failed messages
+
+        // Verify
+        verify(serverManager).startServerAsync("testserver");
+        verify(serverManager, never()).waitForServerReadyAsync(anyString(), anyInt());
         verify(player, never()).createConnectionRequest(any());
-        
-        // Verify no activity tracking
+        verify(player).sendMessage(argThat(component -> component.toString().contains("Failed to start server")));
         verifyNoInteractions(activityTracker);
-        
-        // Verify isStarting was reset
-        assertFalse(isStarting.get(), "isStarting flag should be reset to false");
+        assertFalse(isStarting.get());
     }
-    
+
     @Test
-    public void testOnServerPreConnect_Exception() {
+    public void testOnServerPreConnect_StartServerThrows() {
         // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.getServerStatus("testserver"))
-                .thenReturn(Optional.of(ContainerStatus.STOPPED));
-        
-        AtomicBoolean isStarting = new AtomicBoolean(false);
         when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
-        
-        when(plugin.getServer().getScheduler()).thenReturn(scheduler);
-        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
-        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
-        
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        CompletableFuture<ContainerStatus> failedStart = new CompletableFuture<>();
+        when(serverManager.startServerAsync("testserver")).thenReturn(failedStart);
         when(plugin.getLogger()).thenReturn(logger);
-        doThrow(new RuntimeException("Test exception")).when(serverManager).startServer("testserver");
-        
+
         // Execute
         listener.onServerPreConnect(event);
-        
-        // Capture and run the task
-        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
-        verify(scheduler).buildTask(eq(plugin), runnableCaptor.capture());
-        runnableCaptor.getValue().run();
-        
-        // Verify logger error
-        verify(logger).error(eq("Error while starting server"), any(Exception.class));
-        
-        // Verify player notification
-        verify(player, times(2)).sendMessage(any(Component.class)); // Initial + error messages
+
+        // Complete the start future with a failure
+        failedStart.completeExceptionally(new RuntimeException("Test exception"));
+
+        // Verify
+        verify(logger).error(eq("Error while starting server {}"), eq("testserver"), any(RuntimeException.class));
+        verify(player).sendMessage(argThat(component -> component.toString().contains("Error starting server")));
         verify(player, never()).createConnectionRequest(any());
-        
-        // Verify no activity tracking
-        verifyNoInteractions(activityTracker);
-        
-        // Verify isStarting was reset
-        assertFalse(isStarting.get(), "isStarting flag should be reset to false");
+        assertFalse(isStarting.get());
     }
-    
+
+    @Test
+    public void testOnServerPreConnect_StatusCheckThrows() {
+        // Setup
+        when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
+        CompletableFuture<Optional<ContainerStatus>> failedStatus = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync("testserver")).thenReturn(failedStatus);
+        when(plugin.getLogger()).thenReturn(logger);
+
+        // Execute
+        listener.onServerPreConnect(event);
+
+        // Complete the status future with a failure
+        failedStatus.completeExceptionally(new RuntimeException("daemon exploded"));
+
+        // Verify
+        verify(logger).error(eq("Error while checking status for server {}"), eq("testserver"),
+                any(RuntimeException.class));
+        verify(player).sendMessage(argThat(component ->
+                component.toString().contains("Error checking status")));
+        verify(serverManager, never()).startServerAsync(anyString());
+        assertFalse(isStarting.get());
+    }
+
+    @Test
+    public void testOnServerPreConnect_SaturatedStatusCheck() {
+        // Setup
+        when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
+        CompletableFuture<Optional<ContainerStatus>> saturated = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync("testserver")).thenReturn(saturated);
+
+        // Execute
+        listener.onServerPreConnect(event);
+
+        saturated.completeExceptionally(new AutoStopperExecutor.SaturationException("busy", null));
+
+        // Verify
+        verify(plugin, never()).getLogger();
+        verify(player).sendMessage(argThat(component -> component.toString().contains("overloaded")));
+        verify(serverManager, never()).startServerAsync(anyString());
+        assertFalse(isStarting.get());
+    }
+
     @Test
     public void testOnServerPreConnect_DeniedEventDoesNotStart() {
         // Setup - another plugin denied the connection
@@ -318,8 +320,8 @@ public class ServerPreConnectListenerTest {
 
         // Verify
         verify(serverManager, never()).isMonitoredServer(anyString());
-        verify(serverManager, never()).getServerStatus(anyString());
-        verify(serverManager, never()).startServer(anyString());
+        verify(serverManager, never()).getServerStatusAsync(anyString());
+        verify(serverManager, never()).startServerAsync(anyString());
         verify(event, never()).setResult(any(ServerPreConnectEvent.ServerResult.class));
         verify(player, never()).sendMessage(any(Component.class));
         verifyNoInteractions(activityTracker);
@@ -335,22 +337,41 @@ public class ServerPreConnectListenerTest {
         when(event.getResult()).thenReturn(ServerPreConnectEvent.ServerResult.allowed(reroutedServer));
 
         when(serverManager.isMonitoredServer("rerouted")).thenReturn(true);
-        AtomicBoolean isStarting = new AtomicBoolean(false);
         when(serverManager.getServerStartingStatus("rerouted")).thenReturn(isStarting);
-        when(serverManager.getServerStatus("rerouted"))
-                .thenReturn(Optional.of(ContainerStatus.STOPPED));
-
-        when(plugin.getServer().getScheduler()).thenReturn(scheduler);
-        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
-        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+        when(serverManager.getServerStatusAsync("rerouted"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        when(player.createConnectionRequest(reroutedServer)).thenReturn(connectionRequest);
 
         // Execute
         listener.onServerPreConnect(event);
 
         // Verify the final allowed target was inspected, not the original server
         verify(serverManager).isMonitoredServer("rerouted");
-        verify(serverManager).getServerStatus("rerouted");
+        verify(serverManager).getServerStatusAsync("rerouted");
         verify(serverManager, never()).isMonitoredServer("testserver");
+        verify(player).createConnectionRequest(reroutedServer);
+    }
+
+    @Test
+    public void testOnServerPreConnect_ProgrammaticReconnectPassesThroughOnce() {
+        when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+
+        // The original request is denied while its status is checked.
+        listener.onServerPreConnect(event);
+        verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
+        verify(connectionRequest).connect();
+
+        // Feeding the listener-created request back through the event must be
+        // allowed without another inspect/deny/reconnect cycle.
+        listener.onServerPreConnect(event);
+        verify(event, times(1)).setResult(any(ServerPreConnectEvent.ServerResult.class));
+        verify(serverManager, times(1)).getServerStatusAsync("testserver");
+        verify(connectionRequest, times(1)).connect();
+
+        connectionResultFuture.complete(connectionResult);
     }
 
     @Test
@@ -369,117 +390,81 @@ public class ServerPreConnectListenerTest {
 
         // Verify
         verify(serverManager).isMonitoredServer("hub");
-        verify(serverManager, never()).getServerStatus(anyString());
+        verify(serverManager, never()).getServerStatusAsync(anyString());
         verify(serverManager, never()).getServerStartingStatus(anyString());
-        verify(serverManager, never()).startServer(anyString());
+        verify(serverManager, never()).startServerAsync(anyString());
         verify(event, never()).setResult(any(ServerPreConnectEvent.ServerResult.class));
         verifyNoInteractions(activityTracker);
     }
 
     @Test
     public void testOnServerPreConnect_MissingContainerDoesNotStart() {
-        // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.getServerStartingStatus("testserver")).thenReturn(new AtomicBoolean(false));
-        when(serverManager.getServerStatus("testserver"))
-                .thenReturn(Optional.of(ContainerStatus.MISSING));
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.MISSING)));
 
-        // Execute
         listener.onServerPreConnect(event);
 
-        // Verify
-        verify(serverManager, never()).startServer(anyString());
-        verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
-        verify(player).sendMessage(argThat(component ->
-                component.toString().contains("does not exist")));
-        verifyNoMoreInteractions(plugin.getServer());
+        verify(serverManager, never()).startServerAsync(anyString());
+        verify(player).sendMessage(argThat(component -> component.toString().contains("does not exist")));
+        assertFalse(isStarting.get());
     }
 
     @Test
     public void testOnServerPreConnect_InaccessibleDockerDoesNotStart() {
-        // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.getServerStartingStatus("testserver")).thenReturn(new AtomicBoolean(false));
-        when(serverManager.getServerStatus("testserver"))
-                .thenReturn(Optional.of(ContainerStatus.INACCESSIBLE));
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.INACCESSIBLE)));
 
-        // Execute
         listener.onServerPreConnect(event);
 
-        // Verify
-        verify(serverManager, never()).startServer(anyString());
-        verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
-        verify(player).sendMessage(argThat(component ->
-                component.toString().contains("Docker daemon")));
-        verifyNoMoreInteractions(plugin.getServer());
+        verify(serverManager, never()).startServerAsync(anyString());
+        verify(player).sendMessage(argThat(component -> component.toString().contains("Docker daemon")));
+        assertFalse(isStarting.get());
     }
 
     @Test
     public void testOnServerPreConnect_TimedOutStatusDoesNotStart() {
-        // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.getServerStartingStatus("testserver")).thenReturn(new AtomicBoolean(false));
-        when(serverManager.getServerStatus("testserver"))
-                .thenReturn(Optional.of(ContainerStatus.TIMED_OUT));
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.TIMED_OUT)));
 
-        // Execute
         listener.onServerPreConnect(event);
 
-        // Verify
-        verify(serverManager, never()).startServer(anyString());
-        verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
-        verify(player).sendMessage(argThat(component ->
-                component.toString().contains("Try again")));
-        verifyNoMoreInteractions(plugin.getServer());
+        verify(serverManager, never()).startServerAsync(anyString());
+        verify(player).sendMessage(argThat(component -> component.toString().contains("Try again")));
+        assertFalse(isStarting.get());
     }
 
     @Test
     public void testOnServerPreConnect_FailedStatusDoesNotStart() {
-        // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.getServerStartingStatus("testserver")).thenReturn(new AtomicBoolean(false));
-        when(serverManager.getServerStatus("testserver"))
-                .thenReturn(Optional.of(ContainerStatus.FAILED));
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.FAILED)));
 
-        // Execute
         listener.onServerPreConnect(event);
 
-        // Verify
-        verify(serverManager, never()).startServer(anyString());
-        verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
+        verify(serverManager, never()).startServerAsync(anyString());
         verify(player).sendMessage(argThat(component ->
                 component.toString().contains("Could not check the status")));
-        verifyNoMoreInteractions(plugin.getServer());
+        assertFalse(isStarting.get());
     }
 
     @Test
     public void testOnServerPreConnect_NoMappingDoesNotStart() {
-        // Setup
         when(serverManager.isMonitoredServer("testserver")).thenReturn(true);
-        when(serverManager.getServerStartingStatus("testserver")).thenReturn(new AtomicBoolean(false));
-        when(serverManager.getServerStatus("testserver")).thenReturn(Optional.empty());
+        when(serverManager.getServerStartingStatus("testserver")).thenReturn(isStarting);
+        when(serverManager.getServerStatusAsync("testserver"))
+                .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
 
-        // Execute
         listener.onServerPreConnect(event);
 
-        // Verify
-        verify(serverManager, never()).startServer(anyString());
-        verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
-        verify(player).sendMessage(argThat(component ->
-                component.toString().contains("no container mapping")));
-        verifyNoMoreInteractions(plugin.getServer());
-    }
-
-    // Helper methods for assertions
-    private static void assertTrue(boolean condition, String message) {
-        if (!condition) {
-            throw new AssertionError(message);
-        }
-    }
-    
-    private static void assertFalse(boolean condition, String message) {
-        if (condition) {
-            throw new AssertionError(message);
-        }
+        verify(serverManager, never()).startServerAsync(anyString());
+        verify(player).sendMessage(argThat(component -> component.toString().contains("no container mapping")));
+        assertFalse(isStarting.get());
     }
 }

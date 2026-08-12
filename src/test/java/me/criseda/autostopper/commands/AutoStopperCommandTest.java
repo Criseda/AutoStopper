@@ -19,6 +19,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -115,21 +117,23 @@ public class AutoStopperCommandTest {
         // Arrange
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"server1", "server2"};
-        
+
         when(config.getServerNames()).thenReturn(serverNames);
-        when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses = new CompletableFuture<>();
+        when(serverManager.getStatusesAsync(anyList())).thenReturn(statuses);
         when(activityTracker.getLastActivity("server1")).thenReturn(Instant.now().minusSeconds(300));
         when(activityTracker.getMinutesSinceActivity("server1")).thenReturn(5L);
-        
-        when(serverManager.getServerStatus("server2")).thenReturn(Optional.of(ContainerStatus.STOPPED));
-        
-        // Act
+
+        // Act - command returns immediately, statuses arrive asynchronously
         command.execute(invocation);
-        
+        statuses.complete(Map.of(
+                "server1", Optional.of(ContainerStatus.RUNNING),
+                "server2", Optional.of(ContainerStatus.STOPPED)));
+
         // Assert
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(3)).sendMessage(messageCaptor.capture());
-        
+
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(messages.get(0).toString().contains("Status"));
         assertTrue(messages.get(1).toString().contains("server1"));
@@ -144,18 +148,20 @@ public class AutoStopperCommandTest {
         // Arrange
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"server1"};
-        
+
         when(config.getServerNames()).thenReturn(serverNames);
-        when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses = new CompletableFuture<>();
+        when(serverManager.getStatusesAsync(anyList())).thenReturn(statuses);
         when(activityTracker.getLastActivity("server1")).thenReturn(null);
-        
+
         // Act
         command.execute(invocation);
-        
+        statuses.complete(Map.of("server1", Optional.of(ContainerStatus.RUNNING)));
+
         // Assert
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(2)).sendMessage(messageCaptor.capture());
-        
+
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(messages.get(1).toString().contains("No activity recorded"));
     }
@@ -165,27 +171,51 @@ public class AutoStopperCommandTest {
         // Arrange
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"s-missing", "s-inaccessible", "s-timedout", "s-failed", "s-unmapped"};
-        
+
         when(config.getServerNames()).thenReturn(serverNames);
-        when(serverManager.getServerStatus("s-missing")).thenReturn(Optional.of(ContainerStatus.MISSING));
-        when(serverManager.getServerStatus("s-inaccessible")).thenReturn(Optional.of(ContainerStatus.INACCESSIBLE));
-        when(serverManager.getServerStatus("s-timedout")).thenReturn(Optional.of(ContainerStatus.TIMED_OUT));
-        when(serverManager.getServerStatus("s-failed")).thenReturn(Optional.of(ContainerStatus.FAILED));
-        when(serverManager.getServerStatus("s-unmapped")).thenReturn(Optional.empty());
-        
+        CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses = new CompletableFuture<>();
+        when(serverManager.getStatusesAsync(anyList())).thenReturn(statuses);
+
         // Act
         command.execute(invocation);
-        
+        statuses.complete(new java.util.LinkedHashMap<>(Map.of(
+                "s-missing", Optional.of(ContainerStatus.MISSING),
+                "s-inaccessible", Optional.of(ContainerStatus.INACCESSIBLE),
+                "s-timedout", Optional.of(ContainerStatus.TIMED_OUT),
+                "s-failed", Optional.of(ContainerStatus.FAILED),
+                "s-unmapped", Optional.empty())));
+
         // Assert
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(6)).sendMessage(messageCaptor.capture());
-        
+
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(messages.get(1).toString().contains("Missing"));
         assertTrue(messages.get(2).toString().contains("Inaccessible"));
         assertTrue(messages.get(3).toString().contains("Timed out"));
         assertTrue(messages.get(4).toString().contains("Failed"));
         assertTrue(messages.get(5).toString().contains("No container mapping"));
+    }
+
+    @Test
+    public void testExecuteStatusCommand_StatusCollectionFails() {
+        // Arrange
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
+        String[] serverNames = {"server1"};
+
+        when(config.getServerNames()).thenReturn(serverNames);
+        CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses = new CompletableFuture<>();
+        when(serverManager.getStatusesAsync(anyList())).thenReturn(statuses);
+
+        // Act
+        command.execute(invocation);
+        statuses.completeExceptionally(new RuntimeException("daemon exploded"));
+
+        // Assert
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(messageCaptor.capture());
+        List<Component> messages = messageCaptor.getAllValues();
+        assertTrue(messages.get(1).toString().contains("Could not collect server statuses"));
     }
     
     @Test
