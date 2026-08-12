@@ -25,6 +25,8 @@ public class ConnectionListener {
 
     @Subscribe
     public void onDisconnect(DisconnectEvent event) {
+        event.getPlayer().getCurrentServer().ifPresent(connection ->
+                activityTracker.updateActivity(connection.getServerInfo().getName()));
         lifecycleCoordinator.discardPlayer(event.getPlayer());
     }
 }

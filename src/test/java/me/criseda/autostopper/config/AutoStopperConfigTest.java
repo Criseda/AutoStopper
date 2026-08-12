@@ -74,6 +74,7 @@ public class AutoStopperConfigTest {
 
         assertTrue(result.successful());
         assertEquals(600, result.snapshot().inactivityTimeoutSeconds());
+        assertEquals(StopRetrySettings.defaults(), result.snapshot().stopRetry());
         assertEquals(List.of("server1", "server2"), result.snapshot().serverNames());
         assertEquals("container1", result.snapshot().serverToContainer().get("server1"));
         assertSame(result.snapshot(), config.snapshot());
@@ -81,6 +82,45 @@ public class AutoStopperConfigTest {
                 () -> result.snapshot().servers().add(new ServerMapping("x", "y")));
         assertThrows(UnsupportedOperationException.class,
                 () -> result.snapshot().serverToContainer().put("x", "y"));
+    }
+
+    @Test
+    public void stopRetryPolicyIsValidatedAndPublishedAtomically() throws IOException {
+        writeConfig("""
+                inactivity_timeout_seconds: 600
+                stop_retry:
+                  max_attempts: 4
+                  initial_backoff_seconds: 15
+                  max_backoff_seconds: 45
+                monitored_servers: []
+                """);
+
+        ConfigLoadResult result = config.loadConfig();
+
+        assertTrue(result.successful());
+        assertEquals(4, result.snapshot().stopRetry().maxAttempts());
+        assertEquals(15, result.snapshot().stopRetry().initialBackoff().toSeconds());
+        assertEquals(45, result.snapshot().stopRetry().maxBackoff().toSeconds());
+    }
+
+    @Test
+    public void invalidStopRetryPolicyRetainsPreviousSnapshot() throws IOException {
+        loadInitialSnapshot();
+        ConfigSnapshot previous = config.snapshot();
+        writeConfig("""
+                stop_retry:
+                  max_attempts: 0
+                  initial_backoff_seconds: 30
+                  max_backoff_seconds: 10
+                monitored_servers: []
+                """);
+
+        ConfigLoadResult result = config.loadConfig();
+
+        assertFalse(result.successful());
+        assertSame(previous, config.snapshot());
+        assertTrue(result.errorSummary().contains("stop_retry.max_attempts"));
+        assertTrue(result.errorSummary().contains("stop_retry.max_backoff_seconds"));
     }
 
     @Test

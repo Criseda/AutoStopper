@@ -118,7 +118,19 @@ public class ServerManagerTest {
         // Verify
         assertEquals(ContainerStatus.STOPPED, result);
         verify(dockerManager).stopContainer("container1");
-        verify(logger).info(contains("Stopped server:"), eq("server1"), any(), any());
+        verify(logger).info("Stopped server: {} (container: {})", "server1", "container1");
+    }
+
+    @Test
+    public void testStopServerLogsTypedFailureWithoutClaimingSuccess() {
+        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
+        when(dockerManager.stopContainer("container1")).thenReturn(ContainerStatus.TIMED_OUT);
+
+        assertEquals(ContainerStatus.TIMED_OUT, serverManager.stopServer("server1"));
+
+        verify(logger).warn("Could not stop server: {} (container: {}, result: {})",
+                "server1", "container1", ContainerStatus.TIMED_OUT);
+        verify(logger, never()).info(contains("Stopped server"), any(), any());
     }
     
     @Test

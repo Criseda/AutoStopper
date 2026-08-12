@@ -194,6 +194,17 @@ public final class ServerLifecycleCoordinator {
         });
     }
 
+    public void cancelStop(ServerMapping mapping) {
+        lifecycles.computeIfPresent(mapping.serverName(), (ignored, entry) -> {
+            synchronized (entry) {
+                if (entry.mapping.equals(mapping) && entry.state == ServerLifecycleState.STOPPING) {
+                    transition(entry, ServerLifecycleState.READY);
+                }
+                return entry.retired && !entry.isBusy() ? null : entry;
+            }
+        });
+    }
+
     public void markReady(String serverName) {
         lifecycles.computeIfPresent(serverName, (ignored, entry) -> {
             synchronized (entry) {
@@ -631,7 +642,8 @@ public final class ServerLifecycleCoordinator {
                 EnumSet.of(ServerLifecycleState.STOPPING, ServerLifecycleState.FAILED,
                         ServerLifecycleState.STOPPED));
         transitions.put(ServerLifecycleState.STOPPING,
-                EnumSet.of(ServerLifecycleState.STOPPED, ServerLifecycleState.FAILED));
+                EnumSet.of(ServerLifecycleState.STOPPED, ServerLifecycleState.FAILED,
+                        ServerLifecycleState.READY));
         transitions.put(ServerLifecycleState.FAILED,
                 EnumSet.of(ServerLifecycleState.STARTING, ServerLifecycleState.READY,
                         ServerLifecycleState.STOPPING, ServerLifecycleState.STOPPED));
