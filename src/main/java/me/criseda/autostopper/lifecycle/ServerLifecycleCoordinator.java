@@ -8,6 +8,7 @@ import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.messages.AutoStopperMessages;
+import me.criseda.autostopper.readiness.ReadinessResult;
 import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
@@ -36,8 +37,6 @@ import java.util.concurrent.atomic.AtomicReference;
  * callbacks synchronize on the same entry before changing its state or waiter collection.
  */
 public final class ServerLifecycleCoordinator {
-    static final int SERVER_READY_TIMEOUT_SECONDS = 120;
-
     private static final Map<ServerLifecycleState, Set<ServerLifecycleState>> LEGAL_TRANSITIONS =
             legalTransitions();
 
@@ -286,7 +285,7 @@ public final class ServerLifecycleCoordinator {
                 return;
             }
             switch (status.get()) {
-                case RUNNING -> completeStartup(entry, mapping, operation, StartupOutcome.READY_RUNNING);
+                case RUNNING -> launchReadiness(entry, mapping, operation, false);
                 case STOPPED -> launchStart(entry, mapping, operation);
                 case MISSING -> completeStartup(entry, mapping, operation, StartupOutcome.STATUS_MISSING);
                 case INACCESSIBLE -> completeStartup(entry, mapping, operation, StartupOutcome.STATUS_INACCESSIBLE);
@@ -322,7 +321,7 @@ public final class ServerLifecycleCoordinator {
                 return;
             }
             switch (result) {
-                case RUNNING -> launchReadiness(entry, mapping, operation);
+                case RUNNING -> launchReadiness(entry, mapping, operation, true);
                 case MISSING -> completeStartup(entry, mapping, operation, StartupOutcome.START_MISSING);
                 case INACCESSIBLE -> completeStartup(entry, mapping, operation, StartupOutcome.START_INACCESSIBLE);
                 case TIMED_OUT -> completeStartup(entry, mapping, operation, StartupOutcome.START_TIMED_OUT);
@@ -332,10 +331,10 @@ public final class ServerLifecycleCoordinator {
     }
 
     private void launchReadiness(LifecycleEntry entry, ServerMapping mapping,
-            CompletableFuture<StartupOutcome> operation) {
-        CompletableFuture<Boolean> readinessFuture;
+            CompletableFuture<StartupOutcome> operation, boolean startedContainer) {
+        CompletableFuture<ReadinessResult> readinessFuture;
         try {
-            readinessFuture = serverManager.waitForServerReadyAsync(mapping, SERVER_READY_TIMEOUT_SECONDS);
+            readinessFuture = serverManager.waitForServerReadyAsync(mapping);
         } catch (RuntimeException error) {
             completeStartup(entry, mapping, operation,
                     exceptionalOutcome(error, StartupStage.READINESS, mapping.serverName()));
@@ -349,16 +348,23 @@ public final class ServerLifecycleCoordinator {
             if (error != null) {
                 completeStartup(entry, mapping, operation,
                         exceptionalOutcome(error, StartupStage.READINESS, mapping.serverName()));
-            } else if (Boolean.TRUE.equals(ready)) {
-                completeStartup(entry, mapping, operation, StartupOutcome.READY_AFTER_START);
+            } else if (ready != null && ready.ready()) {
+                completeStartup(entry, mapping, operation,
+                        startedContainer ? StartupOutcome.READY_AFTER_START : StartupOutcome.READY_RUNNING);
             } else {
-                completeStartup(entry, mapping, operation, StartupOutcome.NOT_READY);
+                completeStartup(entry, mapping, operation, StartupOutcome.NOT_READY, ready);
             }
         });
     }
 
     private void completeStartup(LifecycleEntry entry, ServerMapping mapping,
             CompletableFuture<StartupOutcome> operation, StartupOutcome outcome) {
+        completeStartup(entry, mapping, operation, outcome, null);
+    }
+
+    private void completeStartup(LifecycleEntry entry, ServerMapping mapping,
+            CompletableFuture<StartupOutcome> operation, StartupOutcome outcome,
+            ReadinessResult readinessFailure) {
         List<ConnectionWaiter> waiters;
         boolean accepted;
         synchronized (entry) {
@@ -390,7 +396,7 @@ public final class ServerLifecycleCoordinator {
             for (ConnectionWaiter waiter : waiters) {
                 boolean active = isPlayerActive(waiter.player);
                 if (active) {
-                    notifyStartupFailure(waiter.player, mapping.serverName(), outcome);
+                    notifyStartupFailure(waiter.player, mapping.serverName(), outcome, readinessFailure);
                 }
                 waiter.future.complete(active
                         ? outcome.connectionOutcome
@@ -520,7 +526,8 @@ public final class ServerLifecycleCoordinator {
         }
     }
 
-    private void notifyStartupFailure(Player player, String serverName, StartupOutcome outcome) {
+    private void notifyStartupFailure(Player player, String serverName, StartupOutcome outcome,
+            ReadinessResult readinessFailure) {
         switch (outcome) {
             case STATUS_NO_MAPPING -> safeSend(player, AutoStopperMessages.noContainerMapping(serverName));
             case STATUS_MISSING, START_MISSING -> safeSend(player, AutoStopperMessages.containerMissing(serverName));
@@ -533,7 +540,9 @@ public final class ServerLifecycleCoordinator {
             case START_FAILED -> safeSend(player, AutoStopperMessages.startFailed(serverName));
             case START_ERROR -> safeSend(player, AutoStopperMessages.startError(serverName));
             case NOT_READY, READINESS_ERROR -> {
-                safeSend(player, AutoStopperMessages.serverNotReady(serverName));
+                safeSend(player, readinessFailure == null
+                        ? AutoStopperMessages.serverNotReady(serverName)
+                        : AutoStopperMessages.serverNotReady(serverName, readinessFailure.playerDetail()));
                 safeSend(player, AutoStopperMessages.retryServerCommand(serverName));
             }
             case CANCELLED -> safeSend(player, AutoStopperMessages.startCancelled(serverName));

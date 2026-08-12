@@ -2,12 +2,15 @@ package me.criseda.autostopper.server;
 
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.proxy.server.ServerInfo;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerManager;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.readiness.ReadinessResult;
+import me.criseda.autostopper.readiness.ServerReadinessChecker;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
 import java.util.HashMap;
+import java.net.InetSocketAddress;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +46,9 @@ public class ServerManagerTest {
     
     @Mock
     private DockerManager dockerManager;
+
+    @Mock
+    private ServerReadinessChecker readinessChecker;
     
     private AutoStopperExecutor executor;
     private ServerManager serverManager;
@@ -49,7 +56,7 @@ public class ServerManagerTest {
     @BeforeEach
     public void setup() {
         executor = new AutoStopperExecutor();
-        serverManager = new ServerManager(proxyServer, logger, config, dockerManager, executor);
+        serverManager = new ServerManager(proxyServer, logger, config, dockerManager, executor, readinessChecker);
     }
 
     @AfterEach
@@ -118,21 +125,18 @@ public class ServerManagerTest {
     public void testWaitForServerReady() {
         // Setup
         when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
-        when(dockerManager.waitForContainerReady(eq("container1"), eq(30), anyString(), anyString(), anyString()))
-            .thenReturn(true);
+        stubRegisteredTarget("server1", "127.0.0.1", 25565);
+        ReadinessResult ready = ReadinessResult.ready(1);
+        when(readinessChecker.awaitReady(any(ServerMapping.class), any())).thenReturn(ready);
         
         // Execute
-        boolean result = serverManager.waitForServerReady("server1", 30);
+        ReadinessResult result = serverManager.waitForServerReady("server1");
         
         // Verify
-        assertTrue(result);
-        verify(dockerManager).waitForContainerReady(
-            eq("container1"), 
-            eq(30), 
-            eq("Done ("), 
-            eq("] Done ("), 
-            eq("For help, type \"help\"")
-        );
+        assertSame(ready, result);
+        verify(readinessChecker).awaitReady(
+                any(ServerMapping.class),
+                eq(new me.criseda.autostopper.config.ReadinessSettings.Target("127.0.0.1", 25565)));
     }
     
     @Test
@@ -167,11 +171,12 @@ public class ServerManagerTest {
         assertEquals(Optional.empty(), serverManager.getServerStatus("server2"));
         assertEquals(ContainerStatus.MISSING, serverManager.startServer("server2"));
         assertEquals(ContainerStatus.MISSING, serverManager.stopServer("server2"));
-        assertFalse(serverManager.waitForServerReady("server2", 30));
+        assertEquals(ReadinessResult.Outcome.CONTAINER_MISSING,
+                serverManager.waitForServerReady("server2").outcome());
         verify(dockerManager, never()).getContainerStatus(anyString());
         verify(dockerManager, never()).startContainer(anyString());
         verify(dockerManager, never()).stopContainer(anyString());
-        verify(dockerManager, never()).waitForContainerReady(anyString(), anyInt(), anyString());
+        verifyNoInteractions(readinessChecker);
         verify(logger, times(4)).warn(contains("No container mapped for server:"), eq("server2"));
     }
     
@@ -219,16 +224,16 @@ public class ServerManagerTest {
     public void testWaitForServerReadyAsync() {
         // Setup
         when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
-        when(dockerManager.waitForContainerReady(
-                eq("container1"), eq(30), anyString(), anyString(), anyString())).thenReturn(true);
+        stubRegisteredTarget("server1", "127.0.0.1", 25565);
+        ReadinessResult ready = ReadinessResult.ready(1);
+        when(readinessChecker.awaitReady(any(ServerMapping.class), any())).thenReturn(ready);
 
         // Execute
-        boolean result = serverManager.waitForServerReadyAsync("server1", 30).join();
+        ReadinessResult result = serverManager.waitForServerReadyAsync("server1").join();
 
         // Verify
-        assertTrue(result);
-        verify(dockerManager).waitForContainerReady(
-                eq("container1"), eq(30), eq("Done ("), eq("] Done ("), eq("For help, type \"help\""));
+        assertSame(ready, result);
+        verify(readinessChecker).awaitReady(any(ServerMapping.class), any());
     }
 
     @Test
@@ -289,15 +294,16 @@ public class ServerManagerTest {
         when(config.snapshot()).thenReturn(previous, current);
         when(dockerManager.getContainerStatus("old-container")).thenReturn(ContainerStatus.STOPPED);
         when(dockerManager.startContainer("old-container")).thenReturn(ContainerStatus.RUNNING);
-        when(dockerManager.waitForContainerReady(
-                eq("old-container"), eq(30), anyString(), anyString(), anyString())).thenReturn(true);
+        stubRegisteredTarget("server1", "127.0.0.1", 25565);
+        ReadinessResult ready = ReadinessResult.ready(1);
+        when(readinessChecker.awaitReady(any(ServerMapping.class), any())).thenReturn(ready);
 
         ServerMapping captured = serverManager.getServerMapping("server1").orElseThrow();
         assertEquals("new-container", serverManager.getContainerName("server1"));
 
         assertEquals(Optional.of(ContainerStatus.STOPPED), serverManager.getServerStatus(captured));
         assertEquals(ContainerStatus.RUNNING, serverManager.startServer(captured));
-        assertTrue(serverManager.waitForServerReady(captured, 30));
+        assertSame(ready, serverManager.waitForServerReady(captured));
         verify(dockerManager, never()).getContainerStatus("new-container");
         verify(dockerManager, never()).startContainer("new-container");
     }
@@ -325,5 +331,13 @@ public class ServerManagerTest {
                 mappings.entrySet().stream()
                         .map(entry -> new ServerMapping(entry.getKey(), entry.getValue()))
                         .toList());
+    }
+
+    private void stubRegisteredTarget(String serverName, String host, int port) {
+        RegisteredServer registered = mock(RegisteredServer.class);
+        ServerInfo info = mock(ServerInfo.class);
+        when(proxyServer.getServer(serverName)).thenReturn(Optional.of(registered));
+        when(registered.getServerInfo()).thenReturn(info);
+        when(info.getAddress()).thenReturn(new InetSocketAddress(host, port));
     }
 }

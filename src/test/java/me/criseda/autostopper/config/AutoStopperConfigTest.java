@@ -84,6 +84,68 @@ public class AutoStopperConfigTest {
     }
 
     @Test
+    public void readinessPolicyIsValidatedAndCapturedPerServer() throws IOException {
+        writeConfig("""
+                inactivity_timeout_seconds: 600
+                monitored_servers:
+                  - server_name: server1
+                    container_name: container1
+                    readiness:
+                      strategy: docker_health_or_status
+                      target_host: minecraft.internal
+                      target_port: 25566
+                      probe_interval_millis: 250
+                      timeout_seconds: 45
+                      connect_timeout_millis: 500
+                      read_timeout_millis: 750
+                """);
+
+        ConfigLoadResult result = config.loadConfig();
+
+        assertTrue(result.successful());
+        ReadinessSettings readiness = result.snapshot().server("server1").orElseThrow().readiness();
+        assertEquals(ReadinessStrategy.DOCKER_HEALTH_OR_STATUS, readiness.strategy());
+        assertEquals(new ReadinessSettings.Target("minecraft.internal", 25566),
+                readiness.explicitTarget().orElseThrow());
+        assertEquals(250, readiness.probeInterval().toMillis());
+        assertEquals(45, readiness.timeout().toSeconds());
+        assertEquals(500, readiness.connectTimeout().toMillis());
+        assertEquals(750, readiness.readTimeout().toMillis());
+    }
+
+    @Test
+    public void invalidReadinessPolicyIsRejectedAtomicallyWithPrecisePaths() throws IOException {
+        loadInitialSnapshot();
+        ConfigSnapshot previous = config.snapshot();
+        writeConfig("""
+                monitored_servers:
+                  - server_name: server1
+                    container_name: container1
+                    readiness:
+                      strategy: logs
+                      target_host: localhost
+                      target_port: 70000
+                      probe_interval_millis: 0
+                      timeout_seconds: -1
+                      connect_timeout_millis: fast
+                      read_timeout_millis: 0
+                """);
+
+        ConfigLoadResult result = config.loadConfig();
+
+        assertFalse(result.successful());
+        assertSame(previous, config.snapshot());
+        String errors = result.errorSummary();
+        assertTrue(errors.contains("monitored_servers[0].readiness.strategy"));
+        assertTrue(errors.contains("monitored_servers[0].readiness.target_port"));
+        assertTrue(errors.contains("target_host and target_port must be configured together"));
+        assertTrue(errors.contains("monitored_servers[0].readiness.probe_interval_millis"));
+        assertTrue(errors.contains("monitored_servers[0].readiness.timeout_seconds"));
+        assertTrue(errors.contains("monitored_servers[0].readiness.connect_timeout_millis"));
+        assertTrue(errors.contains("monitored_servers[0].readiness.read_timeout_millis"));
+    }
+
+    @Test
     public void malformedYamlFailsGracefullyAndRetainsPreviousSnapshot() throws IOException {
         loadInitialSnapshot();
         ConfigSnapshot previous = config.snapshot();
