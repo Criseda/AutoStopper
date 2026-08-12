@@ -9,11 +9,9 @@ import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigLoadResult;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.docker.ContainerStatus;
+import me.criseda.autostopper.messages.AutoStopperMessages;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
-
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -46,8 +44,8 @@ public class AutoStopperCommand implements SimpleCommand {
 
         if (args.length == 0) {
             String version = pluginContainer.getDescription().getVersion().orElse("Unknown");
-            source.sendMessage(Component.text("§6AutoStopper " + version + " §7- §eServer Auto-Stop Plugin"));
-            source.sendMessage(Component.text("§7Use §e/autostopper help §7for more information"));
+            source.sendMessage(AutoStopperMessages.pluginInfo(version));
+            source.sendMessage(AutoStopperMessages.helpHint());
             return;
         }
 
@@ -70,24 +68,26 @@ public class AutoStopperCommand implements SimpleCommand {
                 }
                 break;
             default:
-                source.sendMessage(Component.text("§cUnknown command. Use §e/autostopper help §cfor help."));
+                source.sendMessage(AutoStopperMessages.unknownCommand());
         }
     }
 
     private void showHelp(CommandSource source) {
-        source.sendMessage(Component.text("§6AutoStopper Help:"));
-        source.sendMessage(Component.text("§e/autostopper §7- Shows plugin information"));
-        source.sendMessage(Component.text("§e/autostopper help §7- Shows this help menu"));
+        source.sendMessage(AutoStopperMessages.helpHeader());
+        source.sendMessage(AutoStopperMessages.helpEntry("/autostopper", "Shows plugin information"));
+        source.sendMessage(AutoStopperMessages.helpEntry("/autostopper help", "Shows this help menu"));
         if (hasAdministrativePermission(source, STATUS_PERMISSION)) {
-            source.sendMessage(Component.text("§e/autostopper status §7- Shows server status"));
+            source.sendMessage(AutoStopperMessages.helpEntry(
+                    "/autostopper status", "Shows server status"));
         }
         if (hasAdministrativePermission(source, RELOAD_PERMISSION)) {
-            source.sendMessage(Component.text("§e/autostopper reload §7- Reload configuration"));
+            source.sendMessage(AutoStopperMessages.helpEntry(
+                    "/autostopper reload", "Reload configuration"));
         }
     }
 
     private void showStatus(CommandSource source) {
-        source.sendMessage(Component.text("§6AutoStopper Server Status:"));
+        source.sendMessage(AutoStopperMessages.statusHeader());
 
         ConfigSnapshot snapshot = config.snapshot();
         List<String> serverNames = snapshot.serverNames();
@@ -95,7 +95,7 @@ public class AutoStopperCommand implements SimpleCommand {
         // back in here, never blocking the command thread.
         serverManager.getStatusesAsync(snapshot).whenComplete((statuses, error) -> {
             if (error != null) {
-                source.sendMessage(Component.text("§cCould not collect server statuses."));
+                source.sendMessage(AutoStopperMessages.statusCollectionFailed());
                 return;
             }
             for (String serverName : serverNames) {
@@ -107,7 +107,7 @@ public class AutoStopperCommand implements SimpleCommand {
     private void sendServerStatus(CommandSource source, String serverName,
             Optional<ContainerStatus> status) {
         if (status.isEmpty()) {
-            source.sendMessage(Component.text(String.format("§7%s: §c§lNo container mapping", serverName)));
+            source.sendMessage(AutoStopperMessages.statusNoMapping(serverName));
             return;
         }
 
@@ -116,49 +116,42 @@ public class AutoStopperCommand implements SimpleCommand {
                 Instant lastActive = activityTracker.getLastActivity(serverName);
                 if (lastActive != null) {
                     long minutes = activityTracker.getMinutesSinceActivity(serverName);
-                    source.sendMessage(Component.text(
-                            String.format("§7%s: §a§lRunning §7- %d minutes since last activity",
-                                    serverName, minutes)));
+                    source.sendMessage(AutoStopperMessages.statusRunning(serverName, minutes));
                 } else {
-                    source.sendMessage(Component.text(
-                            String.format("§7%s: §a§lRunning §7- No activity recorded", serverName)));
+                    source.sendMessage(AutoStopperMessages.statusRunning(serverName, null));
                 }
                 break;
             }
             case STOPPED:
-                source.sendMessage(Component.text(String.format("§7%s: §c§lStopped", serverName)));
+                source.sendMessage(AutoStopperMessages.statusStopped(serverName));
                 break;
             case MISSING:
-                source.sendMessage(Component.text(
-                        String.format("§7%s: §c§lMissing §7- container does not exist", serverName)));
+                source.sendMessage(AutoStopperMessages.statusMissing(serverName));
                 break;
             case INACCESSIBLE:
-                source.sendMessage(Component.text(
-                        String.format("§7%s: §c§lInaccessible §7- Docker daemon unreachable", serverName)));
+                source.sendMessage(AutoStopperMessages.statusInaccessible(serverName));
                 break;
             case TIMED_OUT:
-                source.sendMessage(Component.text(
-                        String.format("§7%s: §e§lTimed out §7- status check did not respond in time", serverName)));
+                source.sendMessage(AutoStopperMessages.statusTimedOut(serverName));
                 break;
             case FAILED:
-                source.sendMessage(Component.text(
-                        String.format("§7%s: §c§lFailed §7- status check failed", serverName)));
+                source.sendMessage(AutoStopperMessages.statusFailed(serverName));
                 break;
         }
     }
 
     private void reloadConfig(CommandSource source) {
-        source.sendMessage(Component.text("§6Reloading AutoStopper configuration..."));
+        source.sendMessage(AutoStopperMessages.reloadStarted());
         ConfigSnapshot previous = config.snapshot();
         ConfigLoadResult result = config.loadConfig();
         if (!result.successful()) {
-            source.sendMessage(Component.text("§cConfiguration reload failed: " + result.errorSummary()));
+            source.sendMessage(AutoStopperMessages.reloadFailed(result.errorSummary()));
             return;
         }
 
         serverManager.reconcileConfig(previous, result.snapshot());
         activityTracker.reconcileConfig(previous, result.snapshot());
-        source.sendMessage(Component.text("§aConfiguration reloaded successfully!"));
+        source.sendMessage(AutoStopperMessages.reloadSucceeded());
     }
 
     @Override
@@ -199,8 +192,6 @@ public class AutoStopperCommand implements SimpleCommand {
     }
 
     private void sendPermissionDenied(CommandSource source, String action) {
-        source.sendMessage(Component.text(
-                "You do not have permission to " + action + ".",
-                NamedTextColor.RED));
+        source.sendMessage(AutoStopperMessages.permissionDenied(action));
     }
 }

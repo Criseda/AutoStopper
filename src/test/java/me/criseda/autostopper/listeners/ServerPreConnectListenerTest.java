@@ -21,6 +21,7 @@ import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
 
+import static me.criseda.autostopper.testing.ComponentTestUtils.plainText;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
@@ -137,7 +138,7 @@ public class ServerPreConnectListenerTest {
         verify(serverManager).getServerStartingStatus("testserver");
         verify(serverManager, never()).getServerStatusAsync(any(ServerMapping.class));
         verify(player).sendMessage(argThat(component ->
-                component.toString().contains("already being started") || component.toString().contains("wait")));
+                plainText(component).contains("already being started") || plainText(component).contains("wait")));
         verify(event).setResult(eq(ServerPreConnectEvent.ServerResult.denied()));
         verifyNoMoreInteractions(plugin);
     }
@@ -190,8 +191,8 @@ public class ServerPreConnectListenerTest {
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(player, times(2)).sendMessage(messageCaptor.capture());
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("offline"), "should announce startup");
-        assertTrue(messages.get(1).toString().contains("now ready"), "should announce readiness");
+        assertTrue(plainText(messages.get(0)).contains("offline"), "should announce startup");
+        assertTrue(plainText(messages.get(1)).contains("now ready"), "should announce readiness");
         assertFalse(isStarting.get(), "starting flag should be cleared after the full chain");
     }
 
@@ -235,7 +236,7 @@ public class ServerPreConnectListenerTest {
         verify(serverManager).startServerAsync(mapping);
         verify(serverManager, never()).waitForServerReadyAsync(any(ServerMapping.class), anyInt());
         verify(player, never()).createConnectionRequest(any());
-        verify(player).sendMessage(argThat(component -> component.toString().contains("Failed to start server")));
+        verify(player).sendMessage(argThat(component -> plainText(component).contains("Failed to start server")));
         verifyNoInteractions(activityTracker);
         assertFalse(isStarting.get());
     }
@@ -258,7 +259,7 @@ public class ServerPreConnectListenerTest {
 
         // Verify
         verify(logger).error(eq("Error while starting server {}"), eq("testserver"), any(RuntimeException.class));
-        verify(player).sendMessage(argThat(component -> component.toString().contains("Error starting server")));
+        verify(player).sendMessage(argThat(component -> plainText(component).contains("Error starting server")));
         verify(player, never()).createConnectionRequest(any());
         assertFalse(isStarting.get());
     }
@@ -281,7 +282,7 @@ public class ServerPreConnectListenerTest {
         verify(logger).error(eq("Error while checking status for server {}"), eq("testserver"),
                 any(RuntimeException.class));
         verify(player).sendMessage(argThat(component ->
-                component.toString().contains("Error checking status")));
+                plainText(component).contains("Error checking status")));
         verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
         assertFalse(isStarting.get());
     }
@@ -300,7 +301,7 @@ public class ServerPreConnectListenerTest {
 
         // Verify
         verify(plugin, never()).getLogger();
-        verify(player).sendMessage(argThat(component -> component.toString().contains("overloaded")));
+        verify(player).sendMessage(argThat(component -> plainText(component).contains("overloaded")));
         verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
         assertFalse(isStarting.get());
     }
@@ -401,7 +402,7 @@ public class ServerPreConnectListenerTest {
         listener.onServerPreConnect(event);
 
         verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
-        verify(player).sendMessage(argThat(component -> component.toString().contains("does not exist")));
+        verify(player).sendMessage(argThat(component -> plainText(component).contains("does not exist")));
         assertFalse(isStarting.get());
     }
 
@@ -414,7 +415,7 @@ public class ServerPreConnectListenerTest {
         listener.onServerPreConnect(event);
 
         verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
-        verify(player).sendMessage(argThat(component -> component.toString().contains("Docker daemon")));
+        verify(player).sendMessage(argThat(component -> plainText(component).contains("Docker daemon")));
         assertFalse(isStarting.get());
     }
 
@@ -427,7 +428,7 @@ public class ServerPreConnectListenerTest {
         listener.onServerPreConnect(event);
 
         verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
-        verify(player).sendMessage(argThat(component -> component.toString().contains("Try again")));
+        verify(player).sendMessage(argThat(component -> plainText(component).contains("Try again")));
         assertFalse(isStarting.get());
     }
 
@@ -441,7 +442,7 @@ public class ServerPreConnectListenerTest {
 
         verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
         verify(player).sendMessage(argThat(component ->
-                component.toString().contains("Could not check the status")));
+                plainText(component).contains("Could not check the status")));
         assertFalse(isStarting.get());
     }
 
@@ -454,7 +455,7 @@ public class ServerPreConnectListenerTest {
         listener.onServerPreConnect(event);
 
         verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
-        verify(player).sendMessage(argThat(component -> component.toString().contains("no container mapping")));
+        verify(player).sendMessage(argThat(component -> plainText(component).contains("no container mapping")));
         assertFalse(isStarting.get());
     }
 }
