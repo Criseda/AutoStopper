@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Timeout;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class CommandRunnerTest {
 
@@ -60,6 +61,24 @@ public class CommandRunnerTest {
 
         assertEquals(CommandOutput.Outcome.TIMED_OUT, output.outcome());
         assertTrue(elapsedMillis < 3000, "Timed-out call should return quickly, took " + elapsedMillis + "ms");
+    }
+
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.SECONDS)
+    public void testRun_InterruptionTerminatesOwnedProcess() throws InterruptedException {
+        AtomicReference<CommandOutput> output = new AtomicReference<>();
+        Thread caller = new Thread(() -> output.set(runner.run(
+                List.of("powershell", "-NoProfile", "-Command", "Start-Sleep -Seconds 30"),
+                Duration.ofSeconds(30))));
+        caller.start();
+        Thread.sleep(300);
+
+        caller.interrupt();
+        caller.join(3000);
+
+        assertFalse(caller.isAlive(), "interrupted Docker command did not terminate promptly");
+        assertNotNull(output.get());
+        assertEquals(CommandOutput.Outcome.TIMED_OUT, output.get().outcome());
     }
 
     @Test

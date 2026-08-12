@@ -44,6 +44,8 @@ public final class ServerLifecycleCoordinator {
     private final ServerManager serverManager;
     private final Map<String, LifecycleEntry> lifecycles = new ConcurrentHashMap<>();
     private final Set<ReconnectPermit> reconnectPermits = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean shutdown = new AtomicBoolean(false);
+    private final Object shutdownLock = new Object();
 
     public ServerLifecycleCoordinator(Logger logger, ServerManager serverManager) {
         this.logger = Objects.requireNonNull(logger, "logger");
@@ -51,6 +53,9 @@ public final class ServerLifecycleCoordinator {
     }
 
     public boolean consumeReconnectPermit(Player player, String serverName) {
+        if (shutdown.get()) {
+            return false;
+        }
         return reconnectPermits.remove(new ReconnectPermit(player.getUniqueId(), serverName));
     }
 
@@ -59,66 +64,77 @@ public final class ServerLifecycleCoordinator {
         Objects.requireNonNull(player, "player");
         Objects.requireNonNull(targetServer, "targetServer");
         Objects.requireNonNull(mapping, "mapping");
+        if (shutdown.get()) {
+            return CompletableFuture.completedFuture(ConnectionOutcome.PROXY_SHUTDOWN);
+        }
 
         AtomicReference<Admission> admitted = new AtomicReference<>();
-        lifecycles.compute(mapping.serverName(), (serverName, current) -> {
-            LifecycleEntry entry = current;
-            if (entry == null) {
-                entry = new LifecycleEntry(mapping);
-            }
+        synchronized (shutdownLock) {
+            lifecycles.compute(mapping.serverName(), (serverName, current) -> {
+                if (shutdown.get()) {
+                    admitted.set(Admission.rejected(ConnectionOutcome.PROXY_SHUTDOWN));
+                    return current;
+                }
+                LifecycleEntry entry = current;
+                if (entry == null) {
+                    entry = new LifecycleEntry(mapping);
+                }
 
-            synchronized (entry) {
-                if (!entry.mapping.equals(mapping)) {
-                    if (entry.isBusy()) {
+                synchronized (entry) {
+                    if (!entry.mapping.equals(mapping)) {
+                        if (entry.isBusy()) {
+                            admitted.set(Admission.rejected(ConnectionOutcome.MAPPING_CHANGED));
+                            return entry;
+                        }
+                        entry = new LifecycleEntry(mapping);
+                    } else if (entry.retired && !entry.isBusy()) {
+                        entry.retired = false;
+                    }
+
+                    UUID playerId = player.getUniqueId();
+                    ConnectionWaiter existing = entry.waiters.get(playerId);
+                    if (existing != null) {
+                        admitted.set(Admission.queued(entry, existing));
+                        return entry;
+                    }
+
+                    if (entry.retired) {
                         admitted.set(Admission.rejected(ConnectionOutcome.MAPPING_CHANGED));
                         return entry;
                     }
-                    entry = new LifecycleEntry(mapping);
-                } else if (entry.retired && !entry.isBusy()) {
-                    entry.retired = false;
-                }
+                    if (entry.state == ServerLifecycleState.STOPPING) {
+                        admitted.set(Admission.rejected(ConnectionOutcome.SERVER_STOPPING));
+                        return entry;
+                    }
 
-                UUID playerId = player.getUniqueId();
-                ConnectionWaiter existing = entry.waiters.get(playerId);
-                if (existing != null) {
-                    admitted.set(Admission.queued(entry, existing));
-                    return entry;
-                }
+                    ConnectionWaiter waiter = new ConnectionWaiter(playerId, player, targetServer);
+                    entry.waiters.put(playerId, waiter);
+                    if (entry.state == ServerLifecycleState.STARTING) {
+                        admitted.set(Admission.queued(entry, waiter));
+                        return entry;
+                    }
+                    if (entry.state == ServerLifecycleState.READY) {
+                        admitted.set(Admission.connect(entry, waiter));
+                        return entry;
+                    }
 
-                if (entry.retired) {
-                    admitted.set(Admission.rejected(ConnectionOutcome.MAPPING_CHANGED));
+                    transition(entry, ServerLifecycleState.STARTING);
+                    CompletableFuture<StartupOutcome> operation = new CompletableFuture<>();
+                    entry.startupFuture = operation;
+                    admitted.set(Admission.start(entry, waiter, operation));
                     return entry;
                 }
-                if (entry.state == ServerLifecycleState.STOPPING) {
-                    admitted.set(Admission.rejected(ConnectionOutcome.SERVER_STOPPING));
-                    return entry;
-                }
-
-                ConnectionWaiter waiter = new ConnectionWaiter(playerId, player, targetServer);
-                entry.waiters.put(playerId, waiter);
-                if (entry.state == ServerLifecycleState.STARTING) {
-                    admitted.set(Admission.queued(entry, waiter));
-                    return entry;
-                }
-                if (entry.state == ServerLifecycleState.READY) {
-                    admitted.set(Admission.connect(entry, waiter));
-                    return entry;
-                }
-
-                transition(entry, ServerLifecycleState.STARTING);
-                CompletableFuture<StartupOutcome> operation = new CompletableFuture<>();
-                entry.startupFuture = operation;
-                admitted.set(Admission.start(entry, waiter, operation));
-                return entry;
-            }
-        });
+            });
+        }
 
         Admission admission = admitted.get();
         if (admission == null) {
             return CompletableFuture.completedFuture(ConnectionOutcome.START_FAILED);
         }
         if (admission.rejectedOutcome != null) {
-            notifyRejected(player, mapping.serverName(), admission.rejectedOutcome);
+            if (admission.rejectedOutcome != ConnectionOutcome.PROXY_SHUTDOWN) {
+                notifyRejected(player, mapping.serverName(), admission.rejectedOutcome);
+            }
             return CompletableFuture.completedFuture(admission.rejectedOutcome);
         }
         if (admission.queued) {
@@ -154,33 +170,44 @@ public final class ServerLifecycleCoordinator {
     }
 
     public boolean tryBeginStop(ServerMapping mapping) {
+        if (shutdown.get()) {
+            return false;
+        }
         AtomicBoolean admitted = new AtomicBoolean(false);
-        lifecycles.compute(mapping.serverName(), (ignored, current) -> {
-            LifecycleEntry entry = current;
-            if (entry == null) {
-                entry = new LifecycleEntry(mapping);
-            }
-            synchronized (entry) {
-                if (!entry.mapping.equals(mapping)) {
-                    if (entry.isBusy()) {
-                        return entry;
-                    }
+        synchronized (shutdownLock) {
+            lifecycles.compute(mapping.serverName(), (ignored, current) -> {
+                if (shutdown.get()) {
+                    return current;
+                }
+                LifecycleEntry entry = current;
+                if (entry == null) {
                     entry = new LifecycleEntry(mapping);
                 }
-                if (entry.state == ServerLifecycleState.STARTING
-                        || entry.state == ServerLifecycleState.STOPPING
-                        || !entry.waiters.isEmpty()) {
+                synchronized (entry) {
+                    if (!entry.mapping.equals(mapping)) {
+                        if (entry.isBusy()) {
+                            return entry;
+                        }
+                        entry = new LifecycleEntry(mapping);
+                    }
+                    if (entry.state == ServerLifecycleState.STARTING
+                            || entry.state == ServerLifecycleState.STOPPING
+                            || !entry.waiters.isEmpty()) {
+                        return entry;
+                    }
+                    transition(entry, ServerLifecycleState.STOPPING);
+                    admitted.set(true);
                     return entry;
                 }
-                transition(entry, ServerLifecycleState.STOPPING);
-                admitted.set(true);
-                return entry;
-            }
-        });
+            });
+        }
         return admitted.get();
     }
 
     public void completeStop(ServerMapping mapping, ContainerStatus result) {
+        if (shutdown.get()) {
+            return;
+        }
         lifecycles.computeIfPresent(mapping.serverName(), (ignored, entry) -> {
             synchronized (entry) {
                 if (!entry.mapping.equals(mapping) || entry.state != ServerLifecycleState.STOPPING) {
@@ -195,6 +222,9 @@ public final class ServerLifecycleCoordinator {
     }
 
     public void cancelStop(ServerMapping mapping) {
+        if (shutdown.get()) {
+            return;
+        }
         lifecycles.computeIfPresent(mapping.serverName(), (ignored, entry) -> {
             synchronized (entry) {
                 if (entry.mapping.equals(mapping) && entry.state == ServerLifecycleState.STOPPING) {
@@ -206,6 +236,9 @@ public final class ServerLifecycleCoordinator {
     }
 
     public void markReady(String serverName) {
+        if (shutdown.get()) {
+            return;
+        }
         lifecycles.computeIfPresent(serverName, (ignored, entry) -> {
             synchronized (entry) {
                 if (entry.state == ServerLifecycleState.STOPPED
@@ -219,6 +252,9 @@ public final class ServerLifecycleCoordinator {
     }
 
     public void reconcileConfig(ConfigSnapshot previous, ConfigSnapshot current) {
+        if (shutdown.get()) {
+            return;
+        }
         for (String serverName : previous.serverNames()) {
             Optional<ServerMapping> currentMapping = current.server(serverName);
             lifecycles.computeIfPresent(serverName, (ignored, entry) -> {
@@ -267,6 +303,47 @@ public final class ServerLifecycleCoordinator {
         }
     }
 
+    public void shutdown() {
+        List<CompletableFuture<?>> operations = new ArrayList<>();
+        List<ConnectionWaiter> waiters = new ArrayList<>();
+        synchronized (shutdownLock) {
+            if (!shutdown.compareAndSet(false, true)) {
+                return;
+            }
+            for (LifecycleEntry entry : lifecycles.values()) {
+                synchronized (entry) {
+                    if (entry.activeOperation != null) {
+                        operations.add(entry.activeOperation);
+                        entry.activeOperation = null;
+                    }
+                    if (entry.startupFuture != null) {
+                        entry.startupFuture.cancel(false);
+                        entry.startupFuture = null;
+                    }
+                    for (ConnectionWaiter waiter : entry.waiters.values()) {
+                        waiter.discarded = true;
+                        if (waiter.connectionFuture != null) {
+                            operations.add(waiter.connectionFuture);
+                            waiter.connectionFuture = null;
+                        }
+                        waiters.add(waiter);
+                    }
+                    entry.waiters.clear();
+                    entry.lastConnectionOutcome = ConnectionOutcome.PROXY_SHUTDOWN;
+                }
+            }
+            lifecycles.clear();
+            reconnectPermits.clear();
+        }
+
+        for (ConnectionWaiter waiter : waiters) {
+            waiter.future.complete(ConnectionOutcome.PROXY_SHUTDOWN);
+        }
+        for (CompletableFuture<?> operation : operations) {
+            operation.cancel(true);
+        }
+    }
+
     private void launchStatusCheck(LifecycleEntry entry, ServerMapping mapping,
             CompletableFuture<StartupOutcome> operation) {
         CompletableFuture<Optional<ContainerStatus>> statusFuture;
@@ -281,7 +358,13 @@ public final class ServerLifecycleCoordinator {
             completeStartup(entry, mapping, operation, StartupOutcome.STATUS_ERROR);
             return;
         }
+        if (!ownOperation(entry, operation, statusFuture)) {
+            return;
+        }
         statusFuture.whenComplete((status, error) -> {
+            if (shutdown.get()) {
+                return;
+            }
             if (error != null) {
                 completeStartup(entry, mapping, operation,
                         exceptionalOutcome(error, StartupStage.STATUS, mapping.serverName()));
@@ -321,7 +404,13 @@ public final class ServerLifecycleCoordinator {
             completeStartup(entry, mapping, operation, StartupOutcome.START_ERROR);
             return;
         }
+        if (!ownOperation(entry, operation, startFuture)) {
+            return;
+        }
         startFuture.whenComplete((result, error) -> {
+            if (shutdown.get()) {
+                return;
+            }
             if (error != null) {
                 completeStartup(entry, mapping, operation,
                         exceptionalOutcome(error, StartupStage.START, mapping.serverName()));
@@ -355,7 +444,13 @@ public final class ServerLifecycleCoordinator {
             completeStartup(entry, mapping, operation, StartupOutcome.READINESS_ERROR);
             return;
         }
+        if (!ownOperation(entry, operation, readinessFuture)) {
+            return;
+        }
         readinessFuture.whenComplete((ready, error) -> {
+            if (shutdown.get()) {
+                return;
+            }
             if (error != null) {
                 completeStartup(entry, mapping, operation,
                         exceptionalOutcome(error, StartupStage.READINESS, mapping.serverName()));
@@ -379,11 +474,15 @@ public final class ServerLifecycleCoordinator {
         List<ConnectionWaiter> waiters;
         boolean accepted;
         synchronized (entry) {
+            if (shutdown.get()) {
+                return;
+            }
             accepted = entry.state == ServerLifecycleState.STARTING && entry.startupFuture == operation;
             if (!accepted) {
                 return;
             }
             entry.startupFuture = null;
+            entry.activeOperation = null;
             transition(entry, outcome.ready ? ServerLifecycleState.READY : ServerLifecycleState.FAILED);
             if (outcome.ready) {
                 entry.readyConnectionSucceeded = false;
@@ -418,7 +517,7 @@ public final class ServerLifecycleCoordinator {
     }
 
     private void connectWaiter(LifecycleEntry entry, ConnectionWaiter waiter) {
-        if (waiter.discarded || waiter.future.isDone()) {
+        if (shutdown.get() || waiter.discarded || waiter.future.isDone()) {
             return;
         }
         if (!isPlayerActive(waiter.player)) {
@@ -447,9 +546,20 @@ public final class ServerLifecycleCoordinator {
             finishWaiter(entry, waiter, ConnectionOutcome.CONNECTION_FAILED);
             return;
         }
+        synchronized (entry) {
+            if (shutdown.get() || waiter.discarded || waiter.future.isDone()) {
+                reconnectPermits.remove(permit);
+                connection.cancel(true);
+                return;
+            }
+            waiter.connectionFuture = connection;
+        }
 
         connection.whenComplete((result, error) -> {
             reconnectPermits.remove(permit);
+            if (shutdown.get()) {
+                return;
+            }
             ConnectionOutcome outcome;
             try {
                 if (error != null) {
@@ -491,6 +601,7 @@ public final class ServerLifecycleCoordinator {
                 return;
             }
             entry.lastConnectionOutcome = outcome;
+            waiter.connectionFuture = null;
             if (outcome.isSuccessful()) {
                 entry.readyConnectionSucceeded = true;
                 if (entry.state == ServerLifecycleState.FAILED) {
@@ -572,7 +683,7 @@ public final class ServerLifecycleCoordinator {
     }
 
     private void safeSend(Player player, Component message) {
-        if (!isPlayerActive(player)) {
+        if (shutdown.get() || !isPlayerActive(player)) {
             return;
         }
         try {
@@ -630,6 +741,19 @@ public final class ServerLifecycleCoordinator {
         entry.state = next;
     }
 
+    private boolean ownOperation(LifecycleEntry entry, CompletableFuture<StartupOutcome> startup,
+            CompletableFuture<?> operation) {
+        synchronized (entry) {
+            if (shutdown.get() || entry.startupFuture != startup
+                    || entry.state != ServerLifecycleState.STARTING) {
+                operation.cancel(true);
+                return false;
+            }
+            entry.activeOperation = operation;
+            return true;
+        }
+    }
+
     private static Map<ServerLifecycleState, Set<ServerLifecycleState>> legalTransitions() {
         Map<ServerLifecycleState, Set<ServerLifecycleState>> transitions =
                 new EnumMap<>(ServerLifecycleState.class);
@@ -655,6 +779,7 @@ public final class ServerLifecycleCoordinator {
         private final Map<UUID, ConnectionWaiter> waiters = new LinkedHashMap<>();
         private ServerLifecycleState state = ServerLifecycleState.STOPPED;
         private CompletableFuture<StartupOutcome> startupFuture;
+        private CompletableFuture<?> activeOperation;
         private ConnectionOutcome lastConnectionOutcome;
         private boolean readyConnectionSucceeded;
         private boolean retired;
@@ -676,6 +801,7 @@ public final class ServerLifecycleCoordinator {
         private final RegisteredServer targetServer;
         private final CompletableFuture<ConnectionOutcome> future = new CompletableFuture<>();
         private volatile boolean discarded;
+        private CompletableFuture<ConnectionRequestBuilder.Result> connectionFuture;
 
         private ConnectionWaiter(UUID playerId, Player player, RegisteredServer targetServer) {
             this.playerId = playerId;

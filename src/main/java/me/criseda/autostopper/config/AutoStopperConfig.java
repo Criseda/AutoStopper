@@ -24,6 +24,7 @@ import java.util.function.Predicate;
 
 public class AutoStopperConfig {
     private static final String TIMEOUT_KEY = "inactivity_timeout_seconds";
+    private static final String SHUTDOWN_TIMEOUT_KEY = "shutdown_timeout_seconds";
     private static final String STOP_RETRY_KEY = "stop_retry";
     private static final String SERVERS_KEY = "monitored_servers";
 
@@ -105,12 +106,15 @@ public class AutoStopperConfig {
         }
 
         int timeout = parseTimeout(root, errors);
+        int shutdownTimeout = parsePositiveInteger(root.get(SHUTDOWN_TIMEOUT_KEY),
+                SHUTDOWN_TIMEOUT_KEY, ConfigSnapshot.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+                Integer.MAX_VALUE, errors);
         StopRetrySettings stopRetry = parseStopRetry(root.get(STOP_RETRY_KEY), errors);
         List<ServerMapping> mappings = parseMappings(root, errors);
         if (!errors.isEmpty()) {
             throw new ConfigValidationException(errors);
         }
-        return new ConfigSnapshot(timeout, stopRetry, mappings);
+        return new ConfigSnapshot(timeout, shutdownTimeout, stopRetry, mappings);
     }
 
     private StopRetrySettings parseStopRetry(Object value, List<String> errors) {
@@ -324,6 +328,9 @@ public class AutoStopperConfig {
             writer.write("# AutoStopper Configuration\n");
             writer.write("# Number of seconds of inactivity before a server is shut down.\n");
             writer.write(TIMEOUT_KEY + ": " + ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS + "\n\n");
+            writer.write("# Hard deadline for cancelling plugin work during proxy shutdown.\n");
+            writer.write(SHUTDOWN_TIMEOUT_KEY + ": "
+                    + ConfigSnapshot.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS + "\n\n");
             writer.write("# Failed stops are retried with capped exponential backoff.\n");
             writer.write(STOP_RETRY_KEY + ":\n");
             writer.write("  max_attempts: " + StopRetrySettings.DEFAULT_MAX_ATTEMPTS + "\n");
@@ -351,6 +358,7 @@ public class AutoStopperConfig {
         logger.info("Configuration loaded successfully!");
         logger.info("Applied configuration:");
         logger.info("- Inactivity timeout: {} seconds", snapshot.inactivityTimeoutSeconds());
+        logger.info("- Shutdown timeout: {} seconds", snapshot.shutdownTimeoutSeconds());
         logger.info("- Stop retries: {} attempts, {}-{} second backoff",
                 snapshot.stopRetry().maxAttempts(), snapshot.stopRetry().initialBackoff().toSeconds(),
                 snapshot.stopRetry().maxBackoff().toSeconds());

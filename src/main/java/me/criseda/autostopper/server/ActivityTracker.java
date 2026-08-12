@@ -2,6 +2,7 @@ package me.criseda.autostopper.server;
 
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.scheduler.ScheduledTask;
 
 import me.criseda.autostopper.AutoStopperPlugin;
 import me.criseda.autostopper.config.AutoStopperConfig;
@@ -26,6 +27,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class ActivityTracker {
     private final ProxyServer server;
@@ -37,6 +39,9 @@ public class ActivityTracker {
     private final Map<String, ActivityState> activity = new ConcurrentHashMap<>();
     private final AutoStopperPlugin plugin;
     private final AtomicBoolean inactivityScanActive = new AtomicBoolean(false);
+    private final AtomicBoolean shutdown = new AtomicBoolean(false);
+    private final AtomicReference<ScheduledTask> scheduledTask = new AtomicReference<>();
+    private final AtomicReference<CompletableFuture<Void>> activeScan = new AtomicReference<>();
     private final Clock clock;
 
     public ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager,
@@ -74,12 +79,21 @@ public class ActivityTracker {
     }
 
     public void startInactivityCheck() {
-        server.getScheduler().buildTask(plugin, this::requestInactivityCheck)
+        if (shutdown.get()) {
+            return;
+        }
+        ScheduledTask task = server.getScheduler().buildTask(plugin, this::requestInactivityCheck)
                 .repeat(1, TimeUnit.MINUTES)
                 .schedule();
+        if (!scheduledTask.compareAndSet(null, task) || shutdown.get()) {
+            task.cancel();
+        }
     }
 
     CompletableFuture<Void> requestInactivityCheck() {
+        if (shutdown.get()) {
+            return CompletableFuture.completedFuture(null);
+        }
         if (!inactivityScanActive.compareAndSet(false, true)) {
             logger.debug("Skipping inactivity check because the previous scan is still running");
             return CompletableFuture.completedFuture(null);
@@ -89,25 +103,50 @@ public class ActivityTracker {
             runInactivityCheck();
             return null;
         });
+        activeScan.set(scan);
         scan.whenComplete((ignored, error) -> {
+            activeScan.compareAndSet(scan, null);
             inactivityScanActive.set(false);
-            if (error != null) {
+            if (error != null && !shutdown.get()) {
                 logger.warn("Inactivity check could not run: {}", error.toString());
             }
         });
+        if (shutdown.get()) {
+            scan.cancel(true);
+        }
         return scan;
+    }
+
+    public void shutdown() {
+        if (!shutdown.compareAndSet(false, true)) {
+            return;
+        }
+        ScheduledTask task = scheduledTask.getAndSet(null);
+        if (task != null) {
+            task.cancel();
+        }
+        CompletableFuture<Void> scan = activeScan.getAndSet(null);
+        if (scan != null) {
+            scan.cancel(true);
+        }
     }
 
     private void runInactivityCheck() {
         logger.debug("Running inactivity check...");
         ConfigSnapshot snapshot = config.snapshot();
         for (ServerMapping mapping : snapshot.servers()) {
+            if (shutdown.get()) {
+                return;
+            }
             server.getServer(mapping.serverName())
                     .ifPresent(registeredServer -> evaluateServer(snapshot, mapping, registeredServer));
         }
     }
 
     private void evaluateServer(ConfigSnapshot snapshot, ServerMapping mapping, RegisteredServer registeredServer) {
+        if (shutdown.get()) {
+            return;
+        }
         String serverName = mapping.serverName();
         ActivityState activityAtScanStart = activity.get(serverName);
         // If players are connected, update the timestamp
@@ -150,6 +189,9 @@ public class ActivityTracker {
 
         boolean retryDue = observed.nextStopAttemptAt() != null;
         if (retryDue || inactiveDuration.getSeconds() > snapshot.inactivityTimeoutSeconds()) {
+            if (shutdown.get()) {
+                return;
+            }
             if (!lifecycleCoordinator.tryBeginStop(mapping)) {
                 logger.debug("Skipping inactivity shutdown for {} because lifecycle work is active", serverName);
                 return;
@@ -158,6 +200,10 @@ public class ActivityTracker {
                 updateActivity(serverName);
                 lifecycleCoordinator.cancelStop(mapping);
                 logger.debug("Cancelled inactivity shutdown for {} because activity changed", serverName);
+                return;
+            }
+            if (shutdown.get()) {
+                lifecycleCoordinator.cancelStop(mapping);
                 return;
             }
             logger.info("Server {} has been inactive for {} minutes; stop attempt {} of {}",
@@ -199,12 +245,15 @@ public class ActivityTracker {
     }
 
     public void updateActivity(String serverName) {
-        if (config.snapshot().containsServer(serverName)) {
+        if (!shutdown.get() && config.snapshot().containsServer(serverName)) {
             activity.put(serverName, ActivityState.activeAt(clock.instant()));
         }
     }
 
     public void reconcileConfig(ConfigSnapshot previous, ConfigSnapshot current) {
+        if (shutdown.get()) {
+            return;
+        }
         Set<String> currentNames = new HashSet<>(current.serverNames());
         activity.keySet().removeIf(serverName -> !currentNames.contains(serverName));
 
@@ -217,7 +266,9 @@ public class ActivityTracker {
     }
 
     public void removeActivity(String serverName) {
-        activity.remove(serverName);
+        if (!shutdown.get()) {
+            activity.remove(serverName);
+        }
     }
 
     private void removeActivityIfUnchanged(String serverName, ActivityState observed) {

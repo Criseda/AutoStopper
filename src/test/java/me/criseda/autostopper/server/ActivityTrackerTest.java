@@ -121,6 +121,46 @@ public class ActivityTrackerTest {
     }
 
     @Test
+    public void shutdownCancelsScheduledIdleChecksAndIsIdempotent() {
+        Scheduler scheduler = mock(Scheduler.class);
+        Scheduler.TaskBuilder taskBuilder = mock(Scheduler.TaskBuilder.class);
+        ScheduledTask task = mock(ScheduledTask.class);
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
+        when(taskBuilder.repeat(1, TimeUnit.MINUTES)).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(task);
+        activityTracker.startInactivityCheck();
+
+        activityTracker.shutdown();
+        activityTracker.shutdown();
+
+        verify(task).cancel();
+        assertTrue(activityTracker.requestInactivityCheck().isDone());
+        verifyNoInteractions(serverManager);
+    }
+
+    @Test
+    public void shutdownCancelsActiveIdleScanAndPreventsRetryWork() {
+        AutoStopperExecutor controlledExecutor = mock(AutoStopperExecutor.class);
+        CompletableFuture<Void> scan = new CompletableFuture<>();
+        when(controlledExecutor.supply(org.mockito.ArgumentMatchers.<java.util.function.Supplier<Void>>any()))
+                .thenReturn(scan);
+        ActivityTracker tracker = new ActivityTracker(
+                proxyServer, logger, config, serverManager, controlledExecutor, plugin, lifecycleCoordinator);
+
+        assertSame(scan, tracker.requestInactivityCheck());
+        tracker.shutdown();
+
+        assertTrue(scan.isCancelled());
+        tracker.updateActivity("server1");
+        tracker.reconcileConfig(config.snapshot(), config.snapshot());
+        tracker.removeActivity("server1");
+        assertNotNull(tracker.getLastActivity("server1"));
+        assertTrue(tracker.requestInactivityCheck().isDone());
+        verify(controlledExecutor, times(1)).supply(any());
+    }
+
+    @Test
     public void testInactivityCheckWithActiveServer() {
         // Mock scheduler chain
         Scheduler scheduler = mock(Scheduler.class);

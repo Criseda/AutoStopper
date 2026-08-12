@@ -63,6 +63,9 @@ After the first run, AutoStopper will generate a `config.yml` in the `plugins/Au
 # Time in seconds before an inactive server is stopped
 inactivity_timeout_seconds: 900
 
+# Hard deadline for cancelling AutoStopper work during proxy shutdown
+shutdown_timeout_seconds: 10
+
 # Failed stops use capped exponential backoff
 stop_retry:
   max_attempts: 3
@@ -90,6 +93,9 @@ monitored_servers:
 ### Configuration Options
 
 - `inactivity_timeout_seconds`: Time in seconds a server must be inactive before being shut down (default: 300 seconds/5 minutes)
+- `shutdown_timeout_seconds`: Hard deadline for cancelling scheduled checks, lifecycle requests,
+  readiness probes, Docker CLI subprocesses, and plugin worker threads during proxy shutdown
+  (default: `10`). Managed Minecraft containers are left unchanged.
 - `stop_retry`: Bounded retry policy for failed or timed-out automatic stops. Activity is retained
   between attempts, and a successful stop is the only outcome that clears it.
   - `max_attempts`: Maximum attempts in one stop cycle (default: `3`, maximum: `100`).

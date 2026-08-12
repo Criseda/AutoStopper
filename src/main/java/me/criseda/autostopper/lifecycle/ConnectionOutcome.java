@@ -17,7 +17,8 @@ public enum ConnectionOutcome {
     CONTAINER_MISSING(false),
     DOCKER_INACCESSIBLE(false),
     SERVER_NOT_READY(false),
-    OVERLOADED(false);
+    OVERLOADED(false),
+    PROXY_SHUTDOWN(false);
 
     private final boolean successful;
 
