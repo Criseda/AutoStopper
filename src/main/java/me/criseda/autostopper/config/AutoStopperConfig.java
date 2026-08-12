@@ -24,6 +24,7 @@ import java.util.function.Predicate;
 
 public class AutoStopperConfig {
     private static final String TIMEOUT_KEY = "inactivity_timeout_seconds";
+    private static final String STOP_RETRY_KEY = "stop_retry";
     private static final String SERVERS_KEY = "monitored_servers";
 
     private final Path dataDirectory;
@@ -104,11 +105,38 @@ public class AutoStopperConfig {
         }
 
         int timeout = parseTimeout(root, errors);
+        StopRetrySettings stopRetry = parseStopRetry(root.get(STOP_RETRY_KEY), errors);
         List<ServerMapping> mappings = parseMappings(root, errors);
         if (!errors.isEmpty()) {
             throw new ConfigValidationException(errors);
         }
-        return new ConfigSnapshot(timeout, mappings);
+        return new ConfigSnapshot(timeout, stopRetry, mappings);
+    }
+
+    private StopRetrySettings parseStopRetry(Object value, List<String> errors) {
+        StopRetrySettings defaults = StopRetrySettings.defaults();
+        if (value == null) {
+            return defaults;
+        }
+        if (!(value instanceof Map<?, ?> retry)) {
+            errors.add(STOP_RETRY_KEY + ": expected a mapping");
+            return defaults;
+        }
+        int maxAttempts = parsePositiveInteger(retry.get("max_attempts"),
+                STOP_RETRY_KEY + ".max_attempts", defaults.maxAttempts(), 100, errors);
+        int initialBackoffSeconds = parsePositiveInteger(retry.get("initial_backoff_seconds"),
+                STOP_RETRY_KEY + ".initial_backoff_seconds",
+                (int) defaults.initialBackoff().toSeconds(), Integer.MAX_VALUE, errors);
+        int maxBackoffSeconds = parsePositiveInteger(retry.get("max_backoff_seconds"),
+                STOP_RETRY_KEY + ".max_backoff_seconds",
+                (int) defaults.maxBackoff().toSeconds(), Integer.MAX_VALUE, errors);
+        if (maxBackoffSeconds < initialBackoffSeconds) {
+            errors.add(STOP_RETRY_KEY
+                    + ".max_backoff_seconds: must be greater than or equal to initial_backoff_seconds");
+            return defaults;
+        }
+        return new StopRetrySettings(maxAttempts, Duration.ofSeconds(initialBackoffSeconds),
+                Duration.ofSeconds(maxBackoffSeconds));
     }
 
     private int parseTimeout(Map<?, ?> root, List<String> errors) {
@@ -296,6 +324,12 @@ public class AutoStopperConfig {
             writer.write("# AutoStopper Configuration\n");
             writer.write("# Number of seconds of inactivity before a server is shut down.\n");
             writer.write(TIMEOUT_KEY + ": " + ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS + "\n\n");
+            writer.write("# Failed stops are retried with capped exponential backoff.\n");
+            writer.write(STOP_RETRY_KEY + ":\n");
+            writer.write("  max_attempts: " + StopRetrySettings.DEFAULT_MAX_ATTEMPTS + "\n");
+            writer.write("  initial_backoff_seconds: "
+                    + StopRetrySettings.DEFAULT_INITIAL_BACKOFF_SECONDS + "\n");
+            writer.write("  max_backoff_seconds: " + StopRetrySettings.DEFAULT_MAX_BACKOFF_SECONDS + "\n\n");
             writer.write("# Add only server names already registered in Velocity.\n");
             writer.write(SERVERS_KEY + ": []\n\n");
             writer.write("# Example:\n");
@@ -317,6 +351,9 @@ public class AutoStopperConfig {
         logger.info("Configuration loaded successfully!");
         logger.info("Applied configuration:");
         logger.info("- Inactivity timeout: {} seconds", snapshot.inactivityTimeoutSeconds());
+        logger.info("- Stop retries: {} attempts, {}-{} second backoff",
+                snapshot.stopRetry().maxAttempts(), snapshot.stopRetry().initialBackoff().toSeconds(),
+                snapshot.stopRetry().maxBackoff().toSeconds());
         logger.info("- Monitored servers: {}", String.join(", ", snapshot.serverNames()));
     }
 

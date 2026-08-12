@@ -63,6 +63,12 @@ After the first run, AutoStopper will generate a `config.yml` in the `plugins/Au
 # Time in seconds before an inactive server is stopped
 inactivity_timeout_seconds: 900
 
+# Failed stops use capped exponential backoff
+stop_retry:
+  max_attempts: 3
+  initial_backoff_seconds: 60
+  max_backoff_seconds: 300
+
 # List of servers AutoStopper should manage
 monitored_servers:
   - server_name: purpur
@@ -84,6 +90,12 @@ monitored_servers:
 ### Configuration Options
 
 - `inactivity_timeout_seconds`: Time in seconds a server must be inactive before being shut down (default: 300 seconds/5 minutes)
+- `stop_retry`: Bounded retry policy for failed or timed-out automatic stops. Activity is retained
+  between attempts, and a successful stop is the only outcome that clears it.
+  - `max_attempts`: Maximum attempts in one stop cycle (default: `3`, maximum: `100`).
+  - `initial_backoff_seconds`: Delay after the first failed attempt (default: `60`).
+  - `max_backoff_seconds`: Cap for exponential backoff (default: `300`); must not be less
+    than `initial_backoff_seconds`.
 - `monitored_servers`: List of server mappings
   - `server_name`: Name of the server in Velocity configuration
   - `container_name`: Corresponding Docker container name

@@ -10,11 +10,17 @@ public final class ConfigSnapshot {
     public static final int DEFAULT_INACTIVITY_TIMEOUT_SECONDS = 300;
 
     private final int inactivityTimeoutSeconds;
+    private final StopRetrySettings stopRetry;
     private final List<ServerMapping> servers;
     private final Map<String, String> serverToContainer;
 
     public ConfigSnapshot(int inactivityTimeoutSeconds, List<ServerMapping> servers) {
+        this(inactivityTimeoutSeconds, StopRetrySettings.defaults(), servers);
+    }
+
+    public ConfigSnapshot(int inactivityTimeoutSeconds, StopRetrySettings stopRetry, List<ServerMapping> servers) {
         this.inactivityTimeoutSeconds = inactivityTimeoutSeconds;
+        this.stopRetry = stopRetry;
         this.servers = List.copyOf(servers);
 
         Map<String, String> mapping = new LinkedHashMap<>();
@@ -30,6 +36,10 @@ public final class ConfigSnapshot {
 
     public int inactivityTimeoutSeconds() {
         return inactivityTimeoutSeconds;
+    }
+
+    public StopRetrySettings stopRetry() {
+        return stopRetry;
     }
 
     public List<ServerMapping> servers() {

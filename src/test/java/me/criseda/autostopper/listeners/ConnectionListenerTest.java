@@ -6,6 +6,7 @@ import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.server.ServerInfo;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
@@ -60,10 +61,16 @@ public class ConnectionListenerTest {
     public void testOnDisconnectDiscardsWaiter() {
         DisconnectEvent event = mock(DisconnectEvent.class);
         Player player = mock(Player.class);
+        ServerConnection connection = mock(ServerConnection.class);
+        ServerInfo info = mock(ServerInfo.class);
         when(event.getPlayer()).thenReturn(player);
+        when(player.getCurrentServer()).thenReturn(java.util.Optional.of(connection));
+        when(connection.getServerInfo()).thenReturn(info);
+        when(info.getName()).thenReturn("test-server");
 
         connectionListener.onDisconnect(event);
 
+        verify(activityTracker).updateActivity("test-server");
         verify(lifecycleCoordinator).discardPlayer(player);
     }
 

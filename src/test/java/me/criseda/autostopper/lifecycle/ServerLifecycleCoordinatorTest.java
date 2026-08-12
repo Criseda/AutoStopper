@@ -308,6 +308,17 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
+    void admittedStopCanBeCancelledWhenActivityWinsTheRace() {
+        assertTrue(coordinator.tryBeginStop(mapping));
+        assertEquals(Optional.of(ServerLifecycleState.STOPPING), coordinator.state("survival"));
+
+        coordinator.cancelStop(mapping);
+
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+        assertTrue(coordinator.tryBeginStop(mapping));
+    }
+
+    @Test
     void replacementMappingDoesNotJoinCapturedStartup() {
         ServerMapping replacement = new ServerMapping("survival", "replacement-container");
         ConfigSnapshot previous = new ConfigSnapshot(300, List.of(mapping));

@@ -9,6 +9,7 @@ import me.criseda.autostopper.AutoStopperPlugin;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
+import me.criseda.autostopper.config.StopRetrySettings;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
@@ -21,12 +22,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -206,21 +210,8 @@ public class ActivityTrackerTest {
         when(config.snapshot()).thenReturn(new ConfigSnapshot(60, List.of(mapping1, mapping2)));
         
         // Set inactivity time to 70 seconds ago
-        Map<String, Instant> lastActivity = new HashMap<>();
-        lastActivity.put("server1", Instant.now());
-        lastActivity.put("server2", Instant.now().minus(Duration.ofSeconds(70)));
-        
-        // Use reflection to set the last activity to our controlled value
-        try {
-            var field = ActivityTracker.class.getDeclaredField("lastActivity");
-            field.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Map<String, Instant> activityMap = (Map<String, Instant>) field.get(activityTracker);
-            activityMap.clear();
-            activityMap.putAll(lastActivity);
-        } catch (Exception e) {
-            fail("Failed to set lastActivity field: " + e.getMessage());
-        }
+        activityTracker.setLastActivityForTest("server1", Instant.now());
+        activityTracker.setLastActivityForTest("server2", Instant.now().minus(Duration.ofSeconds(70)));
         
         // Execute the captured runnable
         Runnable inactivityCheck = runnableCaptor.getValue();
@@ -259,15 +250,7 @@ public class ActivityTrackerTest {
         when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.STOPPED));
 
         // Manually place server in tracking map to verify it gets removed
-        try {
-            var field = ActivityTracker.class.getDeclaredField("lastActivity");
-            field.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Map<String, Instant> activityMap = (Map<String, Instant>) field.get(activityTracker);
-            activityMap.put("server1", Instant.now().minus(Duration.ofHours(1))); // Very old activity
-        } catch (Exception e) {
-            fail("Reflection setup failed");
-        }
+        activityTracker.setLastActivityForTest("server1", Instant.now().minus(Duration.ofHours(1)));
 
         // Run check
         Runnable inactivityCheck = runnableCaptor.getValue();
@@ -305,24 +288,16 @@ public class ActivityTrackerTest {
                 .thenReturn(Optional.of(ContainerStatus.INACCESSIBLE));
 
         // Server is in tracking map with old activity
-        try {
-            var field = ActivityTracker.class.getDeclaredField("lastActivity");
-            field.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Map<String, Instant> activityMap = (Map<String, Instant>) field.get(activityTracker);
-            activityMap.put("server1", Instant.now().minus(Duration.ofHours(1)));
-        } catch (Exception e) {
-            fail("Reflection setup failed");
-        }
+        activityTracker.setLastActivityForTest("server1", Instant.now().minus(Duration.ofHours(1)));
 
         // Run check
         runAndWait(runnableCaptor.getValue());
 
-        // Verify: no shutdown attempted, tracking removed, operator warned
+        // Verify: no shutdown attempted, tracking retained, operator warned
         verify(serverManager, never()).stopServer(mapping1);
-        assertNull(activityTracker.getLastActivity("server1"),
-                "Server should be removed from tracking on indeterminate status");
-        verify(logger).warn(contains("skipping inactivity shutdown"), eq("server1"),
+        assertNotNull(activityTracker.getLastActivity("server1"),
+                "Server activity should survive an indeterminate status result");
+        verify(logger).warn(contains("retaining activity"), eq("server1"),
                 eq(ContainerStatus.INACCESSIBLE));
     }
 
@@ -410,11 +385,7 @@ public class ActivityTrackerTest {
         });
         when(serverManager.stopServer(mapping1)).thenReturn(ContainerStatus.STOPPED);
 
-        var field = ActivityTracker.class.getDeclaredField("lastActivity");
-        field.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        Map<String, Instant> activityMap = (Map<String, Instant>) field.get(activityTracker);
-        activityMap.put("server1", Instant.now().minusSeconds(70));
+        activityTracker.setLastActivityForTest("server1", Instant.now().minusSeconds(70));
 
         activityTracker.startInactivityCheck();
         runAndWait(runnableCaptor.getValue());
@@ -493,6 +464,127 @@ public class ActivityTrackerTest {
         assertNotNull(activityTracker.getLastActivity("server3"));
     }
 
+    @Test
+    public void testReconcileConfigResetsActivityForReplacementMapping() {
+        activityTracker.setLastActivityForTest("server1", Instant.now().minus(Duration.ofHours(1)));
+        ServerMapping replacement = new ServerMapping("server1", "replacement-container");
+
+        activityTracker.reconcileConfig(
+                new ConfigSnapshot(300, List.of(mapping1)),
+                new ConfigSnapshot(300, List.of(replacement)));
+
+        assertTrue(Duration.between(activityTracker.getLastActivity("server1"), Instant.now()).getSeconds() < 5);
+    }
+
+    @Test
+    public void failedAndTimedOutStopsRetryWithCappedBackoffUntilSuccess() {
+        Instant start = Instant.parse("2026-08-12T10:00:00Z");
+        MutableClock clock = new MutableClock(start);
+        ConfigSnapshot snapshot = new ConfigSnapshot(60,
+                new StopRetrySettings(3, Duration.ofSeconds(10), Duration.ofSeconds(15)),
+                List.of(mapping1));
+        when(config.snapshot()).thenReturn(snapshot);
+
+        ActivityTracker tracker = new ActivityTracker(
+                proxyServer, logger, config, serverManager, executor, plugin, lifecycleCoordinator, clock);
+        RegisteredServer registered = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(registered));
+        when(registered.getPlayersConnected()).thenReturn(Collections.emptySet());
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        when(serverManager.stopServer(mapping1)).thenReturn(
+                ContainerStatus.TIMED_OUT, ContainerStatus.FAILED, ContainerStatus.STOPPED);
+        tracker.setLastActivityForTest("server1", start.minusSeconds(61));
+
+        tracker.requestInactivityCheck().join();
+        assertEquals(1, tracker.getFailedStopAttemptsForTest("server1"));
+        tracker.requestInactivityCheck().join();
+        verify(serverManager, times(1)).stopServer(mapping1);
+
+        clock.advance(Duration.ofSeconds(10));
+        tracker.requestInactivityCheck().join();
+        assertEquals(2, tracker.getFailedStopAttemptsForTest("server1"));
+        clock.advance(Duration.ofSeconds(14));
+        tracker.requestInactivityCheck().join();
+        verify(serverManager, times(2)).stopServer(mapping1);
+
+        clock.advance(Duration.ofSeconds(1));
+        tracker.requestInactivityCheck().join();
+        verify(serverManager, times(3)).stopServer(mapping1);
+        assertNull(tracker.getLastActivity("server1"));
+        verify(lifecycleCoordinator).completeStop(mapping1, ContainerStatus.TIMED_OUT);
+        verify(lifecycleCoordinator).completeStop(mapping1, ContainerStatus.FAILED);
+        verify(lifecycleCoordinator).completeStop(mapping1, ContainerStatus.STOPPED);
+    }
+
+    @Test
+    public void concurrentActivityCancelsAdmittedStopBeforeDockerCall() {
+        ConfigSnapshot snapshot = new ConfigSnapshot(1, List.of(mapping1));
+        when(config.snapshot()).thenReturn(snapshot);
+        RegisteredServer registered = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(registered));
+        when(registered.getPlayersConnected()).thenReturn(Collections.emptySet());
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        activityTracker.setLastActivityForTest("server1", Instant.now().minusSeconds(2));
+        when(lifecycleCoordinator.tryBeginStop(mapping1)).thenAnswer(ignored -> {
+            activityTracker.updateActivity("server1");
+            return true;
+        });
+
+        activityTracker.requestInactivityCheck().join();
+
+        verify(serverManager, never()).stopServer(mapping1);
+        verify(lifecycleCoordinator).cancelStop(mapping1);
+        verify(lifecycleCoordinator, never()).completeStop(eq(mapping1), any());
+    }
+
+    @Test
+    public void concurrentActivityIsNotRemovedByStaleStoppedStatus() {
+        when(config.snapshot()).thenReturn(new ConfigSnapshot(60, List.of(mapping1)));
+        RegisteredServer registered = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(registered));
+        when(registered.getPlayersConnected()).thenReturn(Collections.emptySet());
+        Instant previous = Instant.now().minus(Duration.ofHours(1));
+        activityTracker.setLastActivityForTest("server1", previous);
+        when(serverManager.getServerStatus(mapping1)).thenAnswer(ignored -> {
+            activityTracker.updateActivity("server1");
+            return Optional.of(ContainerStatus.STOPPED);
+        });
+
+        activityTracker.requestInactivityCheck().join();
+
+        assertTrue(activityTracker.getLastActivity("server1").isAfter(previous));
+        verify(serverManager, never()).stopServer(mapping1);
+    }
+
+    @Test
+    public void exhaustedStopRetriesRequireANewInactivityPeriod() {
+        Instant start = Instant.parse("2026-08-12T10:00:00Z");
+        MutableClock clock = new MutableClock(start);
+        ConfigSnapshot snapshot = new ConfigSnapshot(60,
+                new StopRetrySettings(2, Duration.ofSeconds(1), Duration.ofSeconds(1)),
+                List.of(mapping1));
+        when(config.snapshot()).thenReturn(snapshot);
+        ActivityTracker tracker = new ActivityTracker(
+                proxyServer, logger, config, serverManager, executor, plugin, lifecycleCoordinator, clock);
+        RegisteredServer registered = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(registered));
+        when(registered.getPlayersConnected()).thenReturn(Collections.emptySet());
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        when(serverManager.stopServer(mapping1)).thenReturn(ContainerStatus.FAILED);
+        tracker.setLastActivityForTest("server1", start.minusSeconds(61));
+
+        tracker.requestInactivityCheck().join();
+        clock.advance(Duration.ofSeconds(1));
+        tracker.requestInactivityCheck().join();
+        tracker.requestInactivityCheck().join();
+
+        verify(serverManager, times(2)).stopServer(mapping1);
+        assertEquals(start.plusSeconds(1), tracker.getLastActivity("server1"));
+        assertEquals(0, tracker.getFailedStopAttemptsForTest("server1"));
+        verify(logger).warn(contains("Stop retries exhausted"), eq("server1"), eq(2),
+                eq(ContainerStatus.FAILED));
+    }
+
     private void runAndWait(Runnable inactivityCheck) {
         inactivityCheck.run();
         waitForScanCompletion();
@@ -513,6 +605,33 @@ public class ActivityTrackerTest {
             return ((java.util.concurrent.atomic.AtomicBoolean) field.get(activityTracker)).get();
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
+        }
+    }
+
+    private static final class MutableClock extends Clock {
+        private final AtomicReference<Instant> current;
+
+        private MutableClock(Instant initial) {
+            current = new AtomicReference<>(initial);
+        }
+
+        private void advance(Duration duration) {
+            current.updateAndGet(instant -> instant.plus(duration));
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return ZoneId.of("UTC");
+        }
+
+        @Override
+        public Clock withZone(ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return current.get();
         }
     }
 }

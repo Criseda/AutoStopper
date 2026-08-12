@@ -83,8 +83,13 @@ public class ServerManager {
 
     public ContainerStatus stopServer(ServerMapping mapping) {
         ContainerStatus result = dockerManager.stopContainer(mapping.containerName());
-        logger.info("Stopped server: {} (container: {}, result: {})",
-                mapping.serverName(), mapping.containerName(), result);
+        if (result == ContainerStatus.STOPPED) {
+            logger.info("Stopped server: {} (container: {})",
+                    mapping.serverName(), mapping.containerName());
+        } else {
+            logger.warn("Could not stop server: {} (container: {}, result: {})",
+                    mapping.serverName(), mapping.containerName(), result);
+        }
         return result;
     }
 
