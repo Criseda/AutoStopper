@@ -147,6 +147,7 @@ public class AutoStopperPluginTest {
         verify(logger).info("AutoStopper plugin initialized!");
         verify(eventManager).register(eq(spyPlugin), any(ConnectionListener.class));
         verify(commandManager).register(eq(commandMeta), any(AutoStopperCommand.class));
+        verify(commandManager, never()).unregister(anyString());
         verify(mockActivityTracker).startInactivityCheck();
     }
 

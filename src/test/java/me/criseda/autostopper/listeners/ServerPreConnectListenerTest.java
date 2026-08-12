@@ -69,7 +69,7 @@ public class ServerPreConnectListenerTest {
         
         // Common setup for all tests
         lenient().when(event.getPlayer()).thenReturn(player);
-        lenient().when(event.getOriginalServer()).thenReturn(targetServer);
+        lenient().when(event.getResult()).thenReturn(ServerPreConnectEvent.ServerResult.allowed(targetServer));
         lenient().when(targetServer.getServerInfo()).thenReturn(serverInfo);
         lenient().when(serverInfo.getName()).thenReturn("testserver");
         lenient().when(plugin.getServer()).thenReturn(mock(com.velocitypowered.api.proxy.ProxyServer.class));
@@ -300,6 +300,72 @@ public class ServerPreConnectListenerTest {
         assertFalse(isStarting.get(), "isStarting flag should be reset to false");
     }
     
+    @Test
+    public void testOnServerPreConnect_DeniedEventDoesNotStart() {
+        // Setup - another plugin denied the connection
+        when(event.getResult()).thenReturn(ServerPreConnectEvent.ServerResult.denied());
+
+        // Execute
+        listener.onServerPreConnect(event);
+
+        // Verify
+        verify(serverManager, never()).isMonitoredServer(anyString());
+        verify(serverManager, never()).isServerRunning(anyString());
+        verify(serverManager, never()).startServer(anyString());
+        verify(event, never()).setResult(any(ServerPreConnectEvent.ServerResult.class));
+        verify(player, never()).sendMessage(any(Component.class));
+        verifyNoInteractions(activityTracker);
+    }
+
+    @Test
+    public void testOnServerPreConnect_ReroutedTarget() {
+        // Setup - another plugin rerouted the event to a monitored server
+        RegisteredServer reroutedServer = mock(RegisteredServer.class);
+        ServerInfo reroutedInfo = mock(ServerInfo.class);
+        when(reroutedServer.getServerInfo()).thenReturn(reroutedInfo);
+        when(reroutedInfo.getName()).thenReturn("rerouted");
+        when(event.getResult()).thenReturn(ServerPreConnectEvent.ServerResult.allowed(reroutedServer));
+
+        when(serverManager.isMonitoredServer("rerouted")).thenReturn(true);
+        AtomicBoolean isStarting = new AtomicBoolean(false);
+        when(serverManager.getServerStartingStatus("rerouted")).thenReturn(isStarting);
+
+        when(plugin.getServer().getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), any(Runnable.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+
+        // Execute
+        listener.onServerPreConnect(event);
+
+        // Verify the final allowed target was inspected, not the original server
+        verify(serverManager).isMonitoredServer("rerouted");
+        verify(serverManager).isServerRunning("rerouted");
+        verify(serverManager, never()).isMonitoredServer("testserver");
+    }
+
+    @Test
+    public void testOnServerPreConnect_ReroutedToUnmonitoredTarget() {
+        // Setup - another plugin rerouted the event to an unmonitored server
+        RegisteredServer reroutedServer = mock(RegisteredServer.class);
+        ServerInfo reroutedInfo = mock(ServerInfo.class);
+        when(reroutedServer.getServerInfo()).thenReturn(reroutedInfo);
+        when(reroutedInfo.getName()).thenReturn("hub");
+        when(event.getResult()).thenReturn(ServerPreConnectEvent.ServerResult.allowed(reroutedServer));
+
+        when(serverManager.isMonitoredServer("hub")).thenReturn(false);
+
+        // Execute
+        listener.onServerPreConnect(event);
+
+        // Verify
+        verify(serverManager).isMonitoredServer("hub");
+        verify(serverManager, never()).isServerRunning(anyString());
+        verify(serverManager, never()).getServerStartingStatus(anyString());
+        verify(serverManager, never()).startServer(anyString());
+        verify(event, never()).setResult(any(ServerPreConnectEvent.ServerResult.class));
+        verifyNoInteractions(activityTracker);
+    }
+
     // Helper methods for assertions
     private static void assertTrue(boolean condition, String message) {
         if (!condition) {

@@ -9,6 +9,7 @@ import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
 
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerPreConnectListener {
@@ -26,58 +27,65 @@ public class ServerPreConnectListener {
     @Subscribe
     public void onServerPreConnect(ServerPreConnectEvent event) {
         Player player = event.getPlayer();
-        RegisteredServer targetServer = event.getOriginalServer();
+        Optional<RegisteredServer> target = event.getResult().getServer();
+        // The connection attempt was denied (by this or another plugin) - never start a container.
+        if (target.isEmpty()) {
+            return;
+        }
+        RegisteredServer targetServer = target.get();
         String serverName = targetServer.getServerInfo().getName();
 
-        if (serverManager.isMonitoredServer(serverName)) {
-            // Check if existing start process is already in progress
-            AtomicBoolean isStarting = serverManager.getServerStartingStatus(serverName);
-            if (isStarting.get()) {
-                player.sendMessage(Component.text("§eServer is already being started, please wait..."));
+        if (!serverManager.isMonitoredServer(serverName)) {
+            return;
+        }
+
+        // Check if an existing start process is already in progress
+        AtomicBoolean isStarting = serverManager.getServerStartingStatus(serverName);
+        if (isStarting.get()) {
+            player.sendMessage(Component.text("§eServer is already being started, please wait..."));
+            event.setResult(ServerPreConnectEvent.ServerResult.denied());
+            return;
+        }
+
+        // If not starting, but also not running, then we start it
+        if (!serverManager.isServerRunning(serverName)) {
+            player.sendMessage(Component.text("§eServer is currently offline. Starting it up for you..."));
+
+            if (isStarting.compareAndSet(false, true)) {
+                // Cancel the connection attempt for now - we'll reconnect later
                 event.setResult(ServerPreConnectEvent.ServerResult.denied());
-                return;
-            }
 
-            // If not starting, but also not running, then we start it
-            if (!serverManager.isServerRunning(serverName)) {
-                player.sendMessage(Component.text("§eServer is currently offline. Starting it up for you..."));
+                // Start server in a separate thread
+                plugin.getServer().getScheduler().buildTask(plugin, () -> {
+                    try {
+                        if (serverManager.startServer(serverName)) {
+                            // Wait for server to be ready
+                            if (serverManager.waitForServerReady(serverName, 120)) {
+                                player.sendMessage(Component.text("§aServer §e" + serverName + "§a is now ready!"));
+                                activityTracker.updateActivity(serverName);
 
-                if (isStarting.compareAndSet(false, true)) {
-                    // Cancel the connection attempt for now - we'll reconnect later
-                    event.setResult(ServerPreConnectEvent.ServerResult.denied());
-
-                    // Start server in a separate thread
-                    plugin.getServer().getScheduler().buildTask(plugin, () -> {
-                        try {
-                            if (serverManager.startServer(serverName)) {
-                                // Wait for server to be ready
-                                if (serverManager.waitForServerReady(serverName, 120)) {
-                                    player.sendMessage(Component.text("§aServer §e" + serverName + "§a is now ready!"));
-                                    activityTracker.updateActivity(serverName);
-
-                                    // Connect the player to the server now that it's running
-                                    player.createConnectionRequest(targetServer).fireAndForget();
-                                } else {
-                                    player.sendMessage(Component
-                                            .text("§cServer §e" + serverName + "§c may not be fully ready yet."));
-                                    player.sendMessage(
-                                            Component.text("§eTry again in a moment with §b/server " + serverName));
-                                }
+                                // Connect the player to the server now that it's running
+                                player.createConnectionRequest(targetServer).fireAndForget();
                             } else {
-                                player.sendMessage(Component.text("§cFailed to start server §e" + serverName));
+                                player.sendMessage(Component
+                                        .text("§cServer §e" + serverName + "§c may not be fully ready yet."));
+                                player.sendMessage(
+                                        Component.text("§eTry again in a moment with §b/server " + serverName));
                             }
-                        } catch (Exception e) {
-                            plugin.getLogger().error("Error while starting server", e);
-                            player.sendMessage(Component.text("§cError starting server: " + e.getMessage()));
-                        } finally {
-                            isStarting.set(false);
+                        } else {
+                            player.sendMessage(Component.text("§cFailed to start server §e" + serverName));
                         }
-                    }).schedule();
-                } else {
-                    // Race condition hit: someone else started it just now
-                    player.sendMessage(Component.text("§eServer is being started by another request, please wait..."));
-                    event.setResult(ServerPreConnectEvent.ServerResult.denied());
-                }
+                    } catch (Exception e) {
+                        plugin.getLogger().error("Error while starting server", e);
+                        player.sendMessage(Component.text("§cError starting server: " + e.getMessage()));
+                    } finally {
+                        isStarting.set(false);
+                    }
+                }).schedule();
+            } else {
+                // Race condition hit: someone else started it just now
+                player.sendMessage(Component.text("§eServer is being started by another request, please wait..."));
+                event.setResult(ServerPreConnectEvent.ServerResult.denied());
             }
         }
     }

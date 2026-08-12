@@ -30,16 +30,28 @@ public class ServerManager {
 
     public boolean isServerRunning(String serverName) {
         String containerName = getContainerName(serverName);
+        if (containerName == null) {
+            logger.warn("No container mapped for server: " + serverName);
+            return false;
+        }
         return dockerManager.isContainerRunning(containerName);
     }
 
     public boolean startServer(String serverName) {
         String containerName = getContainerName(serverName);
+        if (containerName == null) {
+            logger.warn("No container mapped for server: " + serverName);
+            return false;
+        }
         return dockerManager.startContainer(containerName);
     }
 
     public boolean stopServer(String serverName) {
         String containerName = getContainerName(serverName);
+        if (containerName == null) {
+            logger.warn("No container mapped for server: " + serverName);
+            return false;
+        }
         boolean result = dockerManager.stopContainer(containerName);
         logger.info("Stopped server: " + serverName + " (container: " + containerName + ")");
         return result;
@@ -47,6 +59,10 @@ public class ServerManager {
 
     public boolean waitForServerReady(String serverName, int timeoutSeconds) {
         String containerName = getContainerName(serverName);
+        if (containerName == null) {
+            logger.warn("No container mapped for server: " + serverName);
+            return false;
+        }
         return dockerManager.waitForContainerReady(
                 containerName,
                 timeoutSeconds,
@@ -65,7 +81,7 @@ public class ServerManager {
 
     public String getContainerName(String serverName) {
         Map<String, String> mapping = config.getServerToContainerMap();
-        return mapping.getOrDefault(serverName, serverName);
+        return mapping.get(serverName);
     }
 
     public Optional<RegisteredServer> getServer(String name) {
