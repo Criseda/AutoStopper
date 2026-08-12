@@ -7,6 +7,7 @@ import com.velocitypowered.api.scheduler.ScheduledTask;
 import com.velocitypowered.api.scheduler.Scheduler;
 import me.criseda.autostopper.AutoStopperPlugin;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.docker.ContainerStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -177,8 +178,8 @@ public class ActivityTrackerTest {
         when(proxyServer.getServer("server2")).thenReturn(Optional.of(server2));
 
         // Ensure Server Manager says server is running so it can be stopped
-        when(serverManager.isServerRunning("server2")).thenReturn(true);
-        lenient().when(serverManager.isServerRunning("server1")).thenReturn(true);
+        when(serverManager.getServerStatus("server2")).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        lenient().when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.RUNNING));
         
         // Configure timeout
         when(config.getInactivityTimeout()).thenReturn(60); // 1 minute timeout
@@ -228,8 +229,8 @@ public class ActivityTrackerTest {
         // Server has no players
         when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
 
-        // CRITICAL: Server is reported as NOT RUNNING
-        when(serverManager.isServerRunning("server1")).thenReturn(false);
+        // CRITICAL: Server is reported as NOT RUNNING (stopped)
+        when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.STOPPED));
 
         // Manually place server in tracking map to verify it gets removed
         try {
@@ -256,6 +257,76 @@ public class ActivityTrackerTest {
     }
 
     @Test
+    public void testInactivityCheckSkipsShutdownWhenStatusIndeterminate() {
+        // Mock scheduler chain
+        Scheduler scheduler = mock(Scheduler.class);
+        Scheduler.TaskBuilder taskBuilder = mock(Scheduler.TaskBuilder.class);
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), runnableCaptor.capture())).thenReturn(taskBuilder);
+        when(taskBuilder.repeat(anyLong(), any(TimeUnit.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+
+        activityTracker.startInactivityCheck();
+
+        RegisteredServer server1 = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
+        when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
+
+        // Indeterminate status: Docker daemon unreachable
+        when(serverManager.getServerStatus("server1"))
+                .thenReturn(Optional.of(ContainerStatus.INACCESSIBLE));
+
+        // Server is in tracking map with old activity
+        try {
+            var field = ActivityTracker.class.getDeclaredField("lastActivity");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, Instant> activityMap = (Map<String, Instant>) field.get(activityTracker);
+            activityMap.put("server1", Instant.now().minus(Duration.ofHours(1)));
+        } catch (Exception e) {
+            fail("Reflection setup failed");
+        }
+
+        // Run check
+        runnableCaptor.getValue().run();
+
+        // Verify: no shutdown attempted, tracking removed, operator warned
+        verify(serverManager, never()).stopServer("server1");
+        assertNull(activityTracker.getLastActivity("server1"),
+                "Server should be removed from tracking on indeterminate status");
+        verify(logger).warn(contains("skipping inactivity shutdown"), eq("server1"),
+                eq(ContainerStatus.INACCESSIBLE));
+    }
+
+    @Test
+    public void testInactivityCheckSkipsShutdownWhenUnmapped() {
+        // Mock scheduler chain
+        Scheduler scheduler = mock(Scheduler.class);
+        Scheduler.TaskBuilder taskBuilder = mock(Scheduler.TaskBuilder.class);
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), runnableCaptor.capture())).thenReturn(taskBuilder);
+        when(taskBuilder.repeat(anyLong(), any(TimeUnit.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+
+        activityTracker.startInactivityCheck();
+
+        RegisteredServer server1 = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
+        when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
+        when(serverManager.getServerStatus("server1")).thenReturn(Optional.empty());
+
+        // Run check
+        runnableCaptor.getValue().run();
+
+        verify(serverManager, never()).stopServer("server1");
+        assertNull(activityTracker.getLastActivity("server1"));
+    }
+
+    @Test
     public void testInactivityCheckTracksManuallyStartedServer() {
         // Mock scheduler chain
         Scheduler scheduler = mock(Scheduler.class);
@@ -274,7 +345,7 @@ public class ActivityTrackerTest {
         when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
 
         // CRITICAL: Server IS running, but NOT in our tracking map (simulating manual start)
-        when(serverManager.isServerRunning("server1")).thenReturn(true);
+        when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.RUNNING));
         activityTracker.removeActivity("server1"); // Ensure map is empty
 
         // Run check

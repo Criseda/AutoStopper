@@ -4,6 +4,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerManager;
 
 import org.slf4j.Logger;
@@ -21,46 +22,47 @@ public class ServerManager {
 
     private final Map<String, AtomicBoolean> serverStartingStatus = new ConcurrentHashMap<>();
 
-    public ServerManager(ProxyServer server, Logger logger, AutoStopperConfig config) {
+    public ServerManager(ProxyServer server, Logger logger, AutoStopperConfig config, DockerManager dockerManager) {
         this.server = server;
         this.logger = logger;
         this.config = config;
-        this.dockerManager = new DockerManager(logger);
+        this.dockerManager = dockerManager;
     }
 
-    public boolean isServerRunning(String serverName) {
+    public Optional<ContainerStatus> getServerStatus(String serverName) {
         String containerName = getContainerName(serverName);
         if (containerName == null) {
-            logger.warn("No container mapped for server: " + serverName);
-            return false;
+            logger.warn("No container mapped for server: {}", serverName);
+            return Optional.empty();
         }
-        return dockerManager.isContainerRunning(containerName);
+        return Optional.of(dockerManager.getContainerStatus(containerName));
     }
 
-    public boolean startServer(String serverName) {
+    public ContainerStatus startServer(String serverName) {
         String containerName = getContainerName(serverName);
         if (containerName == null) {
-            logger.warn("No container mapped for server: " + serverName);
-            return false;
+            logger.warn("No container mapped for server: {}", serverName);
+            return ContainerStatus.MISSING;
         }
         return dockerManager.startContainer(containerName);
     }
 
-    public boolean stopServer(String serverName) {
+    public ContainerStatus stopServer(String serverName) {
         String containerName = getContainerName(serverName);
         if (containerName == null) {
-            logger.warn("No container mapped for server: " + serverName);
-            return false;
+            logger.warn("No container mapped for server: {}", serverName);
+            return ContainerStatus.MISSING;
         }
-        boolean result = dockerManager.stopContainer(containerName);
-        logger.info("Stopped server: " + serverName + " (container: " + containerName + ")");
+        ContainerStatus result = dockerManager.stopContainer(containerName);
+        logger.info("Stopped server: {} (container: {}, result: {})",
+                serverName, containerName, result);
         return result;
     }
 
     public boolean waitForServerReady(String serverName, int timeoutSeconds) {
         String containerName = getContainerName(serverName);
         if (containerName == null) {
-            logger.warn("No container mapped for server: " + serverName);
+            logger.warn("No container mapped for server: {}", serverName);
             return false;
         }
         return dockerManager.waitForContainerReady(

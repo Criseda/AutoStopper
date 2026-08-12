@@ -10,6 +10,8 @@ import com.velocitypowered.api.proxy.ProxyServer;
 
 import me.criseda.autostopper.commands.AutoStopperCommand;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.docker.DockerManager;
+import me.criseda.autostopper.docker.ProcessCommandRunner;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.listeners.ServerPreConnectListener;
 import me.criseda.autostopper.server.ActivityTracker;
@@ -91,7 +93,8 @@ public class AutoStopperPlugin {
     }
 
     protected ServerManager createServerManager(AutoStopperConfig config) {
-        return new ServerManager(server, logger, config);
+        DockerManager dockerManager = new DockerManager(logger, new ProcessCommandRunner());
+        return new ServerManager(server, logger, config, dockerManager);
     }
 
     protected ActivityTracker createActivityTracker(AutoStopperConfig config, ServerManager serverManager) {

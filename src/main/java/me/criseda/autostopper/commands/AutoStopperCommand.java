@@ -5,6 +5,7 @@ import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.plugin.PluginContainer;
 
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 
@@ -14,6 +15,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Collections;
+import java.util.Optional;
 
 public class AutoStopperCommand implements SimpleCommand {
     private final AutoStopperConfig config;
@@ -68,24 +70,45 @@ public class AutoStopperCommand implements SimpleCommand {
         source.sendMessage(Component.text("§6AutoStopper Server Status:"));
 
         for (String serverName : config.getServerNames()) {
-            boolean running = serverManager.isServerRunning(serverName);
-            Instant lastActive = activityTracker.getLastActivity(serverName);
+            Optional<ContainerStatus> status = serverManager.getServerStatus(serverName);
+            if (status.isEmpty()) {
+                source.sendMessage(Component.text(String.format("§7%s: §c§lNo container mapping", serverName)));
+                continue;
+            }
 
-            if (running) {
-                // Server is running - show activity time
-                if (lastActive != null) {
-                    long minutes = activityTracker.getMinutesSinceActivity(serverName);
-                    source.sendMessage(Component.text(
-                            String.format("§7%s: §a§lRunning §7- %d minutes since last activity",
-                                    serverName, minutes)));
-                } else {
-                    source.sendMessage(Component.text(
-                            String.format("§7%s: §a§lRunning §7- No activity recorded", serverName)));
+            switch (status.get()) {
+                case RUNNING: {
+                    Instant lastActive = activityTracker.getLastActivity(serverName);
+                    if (lastActive != null) {
+                        long minutes = activityTracker.getMinutesSinceActivity(serverName);
+                        source.sendMessage(Component.text(
+                                String.format("§7%s: §a§lRunning §7- %d minutes since last activity",
+                                        serverName, minutes)));
+                    } else {
+                        source.sendMessage(Component.text(
+                                String.format("§7%s: §a§lRunning §7- No activity recorded", serverName)));
+                    }
+                    break;
                 }
-            } else {
-                // Server is stopped - don't show activity time
-                source.sendMessage(Component.text(
-                        String.format("§7%s: §c§lStopped", serverName)));
+                case STOPPED:
+                    source.sendMessage(Component.text(String.format("§7%s: §c§lStopped", serverName)));
+                    break;
+                case MISSING:
+                    source.sendMessage(Component.text(
+                            String.format("§7%s: §c§lMissing §7- container does not exist", serverName)));
+                    break;
+                case INACCESSIBLE:
+                    source.sendMessage(Component.text(
+                            String.format("§7%s: §c§lInaccessible §7- Docker daemon unreachable", serverName)));
+                    break;
+                case TIMED_OUT:
+                    source.sendMessage(Component.text(
+                            String.format("§7%s: §e§lTimed out §7- status check did not respond in time", serverName)));
+                    break;
+                case FAILED:
+                    source.sendMessage(Component.text(
+                            String.format("§7%s: §c§lFailed §7- status check failed", serverName)));
+                    break;
             }
         }
     }

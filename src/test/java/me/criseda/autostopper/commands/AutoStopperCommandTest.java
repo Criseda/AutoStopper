@@ -5,6 +5,7 @@ import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.plugin.PluginDescription;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
@@ -116,11 +117,11 @@ public class AutoStopperCommandTest {
         String[] serverNames = {"server1", "server2"};
         
         when(config.getServerNames()).thenReturn(serverNames);
-        when(serverManager.isServerRunning("server1")).thenReturn(true);
+        when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.RUNNING));
         when(activityTracker.getLastActivity("server1")).thenReturn(Instant.now().minusSeconds(300));
         when(activityTracker.getMinutesSinceActivity("server1")).thenReturn(5L);
         
-        when(serverManager.isServerRunning("server2")).thenReturn(false);
+        when(serverManager.getServerStatus("server2")).thenReturn(Optional.of(ContainerStatus.STOPPED));
         
         // Act
         command.execute(invocation);
@@ -145,7 +146,7 @@ public class AutoStopperCommandTest {
         String[] serverNames = {"server1"};
         
         when(config.getServerNames()).thenReturn(serverNames);
-        when(serverManager.isServerRunning("server1")).thenReturn(true);
+        when(serverManager.getServerStatus("server1")).thenReturn(Optional.of(ContainerStatus.RUNNING));
         when(activityTracker.getLastActivity("server1")).thenReturn(null);
         
         // Act
@@ -157,6 +158,34 @@ public class AutoStopperCommandTest {
         
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(messages.get(1).toString().contains("No activity recorded"));
+    }
+    
+    @Test
+    public void testExecuteStatusCommand_DistinctTypedStates() {
+        // Arrange
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
+        String[] serverNames = {"s-missing", "s-inaccessible", "s-timedout", "s-failed", "s-unmapped"};
+        
+        when(config.getServerNames()).thenReturn(serverNames);
+        when(serverManager.getServerStatus("s-missing")).thenReturn(Optional.of(ContainerStatus.MISSING));
+        when(serverManager.getServerStatus("s-inaccessible")).thenReturn(Optional.of(ContainerStatus.INACCESSIBLE));
+        when(serverManager.getServerStatus("s-timedout")).thenReturn(Optional.of(ContainerStatus.TIMED_OUT));
+        when(serverManager.getServerStatus("s-failed")).thenReturn(Optional.of(ContainerStatus.FAILED));
+        when(serverManager.getServerStatus("s-unmapped")).thenReturn(Optional.empty());
+        
+        // Act
+        command.execute(invocation);
+        
+        // Assert
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(6)).sendMessage(messageCaptor.capture());
+        
+        List<Component> messages = messageCaptor.getAllValues();
+        assertTrue(messages.get(1).toString().contains("Missing"));
+        assertTrue(messages.get(2).toString().contains("Inaccessible"));
+        assertTrue(messages.get(3).toString().contains("Timed out"));
+        assertTrue(messages.get(4).toString().contains("Failed"));
+        assertTrue(messages.get(5).toString().contains("No container mapping"));
     }
     
     @Test
