@@ -2,6 +2,7 @@ package me.criseda.autostopper.commands;
 
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
+import com.velocitypowered.api.permission.Tristate;
 import com.velocitypowered.api.plugin.PluginContainer;
 
 import me.criseda.autostopper.config.AutoStopperConfig;
@@ -12,6 +13,7 @@ import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -20,6 +22,10 @@ import java.util.Collections;
 import java.util.Optional;
 
 public class AutoStopperCommand implements SimpleCommand {
+    static final String ADMIN_PERMISSION = "autostopper.admin";
+    static final String STATUS_PERMISSION = "autostopper.command.status";
+    static final String RELOAD_PERMISSION = "autostopper.command.reload";
+
     private final AutoStopperConfig config;
     private final ServerManager serverManager;
     private final ActivityTracker activityTracker;
@@ -50,10 +56,18 @@ public class AutoStopperCommand implements SimpleCommand {
                 showHelp(source);
                 break;
             case "status":
-                showStatus(source);
+                if (hasAdministrativePermission(source, STATUS_PERMISSION)) {
+                    showStatus(source);
+                } else {
+                    sendPermissionDenied(source, "view AutoStopper status");
+                }
                 break;
             case "reload":
-                reloadConfig(source);
+                if (hasAdministrativePermission(source, RELOAD_PERMISSION)) {
+                    reloadConfig(source);
+                } else {
+                    sendPermissionDenied(source, "reload AutoStopper configuration");
+                }
                 break;
             default:
                 source.sendMessage(Component.text("§cUnknown command. Use §e/autostopper help §cfor help."));
@@ -64,8 +78,12 @@ public class AutoStopperCommand implements SimpleCommand {
         source.sendMessage(Component.text("§6AutoStopper Help:"));
         source.sendMessage(Component.text("§e/autostopper §7- Shows plugin information"));
         source.sendMessage(Component.text("§e/autostopper help §7- Shows this help menu"));
-        source.sendMessage(Component.text("§e/autostopper status §7- Shows server status"));
-        source.sendMessage(Component.text("§e/autostopper reload §7- Reload configuration"));
+        if (hasAdministrativePermission(source, STATUS_PERMISSION)) {
+            source.sendMessage(Component.text("§e/autostopper status §7- Shows server status"));
+        }
+        if (hasAdministrativePermission(source, RELOAD_PERMISSION)) {
+            source.sendMessage(Component.text("§e/autostopper reload §7- Reload configuration"));
+        }
     }
 
     private void showStatus(CommandSource source) {
@@ -145,7 +163,7 @@ public class AutoStopperCommand implements SimpleCommand {
 
     @Override
     public List<String> suggest(Invocation invocation) {
-        // Allow suggestions for everyone to make tab completion work
+        CommandSource source = invocation.source();
         String[] args = invocation.arguments();
         
         // If user hasn't typed anything yet or is typing the first argument
@@ -154,8 +172,14 @@ public class AutoStopperCommand implements SimpleCommand {
             List<String> suggestions = new ArrayList<>();
             
             if ("help".startsWith(input)) suggestions.add("help");
-            if ("status".startsWith(input)) suggestions.add("status");
-            if ("reload".startsWith(input)) suggestions.add("reload");
+            if (hasAdministrativePermission(source, STATUS_PERMISSION)
+                    && "status".startsWith(input)) {
+                suggestions.add("status");
+            }
+            if (hasAdministrativePermission(source, RELOAD_PERMISSION)
+                    && "reload".startsWith(input)) {
+                suggestions.add("reload");
+            }
             
             return suggestions;
         }
@@ -164,7 +188,19 @@ public class AutoStopperCommand implements SimpleCommand {
 
     @Override
     public boolean hasPermission(Invocation invocation) {
-        // Always return true to show the command in autocompletion
+        // Plugin information and help are public. Restricted subcommands enforce
+        // their own permissions in execute() and suggest().
         return true;
+    }
+
+    private boolean hasAdministrativePermission(CommandSource source, String permission) {
+        return source.getPermissionValue(permission) == Tristate.TRUE
+                || source.getPermissionValue(ADMIN_PERMISSION) == Tristate.TRUE;
+    }
+
+    private void sendPermissionDenied(CommandSource source, String action) {
+        source.sendMessage(Component.text(
+                "You do not have permission to " + action + ".",
+                NamedTextColor.RED));
     }
 }
