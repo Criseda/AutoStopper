@@ -19,6 +19,7 @@ import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.listeners.ServerPreConnectListener;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
+import me.criseda.autostopper.operational.OperationalStatusService;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 
@@ -41,6 +42,7 @@ public class AutoStopperPlugin {
     private ActivityTracker activityTracker;
     private ServerLifecycleCoordinator lifecycleCoordinator;
     private AutoStopperExecutor executor;
+    private OperationalStatusService operationalStatus;
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
 
     @Inject
@@ -67,6 +69,7 @@ public class AutoStopperPlugin {
 		this.executor = createExecutor();
 		this.serverManager = createServerManager(config, executor);
 		this.lifecycleCoordinator = createLifecycleCoordinator(serverManager);
+		this.operationalStatus = createOperationalStatusService(serverManager, lifecycleCoordinator);
 		
 		// Initialize activity tracking but DON'T start the inactivity check yet
 		this.activityTracker = createActivityTracker(config, serverManager, executor, lifecycleCoordinator);
@@ -81,6 +84,7 @@ public class AutoStopperPlugin {
 		
 		// NOW start the inactivity check AFTER all registration is complete
 		activityTracker.startInactivityCheck();
+		operationalStatus.runPreflight(initialConfig.snapshot(), "startup");
 	
 		logger.info("AutoStopper plugin initialized!");
 	}
@@ -95,6 +99,9 @@ public class AutoStopperPlugin {
 		}
 		if (lifecycleCoordinator != null) {
 			lifecycleCoordinator.shutdown();
+		}
+		if (operationalStatus != null) {
+			operationalStatus.shutdown();
 		}
 		if (executor != null) {
             int timeoutSeconds = config == null
@@ -152,6 +159,11 @@ public class AutoStopperPlugin {
         return new ServerLifecycleCoordinator(logger, serverManager);
     }
 
+    protected OperationalStatusService createOperationalStatusService(ServerManager serverManager,
+            ServerLifecycleCoordinator lifecycleCoordinator) {
+        return new OperationalStatusService(logger, serverManager, lifecycleCoordinator);
+    }
+
 	private void registerCommands() {
 		logger.info("Registering AutoStopper commands...");
 		
@@ -162,8 +174,8 @@ public class AutoStopperPlugin {
 			.build();
 			
 		server.getCommandManager().register(autoStopperMeta,
-			new AutoStopperCommand(config, serverManager, activityTracker,
-					lifecycleCoordinator, pluginContainer));
+			new AutoStopperCommand(config, activityTracker,
+					lifecycleCoordinator, operationalStatus, pluginContainer));
 		logger.info("Registered command: /autostopper");
 		
 		logger.info("AutoStopper commands registered successfully!");

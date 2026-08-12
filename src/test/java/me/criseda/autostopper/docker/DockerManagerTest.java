@@ -100,6 +100,31 @@ public class DockerManagerTest {
     }
 
     @Test
+    public void testInspectContainer_DistinguishesOperationalDiagnostics() {
+        commandRunner.stage("inspect",
+                new CommandOutput(CommandOutput.Outcome.SPAWN_FAILED, -1, "", "docker not found"));
+        commandRunner.stage("inspect", completed(1, "", "Cannot connect to the Docker daemon"));
+        commandRunner.stage("inspect", completed(1, "", "permission denied"));
+        commandRunner.stage("inspect", completed(1, "", "No such object: absent"));
+        commandRunner.stage("inspect",
+                new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""));
+        commandRunner.stage("inspect", completed(1, "", "unexpected inspect failure"));
+
+        assertEquals(DockerDiagnostic.CLI_MISSING,
+                dockerManager.inspectContainer("test-container").diagnostic());
+        assertEquals(DockerDiagnostic.DAEMON_UNAVAILABLE,
+                dockerManager.inspectContainer("test-container").diagnostic());
+        assertEquals(DockerDiagnostic.PERMISSION_DENIED,
+                dockerManager.inspectContainer("test-container").diagnostic());
+        assertEquals(DockerDiagnostic.CONTAINER_MISSING,
+                dockerManager.inspectContainer("test-container").diagnostic());
+        assertEquals(DockerDiagnostic.TIMED_OUT,
+                dockerManager.inspectContainer("test-container").diagnostic());
+        assertEquals(DockerDiagnostic.INDETERMINATE,
+                dockerManager.inspectContainer("test-container").diagnostic());
+    }
+
+    @Test
     public void testStartContainer_AlreadyRunning() {
         commandRunner.stage("inspect", completed(0, "true", ""));
 

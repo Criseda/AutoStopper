@@ -319,6 +319,22 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
+    void failedStopRecordsFailureAndSuccessfulRetryClearsIt() {
+        assertTrue(coordinator.tryBeginStop(mapping));
+        coordinator.completeStop(mapping, ContainerStatus.TIMED_OUT);
+
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+        assertTrue(coordinator.lastFailure("survival").isPresent());
+        assertTrue(coordinator.lastFailure("survival").orElseThrow().detail().contains("TIMED_OUT"));
+
+        assertTrue(coordinator.tryBeginStop(mapping));
+        coordinator.completeStop(mapping, ContainerStatus.STOPPED);
+
+        assertEquals(Optional.of(ServerLifecycleState.STOPPED), coordinator.state("survival"));
+        assertTrue(coordinator.lastFailure("survival").isEmpty());
+    }
+
+    @Test
     void replacementMappingDoesNotJoinCapturedStartup() {
         ServerMapping replacement = new ServerMapping("survival", "replacement-container");
         ConfigSnapshot previous = new ConfigSnapshot(300, List.of(mapping));

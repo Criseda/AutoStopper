@@ -18,6 +18,8 @@ import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
+import me.criseda.autostopper.operational.OperationalStatusService;
+import me.criseda.autostopper.operational.PreflightSummary;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -141,8 +143,10 @@ public class AutoStopperPluginTest {
         ServerManager mockServerManager = mock(ServerManager.class);
         ActivityTracker mockActivityTracker = mock(ActivityTracker.class);
         ServerLifecycleCoordinator mockLifecycleCoordinator = mock(ServerLifecycleCoordinator.class);
+        OperationalStatusService mockOperationalStatus = mock(OperationalStatusService.class);
         AutoStopperExecutor mockExecutor = mock(AutoStopperExecutor.class);
-        when(mockConfig.loadConfig()).thenReturn(ConfigLoadResult.success(ConfigSnapshot.emptyDefault()));
+        ConfigSnapshot initialSnapshot = ConfigSnapshot.emptyDefault();
+        when(mockConfig.loadConfig()).thenReturn(ConfigLoadResult.success(initialSnapshot));
         
         // Create a partial mock of the plugin to stub out the object creation
         AutoStopperPlugin spyPlugin = spy(plugin);
@@ -152,8 +156,13 @@ public class AutoStopperPluginTest {
         doReturn(mockExecutor).when(spyPlugin).createExecutor();
         doReturn(mockServerManager).when(spyPlugin).createServerManager(mockConfig, mockExecutor);
         doReturn(mockLifecycleCoordinator).when(spyPlugin).createLifecycleCoordinator(mockServerManager);
+        doReturn(mockOperationalStatus).when(spyPlugin)
+                .createOperationalStatusService(mockServerManager, mockLifecycleCoordinator);
         doReturn(mockActivityTracker).when(spyPlugin)
                 .createActivityTracker(mockConfig, mockServerManager, mockExecutor, mockLifecycleCoordinator);
+        when(mockOperationalStatus.runPreflight(initialSnapshot, "startup"))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(
+                        new PreflightSummary(0, 0)));
         
         // Execute
         spyPlugin.onProxyInitialize(event);
@@ -165,6 +174,7 @@ public class AutoStopperPluginTest {
         verify(commandManager).register(eq(commandMeta), any(AutoStopperCommand.class));
         verify(commandManager, never()).unregister(anyString());
         verify(mockActivityTracker).startInactivityCheck();
+        verify(mockOperationalStatus).runPreflight(initialSnapshot, "startup");
     }
 
     @Test
@@ -191,10 +201,12 @@ public class AutoStopperPluginTest {
         AutoStopperConfig mockConfig = mock(AutoStopperConfig.class);
         ActivityTracker mockTracker = mock(ActivityTracker.class);
         ServerLifecycleCoordinator mockCoordinator = mock(ServerLifecycleCoordinator.class);
+        OperationalStatusService mockOperationalStatus = mock(OperationalStatusService.class);
         setPrivateField(plugin, "executor", mockExecutor);
         setPrivateField(plugin, "config", mockConfig);
         setPrivateField(plugin, "activityTracker", mockTracker);
         setPrivateField(plugin, "lifecycleCoordinator", mockCoordinator);
+        setPrivateField(plugin, "operationalStatus", mockOperationalStatus);
         when(mockConfig.snapshot()).thenReturn(new ConfigSnapshot(300, 7,
                 me.criseda.autostopper.config.StopRetrySettings.defaults(), java.util.List.of()));
         when(mockExecutor.shutdown(Duration.ofSeconds(7))).thenReturn(true);
@@ -202,11 +214,12 @@ public class AutoStopperPluginTest {
         plugin.onProxyShutdown(new ProxyShutdownEvent());
         plugin.onProxyShutdown(new ProxyShutdownEvent());
 
-        var order = inOrder(mockTracker, mockCoordinator, mockExecutor);
+        var order = inOrder(mockTracker, mockCoordinator, mockOperationalStatus, mockExecutor);
         order.verify(mockTracker).shutdown();
         order.verify(mockCoordinator).shutdown();
+        order.verify(mockOperationalStatus).shutdown();
         order.verify(mockExecutor).shutdown(Duration.ofSeconds(7));
-        verifyNoMoreInteractions(mockTracker, mockCoordinator, mockExecutor);
+        verifyNoMoreInteractions(mockTracker, mockCoordinator, mockOperationalStatus, mockExecutor);
         verify(logger).info(contains("shutdown completed"), eq(7));
     }
 

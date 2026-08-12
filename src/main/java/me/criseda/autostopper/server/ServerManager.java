@@ -8,6 +8,7 @@ import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ReadinessSettings;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
+import me.criseda.autostopper.docker.ContainerInspection;
 import me.criseda.autostopper.docker.DockerManager;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.readiness.ReadinessResult;
@@ -57,6 +58,10 @@ public class ServerManager {
 
     public Optional<ContainerStatus> getServerStatus(ServerMapping mapping) {
         return Optional.of(dockerManager.getContainerStatus(mapping.containerName()));
+    }
+
+    public ContainerInspection inspectContainer(ServerMapping mapping) {
+        return dockerManager.inspectContainer(mapping.containerName());
     }
 
     public ContainerStatus startServer(String serverName) {
@@ -130,6 +135,10 @@ public class ServerManager {
         return executor.supply(() -> getServerStatus(mapping));
     }
 
+    public CompletableFuture<ContainerInspection> inspectContainerAsync(ServerMapping mapping) {
+        return executor.supply(() -> inspectContainer(mapping));
+    }
+
     public CompletableFuture<ContainerStatus> startServerAsync(String serverName) {
         return executor.supply(() -> startServer(serverName));
     }
@@ -153,6 +162,34 @@ public class ServerManager {
                 .map(this::getServerStatusAsync)
                 .toArray(CompletableFuture[]::new);
         return collectStatuses(mappings.stream().map(ServerMapping::serverName).toList(), futures);
+    }
+
+    public CompletableFuture<Map<String, ContainerInspection>> inspectContainersAsync(ConfigSnapshot snapshot) {
+        List<ServerMapping> mappings = snapshot.servers();
+        @SuppressWarnings("unchecked")
+        CompletableFuture<ContainerInspection>[] futures = mappings.stream()
+                .map(this::inspectContainerAsync)
+                .toArray(CompletableFuture[]::new);
+        CompletableFuture<Map<String, ContainerInspection>> result = new CompletableFuture<>();
+        CompletableFuture.allOf(futures).whenComplete((ignored, error) -> {
+            if (error != null) {
+                result.completeExceptionally(error);
+                return;
+            }
+            Map<String, ContainerInspection> inspections = new LinkedHashMap<>();
+            for (int i = 0; i < mappings.size(); i++) {
+                inspections.put(mappings.get(i).serverName(), futures[i].join());
+            }
+            result.complete(inspections);
+        });
+        result.whenComplete((ignored, error) -> {
+            if (result.isCancelled()) {
+                for (CompletableFuture<?> future : futures) {
+                    future.cancel(true);
+                }
+            }
+        });
+        return result;
     }
 
     public CompletableFuture<Map<String, Optional<ContainerStatus>>> getStatusesAsync(List<String> serverNames) {

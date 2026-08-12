@@ -8,17 +8,15 @@ import com.velocitypowered.api.plugin.PluginContainer;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigLoadResult;
 import me.criseda.autostopper.config.ConfigSnapshot;
-import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.messages.AutoStopperMessages;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
+import me.criseda.autostopper.operational.OperationalServerStatus;
+import me.criseda.autostopper.operational.OperationalStatusService;
 import me.criseda.autostopper.server.ActivityTracker;
-import me.criseda.autostopper.server.ServerManager;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Collections;
-import java.util.Optional;
 
 public class AutoStopperCommand implements SimpleCommand {
     static final String ADMIN_PERMISSION = "autostopper.admin";
@@ -26,18 +24,19 @@ public class AutoStopperCommand implements SimpleCommand {
     static final String RELOAD_PERMISSION = "autostopper.command.reload";
 
     private final AutoStopperConfig config;
-    private final ServerManager serverManager;
     private final ActivityTracker activityTracker;
     private final ServerLifecycleCoordinator lifecycleCoordinator;
+    private final OperationalStatusService operationalStatus;
     private final PluginContainer pluginContainer;
 
     public AutoStopperCommand(AutoStopperConfig config,
-            ServerManager serverManager, ActivityTracker activityTracker,
-            ServerLifecycleCoordinator lifecycleCoordinator, PluginContainer pluginContainer) {
+            ActivityTracker activityTracker,
+            ServerLifecycleCoordinator lifecycleCoordinator, OperationalStatusService operationalStatus,
+            PluginContainer pluginContainer) {
         this.config = config;
-        this.serverManager = serverManager;
         this.activityTracker = activityTracker;
         this.lifecycleCoordinator = lifecycleCoordinator;
+        this.operationalStatus = operationalStatus;
         this.pluginContainer = pluginContainer;
     }
 
@@ -95,9 +94,7 @@ public class AutoStopperCommand implements SimpleCommand {
 
         ConfigSnapshot snapshot = config.snapshot();
         List<String> serverNames = snapshot.serverNames();
-        // All Docker status checks run on the plugin-owned executor and fan
-        // back in here, never blocking the command thread.
-        serverManager.getStatusesAsync(snapshot).whenComplete((statuses, error) -> {
+        operationalStatus.collectStatuses(snapshot).whenComplete((statuses, error) -> {
             if (error != null) {
                 source.sendMessage(AutoStopperMessages.statusCollectionFailed());
                 return;
@@ -109,39 +106,10 @@ public class AutoStopperCommand implements SimpleCommand {
     }
 
     private void sendServerStatus(CommandSource source, String serverName,
-            Optional<ContainerStatus> status) {
-        if (status.isEmpty()) {
-            source.sendMessage(AutoStopperMessages.statusNoMapping(serverName));
-            return;
-        }
-
-        switch (status.get()) {
-            case RUNNING: {
-                Instant lastActive = activityTracker.getLastActivity(serverName);
-                if (lastActive != null) {
-                    long minutes = activityTracker.getMinutesSinceActivity(serverName);
-                    source.sendMessage(AutoStopperMessages.statusRunning(serverName, minutes));
-                } else {
-                    source.sendMessage(AutoStopperMessages.statusRunning(serverName, null));
-                }
-                break;
-            }
-            case STOPPED:
-                source.sendMessage(AutoStopperMessages.statusStopped(serverName));
-                break;
-            case MISSING:
-                source.sendMessage(AutoStopperMessages.statusMissing(serverName));
-                break;
-            case INACCESSIBLE:
-                source.sendMessage(AutoStopperMessages.statusInaccessible(serverName));
-                break;
-            case TIMED_OUT:
-                source.sendMessage(AutoStopperMessages.statusTimedOut(serverName));
-                break;
-            case FAILED:
-                source.sendMessage(AutoStopperMessages.statusFailed(serverName));
-                break;
-        }
+            OperationalServerStatus status) {
+        Long minutes = activityTracker.getLastActivity(serverName) == null
+                ? null : activityTracker.getMinutesSinceActivity(serverName);
+        source.sendMessage(AutoStopperMessages.operationalStatus(serverName, status, minutes));
     }
 
     private void reloadConfig(CommandSource source) {
@@ -155,7 +123,11 @@ public class AutoStopperCommand implements SimpleCommand {
 
         lifecycleCoordinator.reconcileConfig(previous, result.snapshot());
         activityTracker.reconcileConfig(previous, result.snapshot());
+        operationalStatus.reconcileConfig(result.snapshot());
         source.sendMessage(AutoStopperMessages.reloadSucceeded());
+        operationalStatus.runPreflight(result.snapshot(), "reload")
+                .thenAccept(summary -> source.sendMessage(AutoStopperMessages.preflightCompleted(
+                        summary.healthyMappings(), summary.degradedMappings())));
     }
 
     @Override
