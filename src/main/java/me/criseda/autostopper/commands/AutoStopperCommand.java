@@ -69,47 +69,60 @@ public class AutoStopperCommand implements SimpleCommand {
     private void showStatus(CommandSource source) {
         source.sendMessage(Component.text("§6AutoStopper Server Status:"));
 
-        for (String serverName : config.getServerNames()) {
-            Optional<ContainerStatus> status = serverManager.getServerStatus(serverName);
-            if (status.isEmpty()) {
-                source.sendMessage(Component.text(String.format("§7%s: §c§lNo container mapping", serverName)));
-                continue;
+        String[] serverNames = config.getServerNames();
+        // All Docker status checks run on the plugin-owned executor and fan
+        // back in here, never blocking the command thread.
+        serverManager.getStatusesAsync(List.of(serverNames)).whenComplete((statuses, error) -> {
+            if (error != null) {
+                source.sendMessage(Component.text("§cCould not collect server statuses."));
+                return;
             }
+            for (String serverName : serverNames) {
+                sendServerStatus(source, serverName, statuses.get(serverName));
+            }
+        });
+    }
 
-            switch (status.get()) {
-                case RUNNING: {
-                    Instant lastActive = activityTracker.getLastActivity(serverName);
-                    if (lastActive != null) {
-                        long minutes = activityTracker.getMinutesSinceActivity(serverName);
-                        source.sendMessage(Component.text(
-                                String.format("§7%s: §a§lRunning §7- %d minutes since last activity",
-                                        serverName, minutes)));
-                    } else {
-                        source.sendMessage(Component.text(
-                                String.format("§7%s: §a§lRunning §7- No activity recorded", serverName)));
-                    }
-                    break;
+    private void sendServerStatus(CommandSource source, String serverName,
+            Optional<ContainerStatus> status) {
+        if (status.isEmpty()) {
+            source.sendMessage(Component.text(String.format("§7%s: §c§lNo container mapping", serverName)));
+            return;
+        }
+
+        switch (status.get()) {
+            case RUNNING: {
+                Instant lastActive = activityTracker.getLastActivity(serverName);
+                if (lastActive != null) {
+                    long minutes = activityTracker.getMinutesSinceActivity(serverName);
+                    source.sendMessage(Component.text(
+                            String.format("§7%s: §a§lRunning §7- %d minutes since last activity",
+                                    serverName, minutes)));
+                } else {
+                    source.sendMessage(Component.text(
+                            String.format("§7%s: §a§lRunning §7- No activity recorded", serverName)));
                 }
-                case STOPPED:
-                    source.sendMessage(Component.text(String.format("§7%s: §c§lStopped", serverName)));
-                    break;
-                case MISSING:
-                    source.sendMessage(Component.text(
-                            String.format("§7%s: §c§lMissing §7- container does not exist", serverName)));
-                    break;
-                case INACCESSIBLE:
-                    source.sendMessage(Component.text(
-                            String.format("§7%s: §c§lInaccessible §7- Docker daemon unreachable", serverName)));
-                    break;
-                case TIMED_OUT:
-                    source.sendMessage(Component.text(
-                            String.format("§7%s: §e§lTimed out §7- status check did not respond in time", serverName)));
-                    break;
-                case FAILED:
-                    source.sendMessage(Component.text(
-                            String.format("§7%s: §c§lFailed §7- status check failed", serverName)));
-                    break;
+                break;
             }
+            case STOPPED:
+                source.sendMessage(Component.text(String.format("§7%s: §c§lStopped", serverName)));
+                break;
+            case MISSING:
+                source.sendMessage(Component.text(
+                        String.format("§7%s: §c§lMissing §7- container does not exist", serverName)));
+                break;
+            case INACCESSIBLE:
+                source.sendMessage(Component.text(
+                        String.format("§7%s: §c§lInaccessible §7- Docker daemon unreachable", serverName)));
+                break;
+            case TIMED_OUT:
+                source.sendMessage(Component.text(
+                        String.format("§7%s: §e§lTimed out §7- status check did not respond in time", serverName)));
+                break;
+            case FAILED:
+                source.sendMessage(Component.text(
+                        String.format("§7%s: §c§lFailed §7- status check failed", serverName)));
+                break;
         }
     }
 

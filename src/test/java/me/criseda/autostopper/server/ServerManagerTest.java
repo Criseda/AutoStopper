@@ -5,6 +5,8 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerManager;
+import me.criseda.autostopper.executor.AutoStopperExecutor;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,8 +15,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -35,11 +42,18 @@ public class ServerManagerTest {
     @Mock
     private DockerManager dockerManager;
     
+    private AutoStopperExecutor executor;
     private ServerManager serverManager;
     
     @BeforeEach
     public void setup() {
-        serverManager = new ServerManager(proxyServer, logger, config, dockerManager);
+        executor = new AutoStopperExecutor();
+        serverManager = new ServerManager(proxyServer, logger, config, dockerManager, executor);
+    }
+
+    @AfterEach
+    public void teardown() {
+        executor.shutdown();
     }
     
     @Test
@@ -190,5 +204,100 @@ public class ServerManagerTest {
         AtomicBoolean status3 = serverManager.getServerStartingStatus("server2");
         assertFalse(status3.get());
         assertNotSame(status1, status3);
+    }
+
+    @Test
+    public void testGetServerStatusAsync() {
+        // Setup
+        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.STOPPED);
+
+        // Execute
+        Optional<ContainerStatus> result = serverManager.getServerStatusAsync("server1").join();
+
+        // Verify
+        assertEquals(Optional.of(ContainerStatus.STOPPED), result);
+        verify(dockerManager).getContainerStatus("container1");
+    }
+
+    @Test
+    public void testStartServerAsync() {
+        // Setup
+        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(dockerManager.startContainer("container1")).thenReturn(ContainerStatus.RUNNING);
+
+        // Execute
+        ContainerStatus result = serverManager.startServerAsync("server1").join();
+
+        // Verify
+        assertEquals(ContainerStatus.RUNNING, result);
+        verify(dockerManager).startContainer("container1");
+    }
+
+    @Test
+    public void testWaitForServerReadyAsync() {
+        // Setup
+        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(dockerManager.waitForContainerReady(
+                eq("container1"), eq(30), anyString(), anyString(), anyString())).thenReturn(true);
+
+        // Execute
+        boolean result = serverManager.waitForServerReadyAsync("server1", 30).join();
+
+        // Verify
+        assertTrue(result);
+        verify(dockerManager).waitForContainerReady(
+                eq("container1"), eq(30), eq("Done ("), eq("] Done ("), eq("For help, type \"help\""));
+    }
+
+    @Test
+    public void testGetStatusesAsync_FansOutAndPreservesOrder() {
+        // Setup
+        Map<String, String> mapping = new LinkedHashMap<>();
+        mapping.put("server1", "container1");
+        mapping.put("server2", "container2");
+        when(config.getServerToContainerMap()).thenReturn(mapping);
+        when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.RUNNING);
+        when(dockerManager.getContainerStatus("container2")).thenReturn(ContainerStatus.TIMED_OUT);
+
+        // Execute
+        Map<String, Optional<ContainerStatus>> result =
+                serverManager.getStatusesAsync(List.of("server1", "server2")).join();
+
+        // Verify - each server inspected exactly once, in order
+        assertEquals(Optional.of(ContainerStatus.RUNNING), result.get("server1"));
+        assertEquals(Optional.of(ContainerStatus.TIMED_OUT), result.get("server2"));
+        assertEquals(List.of("server1", "server2"), new java.util.ArrayList<>(result.keySet()));
+        verify(dockerManager).getContainerStatus("container1");
+        verify(dockerManager).getContainerStatus("container2");
+    }
+
+    @Test
+    public void testGetStatusesAsync_CancellationInterruptsStatusChecks() throws InterruptedException {
+        Map<String, String> mapping = Map.of(
+                "server1", "container1",
+                "server2", "container2");
+        when(config.getServerToContainerMap()).thenReturn(mapping);
+        CountDownLatch started = new CountDownLatch(2);
+        CountDownLatch interrupted = new CountDownLatch(2);
+        when(dockerManager.getContainerStatus(anyString())).thenAnswer(invocation -> {
+            started.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } catch (InterruptedException e) {
+                interrupted.countDown();
+                Thread.currentThread().interrupt();
+            }
+            return ContainerStatus.FAILED;
+        });
+
+        CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses =
+                serverManager.getStatusesAsync(List.of("server1", "server2"));
+
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+        assertTrue(statuses.cancel(true));
+        assertTrue(interrupted.await(2, TimeUnit.SECONDS),
+                "cancelling the fan-in should interrupt every outstanding status check");
+        assertTrue(statuses.isCancelled());
     }
 }
