@@ -44,7 +44,7 @@ notes below).
 The smoke-test harness lives in [`smoke/`](smoke/README.md) and is run with:
 
 ```powershell
-mvn clean package
+.\mvnw.cmd clean package
 .\smoke\run-smoke.ps1
 ```
 
@@ -222,14 +222,28 @@ expose manual start or stop commands.
 
 ## Building from Source
 
-1. Clone the repository
-2. Build using Maven:
+AutoStopper requires JDK 21 through 25. The committed Maven Wrapper is the canonical build entry
+point and downloads the pinned Maven distribution after verifying its checksum. Linux and macOS
+build hosts must provide `unzip` for the checksummed ZIP distribution.
+
+1. Clone the repository.
+2. Run the complete build on Linux/macOS or CI:
 
    ```bash
-   mvn clean package
+   ./mvnw verify
    ```
 
-3. Find the JAR file in `target/AutoStopper-1.1.2.jar`
+   On Windows, run:
+
+   ```powershell
+   .\mvnw.cmd verify
+   ```
+
+3. Find the verified plugin JAR at `target/AutoStopper-1.1.2.jar`.
+
+The `verify` lifecycle runs unit tests, dependency analysis, and checks the final shaded JAR's
+manifest and Velocity metadata. Use the Wrapper for local and automated builds so the same Maven
+version is used everywhere.
 
 ## License
 

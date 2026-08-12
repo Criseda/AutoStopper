@@ -57,7 +57,7 @@ function Get-PluginJarPath {
         Where-Object { $_.Name -notlike "original-*" } |
         Select-Object -First 1
     if (-not $jar) {
-        throw "Shaded plugin JAR not found in $repo\target. Run 'mvn clean package' first."
+        throw "Shaded plugin JAR not found in $repo\target. Run '.\mvnw.cmd verify' first."
     }
     return $jar.FullName
 }
