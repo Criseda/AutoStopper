@@ -17,6 +17,7 @@ import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.listeners.ConnectionListener;
+import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -79,6 +80,9 @@ public class AutoStopperPluginTest {
     @Mock
     private ActivityTracker activityTracker;
 
+    @Mock
+    private ServerLifecycleCoordinator lifecycleCoordinator;
+
     // Add mocks for scheduler
     @Mock
     private Scheduler scheduler;
@@ -135,6 +139,7 @@ public class AutoStopperPluginTest {
         AutoStopperConfig mockConfig = mock(AutoStopperConfig.class);
         ServerManager mockServerManager = mock(ServerManager.class);
         ActivityTracker mockActivityTracker = mock(ActivityTracker.class);
+        ServerLifecycleCoordinator mockLifecycleCoordinator = mock(ServerLifecycleCoordinator.class);
         AutoStopperExecutor mockExecutor = mock(AutoStopperExecutor.class);
         when(mockConfig.loadConfig()).thenReturn(ConfigLoadResult.success(ConfigSnapshot.emptyDefault()));
         
@@ -145,8 +150,9 @@ public class AutoStopperPluginTest {
         doReturn(mockConfig).when(spyPlugin).createConfig();
         doReturn(mockExecutor).when(spyPlugin).createExecutor();
         doReturn(mockServerManager).when(spyPlugin).createServerManager(mockConfig, mockExecutor);
+        doReturn(mockLifecycleCoordinator).when(spyPlugin).createLifecycleCoordinator(mockServerManager);
         doReturn(mockActivityTracker).when(spyPlugin)
-                .createActivityTracker(mockConfig, mockServerManager, mockExecutor);
+                .createActivityTracker(mockConfig, mockServerManager, mockExecutor, mockLifecycleCoordinator);
         
         // Execute
         spyPlugin.onProxyInitialize(event);
@@ -251,7 +257,8 @@ public class AutoStopperPluginTest {
         
         AutoStopperExecutor executor = new AutoStopperExecutor();
         try {
-            ActivityTracker createdActivityTracker = plugin.createActivityTracker(config, serverManager, executor);
+            ActivityTracker createdActivityTracker = plugin.createActivityTracker(
+                    config, serverManager, executor, lifecycleCoordinator);
 
             // Verify
             assertNotNull(createdActivityTracker, "Created activity tracker should not be null");
@@ -260,6 +267,7 @@ public class AutoStopperPluginTest {
             assertEquals(config, getPrivateField(createdActivityTracker, "config"));
             assertEquals(serverManager, getPrivateField(createdActivityTracker, "serverManager"));
             assertEquals(executor, getPrivateField(createdActivityTracker, "executor"));
+            assertEquals(lifecycleCoordinator, getPrivateField(createdActivityTracker, "lifecycleCoordinator"));
         } finally {
             executor.shutdown();
         }

@@ -17,6 +17,7 @@ import me.criseda.autostopper.docker.ProcessCommandRunner;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.listeners.ServerPreConnectListener;
+import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 
@@ -35,6 +36,7 @@ public class AutoStopperPlugin {
     private AutoStopperConfig config;
     private ServerManager serverManager;
     private ActivityTracker activityTracker;
+    private ServerLifecycleCoordinator lifecycleCoordinator;
     private AutoStopperExecutor executor;
 
     @Inject
@@ -60,13 +62,15 @@ public class AutoStopperPlugin {
 		// Initialize server management
 		this.executor = createExecutor();
 		this.serverManager = createServerManager(config, executor);
+		this.lifecycleCoordinator = createLifecycleCoordinator(serverManager);
 		
 		// Initialize activity tracking but DON'T start the inactivity check yet
-		this.activityTracker = createActivityTracker(config, serverManager, executor);
+		this.activityTracker = createActivityTracker(config, serverManager, executor, lifecycleCoordinator);
 	
 		// Register event listeners
-		server.getEventManager().register(this, new ConnectionListener(activityTracker));
-		server.getEventManager().register(this, new ServerPreConnectListener(this, serverManager, activityTracker));
+		server.getEventManager().register(this, new ConnectionListener(activityTracker, lifecycleCoordinator));
+		server.getEventManager().register(this,
+				new ServerPreConnectListener(serverManager, lifecycleCoordinator, activityTracker));
 	
 		// Register commands with the new non-deprecated method
 		registerCommands();
@@ -119,8 +123,12 @@ public class AutoStopperPlugin {
     }
 
     protected ActivityTracker createActivityTracker(AutoStopperConfig config, ServerManager serverManager,
-            AutoStopperExecutor executor) {
-        return new ActivityTracker(server, logger, config, serverManager, executor, this);
+            AutoStopperExecutor executor, ServerLifecycleCoordinator lifecycleCoordinator) {
+        return new ActivityTracker(server, logger, config, serverManager, executor, this, lifecycleCoordinator);
+    }
+
+    protected ServerLifecycleCoordinator createLifecycleCoordinator(ServerManager serverManager) {
+        return new ServerLifecycleCoordinator(logger, serverManager);
     }
 
 	private void registerCommands() {
@@ -133,7 +141,8 @@ public class AutoStopperPlugin {
 			.build();
 			
 		server.getCommandManager().register(autoStopperMeta,
-			new AutoStopperCommand(config, serverManager, activityTracker, pluginContainer));
+			new AutoStopperCommand(config, serverManager, activityTracker,
+					lifecycleCoordinator, pluginContainer));
 		logger.info("Registered command: /autostopper");
 		
 		logger.info("AutoStopper commands registered successfully!");

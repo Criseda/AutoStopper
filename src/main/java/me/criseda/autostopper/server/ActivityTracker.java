@@ -9,6 +9,7 @@ import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 
 import org.slf4j.Logger;
 
@@ -30,18 +31,21 @@ public class ActivityTracker {
     private final AutoStopperConfig config;
     private final ServerManager serverManager;
     private final AutoStopperExecutor executor;
+    private final ServerLifecycleCoordinator lifecycleCoordinator;
     private final Map<String, Instant> lastActivity = new ConcurrentHashMap<>();
     private final AutoStopperPlugin plugin;
     private final AtomicBoolean inactivityScanActive = new AtomicBoolean(false);
 
     public ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager,
-            AutoStopperExecutor executor, AutoStopperPlugin plugin) {
+            AutoStopperExecutor executor, AutoStopperPlugin plugin,
+            ServerLifecycleCoordinator lifecycleCoordinator) {
         this.server = server;
         this.logger = logger;
         this.config = config;
         this.serverManager = serverManager;
         this.executor = executor;
         this.plugin = plugin;
+        this.lifecycleCoordinator = lifecycleCoordinator;
         initializeActivityTracking();
     }
 
@@ -134,9 +138,18 @@ public class ActivityTracker {
         logger.debug(serverName + " has been inactive for " + minutesInactive + " minutes");
 
         if (inactiveDuration.getSeconds() > snapshot.inactivityTimeoutSeconds()) {
+            if (!lifecycleCoordinator.tryBeginStop(mapping)) {
+                logger.debug("Skipping inactivity shutdown for {} because lifecycle work is active", serverName);
+                return;
+            }
             logger.info("Server " + serverName + " has been inactive for " + minutesInactive +
                     " minutes, shutting down");
-            serverManager.stopServer(mapping);
+            ContainerStatus stopResult = ContainerStatus.FAILED;
+            try {
+                stopResult = serverManager.stopServer(mapping);
+            } finally {
+                lifecycleCoordinator.completeStop(mapping, stopResult);
+            }
             removeActivity(serverName);
         }
     }

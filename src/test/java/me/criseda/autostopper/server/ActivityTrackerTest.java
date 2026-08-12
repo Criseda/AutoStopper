@@ -11,6 +11,7 @@ import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,9 @@ public class ActivityTrackerTest {
     @Mock
     private AutoStopperPlugin plugin;
 
+    @Mock
+    private ServerLifecycleCoordinator lifecycleCoordinator;
+
     private ActivityTracker activityTracker;
     private AutoStopperExecutor executor;
     private ServerMapping mapping1;
@@ -59,9 +63,11 @@ public class ActivityTrackerTest {
         mapping1 = new ServerMapping("server1", "container1");
         mapping2 = new ServerMapping("server2", "container2");
         when(config.snapshot()).thenReturn(new ConfigSnapshot(300, List.of(mapping1, mapping2)));
+        lenient().when(lifecycleCoordinator.tryBeginStop(any(ServerMapping.class))).thenReturn(true);
         
         executor = new AutoStopperExecutor();
-        activityTracker = new ActivityTracker(proxyServer, logger, config, serverManager, executor, plugin);
+        activityTracker = new ActivityTracker(
+                proxyServer, logger, config, serverManager, executor, plugin, lifecycleCoordinator);
     }
 
     @AfterEach
@@ -193,6 +199,7 @@ public class ActivityTrackerTest {
 
         // Ensure Server Manager says server is running so it can be stopped
         when(serverManager.getServerStatus(mapping2)).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        when(serverManager.stopServer(mapping2)).thenReturn(ContainerStatus.STOPPED);
         lenient().when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.RUNNING));
         
         // Configure timeout
@@ -221,6 +228,8 @@ public class ActivityTrackerTest {
         
         // Verify server was stopped
         verify(serverManager).stopServer(mapping2);
+        verify(lifecycleCoordinator).tryBeginStop(mapping2);
+        verify(lifecycleCoordinator).completeStop(mapping2, ContainerStatus.STOPPED);
     }
 
     @Test
@@ -399,6 +408,7 @@ public class ActivityTrackerTest {
             visibleSnapshot.set(newSnapshot);
             return Optional.of(ContainerStatus.RUNNING);
         });
+        when(serverManager.stopServer(mapping1)).thenReturn(ContainerStatus.STOPPED);
 
         var field = ActivityTracker.class.getDeclaredField("lastActivity");
         field.setAccessible(true);
@@ -411,6 +421,7 @@ public class ActivityTrackerTest {
 
         verify(serverManager).stopServer(mapping1);
         verify(serverManager, never()).stopServer(replacement);
+        verify(lifecycleCoordinator).completeStop(mapping1, ContainerStatus.STOPPED);
     }
 
     @Test
@@ -462,7 +473,7 @@ public class ActivityTrackerTest {
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         ActivityTracker tracker = new ActivityTracker(
-                proxyServer, logger, config, serverManager, rejectingExecutor, plugin);
+                proxyServer, logger, config, serverManager, rejectingExecutor, plugin, lifecycleCoordinator);
 
         assertTrue(tracker.requestInactivityCheck().isCompletedExceptionally());
         assertTrue(tracker.requestInactivityCheck().isDone());

@@ -122,8 +122,14 @@ public final class AutoStopperMessages {
         return progress("Server is already being started, please wait...");
     }
 
-    public static Component serverStartingFromAnotherRequest() {
-        return progress("Server is being started by another request, please wait...");
+    public static Component serverStopping(String serverName) {
+        return serverMessage(WARNING_COLOR, "Server ", serverName,
+                " is currently stopping. Please try again shortly.");
+    }
+
+    public static Component mappingChanged(String serverName) {
+        return serverMessage(WARNING_COLOR, "The container mapping for server ", serverName,
+                " changed while another operation was running. Please try again.");
     }
 
     public static Component overloaded() {
@@ -172,6 +178,11 @@ public final class AutoStopperMessages {
         return serverMessage(ERROR_COLOR, "Failed to start server ", serverName, ".");
     }
 
+    public static Component startCancelled(String serverName) {
+        return serverMessage(WARNING_COLOR, "Starting server ", serverName,
+                " was cancelled. Please try again.");
+    }
+
     public static Component serverNotReady(String serverName) {
         return serverMessage(WARNING_COLOR, "Server ", serverName, " may not be fully ready yet.");
     }
@@ -190,6 +201,21 @@ public final class AutoStopperMessages {
 
     public static Component connectionFailed(String serverName) {
         return serverMessage(ERROR_COLOR, "Could not connect you to server ", serverName, ".");
+    }
+
+    public static Component connectionCancelled(String serverName) {
+        return serverMessage(WARNING_COLOR, "Your connection to server ", serverName,
+                " was cancelled. Please try again.");
+    }
+
+    public static Component connectionInProgress(String serverName) {
+        return serverMessage(WARNING_COLOR, "A connection to server ", serverName,
+                " is already in progress.");
+    }
+
+    public static Component connectionRefused(String serverName) {
+        return serverMessage(ERROR_COLOR, "Server ", serverName,
+                " refused the connection. Please try again.");
     }
 
     private static Component statusLine(String serverName, String status,
