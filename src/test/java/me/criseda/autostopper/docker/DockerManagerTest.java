@@ -13,6 +13,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
 import java.io.ByteArrayInputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -20,6 +22,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.TimeUnit;
 
 @ExtendWith(MockitoExtension.class)
 public class DockerManagerTest {
@@ -235,8 +238,82 @@ public class DockerManagerTest {
 
             boolean result = dockerManager.waitForContainerReady(containerName, 1, "Ready");
             assertFalse(result);
-            verify(logger).warn(contains("Timeout waiting for container"), eq(containerName));
+            verify(logger).warn(contains("stopped producing logs"), eq(containerName));
         }
+    }
+
+    @Test
+    public void testWaitForContainerReady_PartialLineCannotExceedDeadline() throws Exception {
+        String containerName = "partial-line-container";
+        PipedInputStream input = new PipedInputStream();
+        try (PipedOutputStream output = new PipedOutputStream(input);
+                MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                        (mock, context) -> {
+                            Process process = mock(Process.class);
+                            when(process.getInputStream()).thenReturn(input);
+                            when(process.waitFor(anyLong(), any(TimeUnit.class))).thenReturn(false);
+                            when(mock.start()).thenReturn(process);
+                            when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                        })) {
+            output.write("partial readiness output".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            output.flush();
+
+            long start = System.nanoTime();
+            boolean result = dockerManager.waitForContainerReady(containerName, 1, "Ready");
+            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+            assertFalse(result);
+            assertTrue(elapsedMillis < 2000,
+                    "partial line must not hold the worker past the deadline; took " + elapsedMillis + "ms");
+            Process process = mockedPb.constructed().get(0).start();
+            verify(process).destroy();
+            assertFalse(hasLiveThread("autostopper-readiness-" + containerName));
+        }
+    }
+
+    @Test
+    public void testWaitForContainerReady_InterruptionTerminatesReaderAndProcess() throws Exception {
+        String containerName = "interrupted-container";
+        PipedInputStream input = new PipedInputStream();
+        try (PipedOutputStream output = new PipedOutputStream(input);
+                MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
+                        (mock, context) -> {
+                            Process process = mock(Process.class);
+                            when(process.getInputStream()).thenReturn(input);
+                            when(process.waitFor(anyLong(), any(TimeUnit.class))).thenReturn(false);
+                            when(mock.start()).thenReturn(process);
+                            when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+                        })) {
+            output.write("partial".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            output.flush();
+
+            Thread testThread = Thread.currentThread();
+            Thread interrupter = new Thread(() -> {
+                try {
+                    Thread.sleep(100);
+                    testThread.interrupt();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            interrupter.start();
+
+            boolean result = dockerManager.waitForContainerReady(containerName, 30, "Ready");
+            boolean interruptedAtExit = Thread.currentThread().isInterrupted();
+            Thread.interrupted();
+            interrupter.join(2000);
+
+            assertFalse(result);
+            assertTrue(interruptedAtExit);
+            Process process = mockedPb.constructed().get(0).start();
+            verify(process).destroy();
+            assertFalse(hasLiveThread("autostopper-readiness-" + containerName));
+        }
+    }
+
+    private boolean hasLiveThread(String name) {
+        return Thread.getAllStackTraces().keySet().stream()
+                .anyMatch(thread -> thread.isAlive() && name.equals(thread.getName()));
     }
 
     private void assertOnlyInspectIssued() {

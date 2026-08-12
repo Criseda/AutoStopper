@@ -141,7 +141,8 @@ public class AutoStopperPluginTest {
         doReturn(mockConfig).when(spyPlugin).createConfig();
         doReturn(mockExecutor).when(spyPlugin).createExecutor();
         doReturn(mockServerManager).when(spyPlugin).createServerManager(mockConfig, mockExecutor);
-        doReturn(mockActivityTracker).when(spyPlugin).createActivityTracker(mockConfig, mockServerManager);
+        doReturn(mockActivityTracker).when(spyPlugin)
+                .createActivityTracker(mockConfig, mockServerManager, mockExecutor);
         
         // Execute
         spyPlugin.onProxyInitialize(event);
@@ -228,15 +229,20 @@ public class AutoStopperPluginTest {
         serverMap.put("test-server", "test-container");
         when(config.getServerToContainerMap()).thenReturn(serverMap);
         
-        // Execute
-        ActivityTracker createdActivityTracker = plugin.createActivityTracker(config, serverManager);
-        
-        // Verify
-        assertNotNull(createdActivityTracker, "Created activity tracker should not be null");
-        assertEquals(server, getPrivateField(createdActivityTracker, "server"));
-        assertEquals(logger, getPrivateField(createdActivityTracker, "logger"));
-        assertEquals(config, getPrivateField(createdActivityTracker, "config"));
-        assertEquals(serverManager, getPrivateField(createdActivityTracker, "serverManager"));
+        AutoStopperExecutor executor = new AutoStopperExecutor();
+        try {
+            ActivityTracker createdActivityTracker = plugin.createActivityTracker(config, serverManager, executor);
+
+            // Verify
+            assertNotNull(createdActivityTracker, "Created activity tracker should not be null");
+            assertEquals(server, getPrivateField(createdActivityTracker, "server"));
+            assertEquals(logger, getPrivateField(createdActivityTracker, "logger"));
+            assertEquals(config, getPrivateField(createdActivityTracker, "config"));
+            assertEquals(serverManager, getPrivateField(createdActivityTracker, "serverManager"));
+            assertEquals(executor, getPrivateField(createdActivityTracker, "executor"));
+        } finally {
+            executor.shutdown();
+        }
     }
 
     // Helper method to set private fields for testing

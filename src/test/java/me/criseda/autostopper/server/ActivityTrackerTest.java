@@ -8,6 +8,8 @@ import com.velocitypowered.api.scheduler.Scheduler;
 import me.criseda.autostopper.AutoStopperPlugin;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.docker.ContainerStatus;
+import me.criseda.autostopper.executor.AutoStopperExecutor;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,6 +21,8 @@ import org.slf4j.Logger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -43,6 +47,7 @@ public class ActivityTrackerTest {
     private AutoStopperPlugin plugin;
 
     private ActivityTracker activityTracker;
+    private AutoStopperExecutor executor;
 
     @BeforeEach
     public void setup() {
@@ -50,8 +55,13 @@ public class ActivityTrackerTest {
         String[] serverNames = {"server1", "server2"};
         when(config.getServerNames()).thenReturn(serverNames);
         
-        // Create the ActivityTracker instance with the plugin instance
-        activityTracker = new ActivityTracker(proxyServer, logger, config, serverManager, plugin);
+        executor = new AutoStopperExecutor();
+        activityTracker = new ActivityTracker(proxyServer, logger, config, serverManager, executor, plugin);
+    }
+
+    @AfterEach
+    public void teardown() {
+        executor.shutdown();
     }
 
     @Test
@@ -122,7 +132,7 @@ public class ActivityTrackerTest {
         
         // Execute the captured runnable
         Runnable inactivityCheck = runnableCaptor.getValue();
-        inactivityCheck.run();
+        runAndWait(inactivityCheck);
         
         // Verify that updateActivity was called (via timestamps being updated)
         Instant initialActivity = activityTracker.getLastActivity("server1");
@@ -135,7 +145,7 @@ public class ActivityTrackerTest {
         }
         
         // Run check again
-        inactivityCheck.run();
+        runAndWait(inactivityCheck);
         
         // Verify logger debug message
         verify(logger, atLeastOnce()).debug("Players active on server1, refreshing timestamp");
@@ -200,7 +210,7 @@ public class ActivityTrackerTest {
         
         // Execute the captured runnable
         Runnable inactivityCheck = runnableCaptor.getValue();
-        inactivityCheck.run();
+        runAndWait(inactivityCheck);
         
         // Verify server was stopped
         verify(serverManager).stopServer("server2");
@@ -245,7 +255,7 @@ public class ActivityTrackerTest {
 
         // Run check
         Runnable inactivityCheck = runnableCaptor.getValue();
-        inactivityCheck.run();
+        runAndWait(inactivityCheck);
 
         // Verify:
         // 1. stopServer was NEVER called (because it's already stopped)
@@ -290,7 +300,7 @@ public class ActivityTrackerTest {
         }
 
         // Run check
-        runnableCaptor.getValue().run();
+        runAndWait(runnableCaptor.getValue());
 
         // Verify: no shutdown attempted, tracking removed, operator warned
         verify(serverManager, never()).stopServer("server1");
@@ -320,7 +330,7 @@ public class ActivityTrackerTest {
         when(serverManager.getServerStatus("server1")).thenReturn(Optional.empty());
 
         // Run check
-        runnableCaptor.getValue().run();
+        runAndWait(runnableCaptor.getValue());
 
         verify(serverManager, never()).stopServer("server1");
         assertNull(activityTracker.getLastActivity("server1"));
@@ -349,12 +359,91 @@ public class ActivityTrackerTest {
         activityTracker.removeActivity("server1"); // Ensure map is empty
 
         // Run check
-        runnableCaptor.getValue().run();
+        runAndWait(runnableCaptor.getValue());
 
         // Verify it was added to the map
         assertNotNull(activityTracker.getLastActivity("server1"), "Manually started server should be auto-tracked");
         
         // Verify it was NOT stopped immediately (timeout hasn't passed)
         verify(serverManager, never()).stopServer("server1");
+    }
+
+    @Test
+    public void testSchedulerCallbackReturnsPromptlyAndSkipsOverlappingScan() throws InterruptedException {
+        Scheduler scheduler = mock(Scheduler.class);
+        Scheduler.TaskBuilder taskBuilder = mock(Scheduler.TaskBuilder.class);
+        ArgumentCaptor<Runnable> runnableCaptor = ArgumentCaptor.forClass(Runnable.class);
+        when(proxyServer.getScheduler()).thenReturn(scheduler);
+        when(scheduler.buildTask(eq(plugin), runnableCaptor.capture())).thenReturn(taskBuilder);
+        when(taskBuilder.repeat(anyLong(), any(TimeUnit.class))).thenReturn(taskBuilder);
+        when(taskBuilder.schedule()).thenReturn(mock(ScheduledTask.class));
+        activityTracker.startInactivityCheck();
+
+        RegisteredServer server1 = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
+        when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
+
+        CountDownLatch statusStarted = new CountDownLatch(1);
+        CountDownLatch releaseStatus = new CountDownLatch(1);
+        when(serverManager.getServerStatus("server1")).thenAnswer(invocation -> {
+            statusStarted.countDown();
+            releaseStatus.await();
+            return Optional.of(ContainerStatus.STOPPED);
+        });
+
+        Runnable scheduledCallback = runnableCaptor.getValue();
+        long start = System.nanoTime();
+        scheduledCallback.run();
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+        assertTrue(elapsedMillis < 100, "scheduler callback should only submit work");
+        assertTrue(statusStarted.await(1, TimeUnit.SECONDS));
+
+        scheduledCallback.run();
+        verify(serverManager, times(1)).getServerStatus("server1");
+        verify(logger).debug(contains("previous scan is still running"));
+
+        releaseStatus.countDown();
+        waitForScanCompletion();
+    }
+
+    @Test
+    public void testRejectedScanClearsActiveFlagForNextRun() {
+        AutoStopperExecutor rejectingExecutor = mock(AutoStopperExecutor.class);
+        CompletableFuture<Void> rejected = CompletableFuture.failedFuture(
+                new AutoStopperExecutor.SaturationException("full", null));
+        when(rejectingExecutor.supply(org.mockito.ArgumentMatchers.<java.util.function.Supplier<Void>>any()))
+                .thenReturn(rejected)
+                .thenReturn(CompletableFuture.completedFuture(null));
+
+        ActivityTracker tracker = new ActivityTracker(
+                proxyServer, logger, config, serverManager, rejectingExecutor, plugin);
+
+        assertTrue(tracker.requestInactivityCheck().isCompletedExceptionally());
+        assertTrue(tracker.requestInactivityCheck().isDone());
+        verify(rejectingExecutor, times(2)).supply(any());
+    }
+
+    private void runAndWait(Runnable inactivityCheck) {
+        inactivityCheck.run();
+        waitForScanCompletion();
+    }
+
+    private void waitForScanCompletion() {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (isScanActive() && System.nanoTime() < deadline) {
+            java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+        }
+        assertFalse(isScanActive(), "inactivity scan did not complete in time");
+    }
+
+    private boolean isScanActive() {
+        try {
+            var field = ActivityTracker.class.getDeclaredField("inactivityScanActive");
+            field.setAccessible(true);
+            return ((java.util.concurrent.atomic.AtomicBoolean) field.get(activityTracker)).get();
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 }
