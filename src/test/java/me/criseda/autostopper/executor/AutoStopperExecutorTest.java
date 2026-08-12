@@ -44,9 +44,11 @@ public class AutoStopperExecutorTest {
     public void testBlockingTaskDoesNotHoldCallingThread() throws InterruptedException {
         AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
         try {
+            CountDownLatch workerStarted = new CountDownLatch(1);
             CountDownLatch blocked = new CountDownLatch(1);
             // A fake "Docker call" that blocks on the executor.
             executor.supply(() -> {
+                workerStarted.countDown();
                 try {
                     blocked.await();
                 } catch (InterruptedException e) {
@@ -54,6 +56,7 @@ public class AutoStopperExecutorTest {
                 }
                 return "done";
             });
+            assertTrue(workerStarted.await(2, TimeUnit.SECONDS));
 
             Instant start = Instant.now();
             CompletableFuture<String> second = executor.supply(() -> "queued");
@@ -105,12 +108,14 @@ public class AutoStopperExecutorTest {
     }
 
     @Test
-    public void testSaturationFailsPredictably() {
+    public void testSaturationFailsPredictably() throws InterruptedException {
         AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        CountDownLatch workerStarted = new CountDownLatch(1);
         CountDownLatch blocked = new CountDownLatch(1);
         try {
             // Fill the single worker.
             executor.supply(() -> {
+                workerStarted.countDown();
                 try {
                     blocked.await();
                 } catch (InterruptedException e) {
@@ -118,6 +123,7 @@ public class AutoStopperExecutorTest {
                 }
                 return "blocked";
             });
+            assertTrue(workerStarted.await(2, TimeUnit.SECONDS));
             // Fill the single queue slot.
             executor.supply(() -> "pending");
 
