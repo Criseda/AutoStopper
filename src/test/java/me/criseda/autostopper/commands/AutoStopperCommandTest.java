@@ -10,6 +10,7 @@ import me.criseda.autostopper.config.ConfigLoadResult;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
+import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
@@ -41,6 +42,9 @@ public class AutoStopperCommandTest {
     
     @Mock
     private ActivityTracker activityTracker;
+
+    @Mock
+    private ServerLifecycleCoordinator lifecycleCoordinator;
     
     @Mock
     private CommandSource source;
@@ -59,7 +63,8 @@ public class AutoStopperCommandTest {
         lenient().when(pluginDescription.getVersion()).thenReturn(Optional.of("1.1.2"));
         lenient().when(source.getPermissionValue(anyString())).thenReturn(Tristate.UNDEFINED);
         
-        command = new AutoStopperCommand(config, serverManager, activityTracker, pluginContainer);
+        command = new AutoStopperCommand(
+                config, serverManager, activityTracker, lifecycleCoordinator, pluginContainer);
     }
     
     @Test
@@ -300,7 +305,7 @@ public class AutoStopperCommandTest {
         
         // Assert
         verify(config).loadConfig();
-        verify(serverManager).reconcileConfig(previous, current);
+        verify(lifecycleCoordinator).reconcileConfig(previous, current);
         verify(activityTracker).reconcileConfig(previous, current);
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(2)).sendMessage(messageCaptor.capture());
@@ -321,7 +326,7 @@ public class AutoStopperCommandTest {
 
         command.execute(invocation);
 
-        verify(serverManager, never()).reconcileConfig(any(), any());
+        verify(lifecycleCoordinator, never()).reconcileConfig(any(), any());
         verify(activityTracker, never()).reconcileConfig(any(), any());
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(2)).sendMessage(messageCaptor.capture());
@@ -363,7 +368,7 @@ public class AutoStopperCommandTest {
         command.execute(invocation);
 
         verify(config).loadConfig();
-        verify(serverManager).reconcileConfig(previous, current);
+        verify(lifecycleCoordinator).reconcileConfig(previous, current);
         verify(activityTracker).reconcileConfig(previous, current);
     }
     

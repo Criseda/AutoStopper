@@ -17,8 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ServerManager {
     private final ProxyServer server;
@@ -26,8 +24,6 @@ public class ServerManager {
     private final AutoStopperConfig config;
     private final DockerManager dockerManager;
     private final AutoStopperExecutor executor;
-
-    private final Map<String, AtomicBoolean> serverStartingStatus = new ConcurrentHashMap<>();
 
     public ServerManager(ProxyServer server, Logger logger, AutoStopperConfig config, DockerManager dockerManager,
             AutoStopperExecutor executor) {
@@ -112,28 +108,6 @@ public class ServerManager {
 
     public Optional<RegisteredServer> getServer(String name) {
         return server.getServer(name);
-    }
-
-    public AtomicBoolean getServerStartingStatus(String serverName) {
-        return serverStartingStatus.computeIfAbsent(serverName, k -> new AtomicBoolean(false));
-    }
-
-    public void releaseServerStartingStatus(String serverName, AtomicBoolean status) {
-        status.set(false);
-        if (!config.snapshot().containsServer(serverName)) {
-            serverStartingStatus.remove(serverName, status);
-        }
-    }
-
-    public void reconcileConfig(ConfigSnapshot previous, ConfigSnapshot current) {
-        for (String previousName : previous.serverNames()) {
-            if (!current.containsServer(previousName)) {
-                AtomicBoolean status = serverStartingStatus.get(previousName);
-                if (status != null && !status.get()) {
-                    serverStartingStatus.remove(previousName, status);
-                }
-            }
-        }
     }
 
     public CompletableFuture<Optional<ContainerStatus>> getServerStatusAsync(String serverName) {

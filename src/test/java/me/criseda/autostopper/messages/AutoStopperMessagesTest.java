@@ -100,7 +100,8 @@ class AutoStopperMessagesTest {
                 AutoStopperMessages.reloadSucceeded(),
                 AutoStopperMessages.permissionDenied("reload configuration"),
                 AutoStopperMessages.serverAlreadyStarting(),
-                AutoStopperMessages.serverStartingFromAnotherRequest(),
+                AutoStopperMessages.serverStopping("survival"),
+                AutoStopperMessages.mappingChanged("survival"),
                 AutoStopperMessages.overloaded(),
                 AutoStopperMessages.statusCheckError("survival"),
                 AutoStopperMessages.noContainerMapping("survival"),
@@ -112,10 +113,14 @@ class AutoStopperMessagesTest {
                 AutoStopperMessages.startError("survival"),
                 AutoStopperMessages.startTimedOut("survival"),
                 AutoStopperMessages.startFailed("survival"),
+                AutoStopperMessages.startCancelled("survival"),
                 AutoStopperMessages.serverNotReady("survival"),
                 AutoStopperMessages.serverReady("survival"),
                 AutoStopperMessages.retryServerCommand("survival"),
-                AutoStopperMessages.connectionFailed("survival"));
+                AutoStopperMessages.connectionFailed("survival"),
+                AutoStopperMessages.connectionCancelled("survival"),
+                AutoStopperMessages.connectionInProgress("survival"),
+                AutoStopperMessages.connectionRefused("survival"));
 
         for (Component message : messages) {
             assertFalse(plainText(message).contains("§"), plainText(message));

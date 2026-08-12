@@ -10,6 +10,7 @@ import me.criseda.autostopper.config.ConfigLoadResult;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.messages.AutoStopperMessages;
+import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
 
@@ -27,13 +28,16 @@ public class AutoStopperCommand implements SimpleCommand {
     private final AutoStopperConfig config;
     private final ServerManager serverManager;
     private final ActivityTracker activityTracker;
+    private final ServerLifecycleCoordinator lifecycleCoordinator;
     private final PluginContainer pluginContainer;
 
     public AutoStopperCommand(AutoStopperConfig config,
-            ServerManager serverManager, ActivityTracker activityTracker, PluginContainer pluginContainer) {
+            ServerManager serverManager, ActivityTracker activityTracker,
+            ServerLifecycleCoordinator lifecycleCoordinator, PluginContainer pluginContainer) {
         this.config = config;
         this.serverManager = serverManager;
         this.activityTracker = activityTracker;
+        this.lifecycleCoordinator = lifecycleCoordinator;
         this.pluginContainer = pluginContainer;
     }
 
@@ -149,7 +153,7 @@ public class AutoStopperCommand implements SimpleCommand {
             return;
         }
 
-        serverManager.reconcileConfig(previous, result.snapshot());
+        lifecycleCoordinator.reconcileConfig(previous, result.snapshot());
         activityTracker.reconcileConfig(previous, result.snapshot());
         source.sendMessage(AutoStopperMessages.reloadSucceeded());
     }

@@ -24,7 +24,6 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -189,26 +188,6 @@ public class ServerManagerTest {
     }
     
     @Test
-    public void testGetServerStartingStatus() {
-        // First call should create a new AtomicBoolean
-        AtomicBoolean status1 = serverManager.getServerStartingStatus("server1");
-        assertFalse(status1.get());
-        
-        // Change the status
-        status1.set(true);
-        
-        // Second call should return the same instance
-        AtomicBoolean status2 = serverManager.getServerStartingStatus("server1");
-        assertTrue(status2.get());
-        assertSame(status1, status2);
-        
-        // Different server should get a different instance
-        AtomicBoolean status3 = serverManager.getServerStartingStatus("server2");
-        assertFalse(status3.get());
-        assertNotSame(status1, status3);
-    }
-
-    @Test
     public void testGetServerStatusAsync() {
         // Setup
         when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
@@ -338,26 +317,6 @@ public class ServerManagerTest {
         verifyNoInteractions(config);
         verify(dockerManager).getContainerStatus("old-container-1");
         verify(dockerManager).getContainerStatus("old-container-2");
-    }
-
-    @Test
-    public void testReconcileRemovesIdleStateButRetainsActiveStateUntilReleased() {
-        ConfigSnapshot previous = snapshot(Map.of("server1", "container1"));
-        ConfigSnapshot current = ConfigSnapshot.emptyDefault();
-
-        AtomicBoolean idle = serverManager.getServerStartingStatus("server1");
-        serverManager.reconcileConfig(previous, current);
-        assertNotSame(idle, serverManager.getServerStartingStatus("server1"));
-
-        AtomicBoolean active = serverManager.getServerStartingStatus("server1");
-        active.set(true);
-        serverManager.reconcileConfig(previous, current);
-        assertSame(active, serverManager.getServerStartingStatus("server1"));
-
-        when(config.snapshot()).thenReturn(current);
-        serverManager.releaseServerStartingStatus("server1", active);
-        assertFalse(active.get());
-        assertNotSame(active, serverManager.getServerStartingStatus("server1"));
     }
 
     private ConfigSnapshot snapshot(Map<String, String> mappings) {
