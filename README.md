@@ -80,71 +80,54 @@ monitored_servers:
 
 ## Docker Setup
 
-AutoStopper requires the Docker socket to be mounted in your Velocity container. Here's an example `docker-compose.yml` setup:
+AutoStopper requires the Docker socket to be mounted in your Velocity container.
+Tested, fully pinned Compose examples are provided for both support lines
+(issue #3 matrix):
 
-```yaml
-services:
-  velocity:
-    image: itzg/mc-proxy
-    container_name: velocity-server
-    environment:
-      TYPE: "VELOCITY"
-      ONLINE_MODE: "true"
-      VELOCITY_VERSION: "latest"
-      VELOCITY_BUILD_ID: "latest"
-      REPLACE_ENV_VARIABLES: "true"
-    ports:
-      - "25565:25565"
-    volumes:
-      - ./velocity_server:/server
-      - /var/run/docker.sock:/var/run/docker.sock  # Required for AutoStopper
-    networks:
-      - mc-network
-    restart: unless-stopped
-    entrypoint: bash -c
-    command: >
-      "if [ ! -f /usr/bin/docker ]; then
-        apt-get update && apt-get install -y docker.io && apt-get clean;
-      fi &&
-      SOCKET_GID=$$(stat -c '%g' /var/run/docker.sock) &&
-      if ! getent group $$SOCKET_GID > /dev/null; then groupadd -g $$SOCKET_GID docker_sock; fi &&
-      GROUP_NAME=$$(getent group $$SOCKET_GID | cut -d: -f1) &&
-      usermod -aG $$GROUP_NAME bungeecord &&
-      exec /usr/bin/run-bungeecord.sh"
+| Support line | Example                                    | mc-proxy image             | Velocity build |
+|--------------|--------------------------------------------|----------------------------|----------------|
+| Legacy       | [`examples/velocity-legacy/`](examples/velocity-legacy/) | `itzg/mc-proxy:2026.8.0-java21` | 3.5.1 (build 615) |
+| Current      | [`examples/velocity-current/`](examples/velocity-current/) | `itzg/mc-proxy:2026.8.0-java25` | 4.1.0-SNAPSHOT (build 16) |
 
-  # Example Minecraft servers that can be managed by AutoStopper
-  purpur:
-    image: itzg/minecraft-server:java21
-    container_name: purpur-server
-    environment:
-      TYPE: "PURPUR"
-      VERSION: "1.21.4"
-      EULA: "TRUE"
-      ONLINE_MODE: "FALSE"
-    volumes:
-      - ./purpur_data:/data
-    networks:
-      - mc-network
-    restart: "no"  # Important: Let AutoStopper manage the container lifecycle
+Each example contains a `docker-compose.yml` and a `docker-entrypoint.sh`:
 
-  fabric:
-    image: itzg/minecraft-server:java21
-    container_name: fabric-server
-    environment:
-      TYPE: "FABRIC"
-      VERSION: "1.21.4"
-      EULA: "TRUE"
-      ONLINE_MODE: "FALSE"
-    volumes:
-      - ./fabric_data:/data
-    networks:
-      - mc-network
-    restart: "no"  # Important: Let AutoStopper manage the container lifecycle
+1. ```bash
+   cd examples/velocity-legacy   # or examples/velocity-current
+   ```
+2. Drop the AutoStopper JAR into `./velocity_server/plugins/`
+3. ```bash
+   docker compose up -d
+   ```
 
-networks:
-  mc-network:
-    driver: bridge
+Both examples are boot-tested against the exact pinned builds in the support
+matrix. Copy one of them to your server and adapt the Minecraft services.
+
+### Upgrade Note
+
+The mc-proxy image Java version and the Velocity bytecode version must move
+together: the legacy example uses a Java 21 image with Velocity 3.5.1 (Java 21
+bytecode), the current example uses a Java 25 image with Velocity 4.1 (Java 25
+bytecode). Never mix, e.g., a Java 21 image with a Velocity 4.x build.
+
+### Verify It Works / Troubleshooting
+
+Check the proxy log for the plugin's startup line:
+
+```bash
+docker logs velocity-server | grep "AutoStopper"
 ```
+
+If the plugin fails to load, look for a Java bytecode mismatch:
+
+- `Unsupported class file major version` / `class file version 69` means the
+  proxy JVM is too old for the pinned Velocity build - keep the Velocity
+  version and the `itzg/mc-proxy` java tag in the same support line.
+- A generic `Plugin ... failed to load` without a bytecode error usually means
+  the JAR is not in the profile's `plugins` directory or the wrong JAR name was
+  used.
+
+The minimal load-path smoke harness used during development lives in
+[`smoke/`](smoke/README.md).
 
 ### Important Docker Configuration Notes
 
