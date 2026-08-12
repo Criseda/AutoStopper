@@ -11,6 +11,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 
 import me.criseda.autostopper.commands.AutoStopperCommand;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.config.ConfigLoadResult;
 import me.criseda.autostopper.docker.DockerManager;
 import me.criseda.autostopper.docker.ProcessCommandRunner;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
@@ -50,7 +51,11 @@ public class AutoStopperPlugin {
 	
 		// Load configuration first
 		this.config = createConfig();
-		config.loadConfig(); // Make sure config is loaded before using it
+		ConfigLoadResult initialConfig = config.loadConfig();
+		if (!initialConfig.successful()) {
+			logger.error("AutoStopper initialization aborted: {}", initialConfig.errorSummary());
+			return;
+		}
 	
 		// Initialize server management
 		this.executor = createExecutor();
@@ -101,7 +106,7 @@ public class AutoStopperPlugin {
     }
 
     protected AutoStopperConfig createConfig() {
-        return new AutoStopperConfig(dataDirectory, logger);
+        return new AutoStopperConfig(dataDirectory, logger, name -> server.getServer(name).isPresent());
     }
 
     protected AutoStopperExecutor createExecutor() {

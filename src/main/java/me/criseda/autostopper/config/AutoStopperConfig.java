@@ -1,172 +1,250 @@
 package me.criseda.autostopper.config;
 
 import org.slf4j.Logger;
-import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
+import org.yaml.snakeyaml.error.MarkedYAMLException;
+import org.yaml.snakeyaml.error.YAMLException;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 
 public class AutoStopperConfig {
+    private static final String TIMEOUT_KEY = "inactivity_timeout_seconds";
+    private static final String SERVERS_KEY = "monitored_servers";
+
     private final Path dataDirectory;
     private final Logger logger;
-    private Path configFile;
+    private final Path configFile;
+    private final Predicate<String> knownServer;
+    private final AtomicReference<ConfigSnapshot> current =
+            new AtomicReference<>(ConfigSnapshot.emptyDefault());
 
-    private int inactivityTimeout = 300; // Default: 5 minutes
-    private List<ServerMapping> servers = new ArrayList<>();
-
-    public AutoStopperConfig(Path dataDirectory, Logger logger) {
+    public AutoStopperConfig(Path dataDirectory, Logger logger, Predicate<String> knownServer) {
         this.dataDirectory = dataDirectory;
         this.logger = logger;
         this.configFile = dataDirectory.resolve("config.yml");
+        this.knownServer = knownServer;
     }
 
-    public void loadConfig() {
+    AutoStopperConfig(Path dataDirectory, Logger logger) {
+        this(dataDirectory, logger, ignored -> true);
+    }
+
+    public ConfigLoadResult loadConfig() {
+        ConfigSnapshot retained = current.get();
         try {
             Files.createDirectories(dataDirectory);
-
-            // Check if config exists, create it if it doesn't
             if (!Files.exists(configFile)) {
                 logger.info("Creating default configuration file...");
-                createDefaultConfig();
-                save();
-                logger.info("Default configuration created at: " + configFile.toAbsolutePath());
+                writeDefaultConfig();
+                logger.info("Default configuration created at: {}", configFile.toAbsolutePath());
             }
 
-            // Load the configuration
-            load();
-            logger.info("Configuration loaded successfully!");
-
+            ConfigSnapshot candidate = parseAndValidate();
+            current.set(candidate);
+            logAppliedConfig(candidate);
+            return ConfigLoadResult.success(candidate);
+        } catch (ConfigValidationException e) {
+            logRejectedConfig(e.errors());
+            return ConfigLoadResult.failure(retained, e.errors());
+        } catch (MarkedYAMLException e) {
+            String location = e.getProblemMark() == null
+                    ? "config.yml"
+                    : "config.yml:" + (e.getProblemMark().getLine() + 1) + ":"
+                            + (e.getProblemMark().getColumn() + 1);
+            String detail = e.getProblem() == null ? e.getMessage() : e.getProblem();
+            List<String> errors = List.of(location + ": invalid YAML: " + detail);
+            logRejectedConfig(errors);
+            return ConfigLoadResult.failure(retained, errors);
+        } catch (YAMLException e) {
+            List<String> errors = List.of("config.yml: invalid YAML: " + safeMessage(e));
+            logRejectedConfig(errors);
+            return ConfigLoadResult.failure(retained, errors);
         } catch (IOException e) {
-            logger.error("Failed to setup configuration", e);
-            // Use default values if config fails
-            createDefaultConfig();
+            List<String> errors = List.of("config.yml: could not be read or created: " + safeMessage(e));
+            logger.error("Configuration was not applied; previous configuration remains active", e);
+            return ConfigLoadResult.failure(retained, errors);
+        } catch (RuntimeException e) {
+            List<String> errors = List.of("config.yml: could not be loaded: " + safeMessage(e));
+            logger.error("Configuration was not applied; previous configuration remains active", e);
+            return ConfigLoadResult.failure(retained, errors);
         }
     }
 
-    private void createDefaultConfig() {
-        // Add some example servers
-        servers.clear();
-        servers.add(new ServerMapping("purpur", "purpur-server"));
-        servers.add(new ServerMapping("fabric", "fabric-server"));
+    private ConfigSnapshot parseAndValidate() throws IOException, ConfigValidationException {
+        LoaderOptions options = new LoaderOptions();
+        options.setAllowDuplicateKeys(false);
+        Yaml yaml = new Yaml(new SafeConstructor(options));
+
+        Object document;
+        try (BufferedReader reader = Files.newBufferedReader(configFile, StandardCharsets.UTF_8)) {
+            document = yaml.load(reader);
+        }
+
+        List<String> errors = new ArrayList<>();
+        if (document == null) {
+            throw new ConfigValidationException(List.of("config.yml: configuration is empty"));
+        }
+        if (!(document instanceof Map<?, ?> root)) {
+            throw new ConfigValidationException(List.of("config.yml: expected a mapping at the document root"));
+        }
+
+        int timeout = parseTimeout(root, errors);
+        List<ServerMapping> mappings = parseMappings(root, errors);
+        if (!errors.isEmpty()) {
+            throw new ConfigValidationException(errors);
+        }
+        return new ConfigSnapshot(timeout, mappings);
     }
 
-    private void save() throws IOException {
-        // First write the template with comments
-        String template = "# AutoStopper Configuration\n" +
-                "# -----------------------\n" +
-                "# This file controls the behavior of the AutoStopper plugin.\n" +
-                "\n" +
-                "# Number of seconds of inactivity before a server is shut down\n" +
-                "# Default: 300 (5 minutes)\n" +
-                "inactivity_timeout_seconds: " + inactivityTimeout + "\n" +
-                "\n" +
-                "# Servers to monitor for inactivity\n" +
-                "# Each entry must have:\n" +
-                "#   - server_name: The name of the server in Velocity (what players type in /server command)\n" +
-                "#     container_name: The Docker container name for this server\n" +
-                "monitored_servers:\n";
+    private int parseTimeout(Map<?, ?> root, List<String> errors) {
+        if (!root.containsKey(TIMEOUT_KEY)) {
+            return ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS;
+        }
+        Object value = root.get(TIMEOUT_KEY);
+        if (!(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)) {
+            errors.add(TIMEOUT_KEY + ": expected a positive integer");
+            return ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS;
+        }
+        long timeout = ((Number) value).longValue();
+        if (timeout <= 0 || timeout > Integer.MAX_VALUE) {
+            errors.add(TIMEOUT_KEY + ": expected a positive integer no greater than " + Integer.MAX_VALUE);
+            return ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS;
+        }
+        return (int) timeout;
+    }
 
-        try (BufferedWriter writer = Files.newBufferedWriter(configFile)) {
-            // Write the template with comments
-            writer.write(template);
+    private List<ServerMapping> parseMappings(Map<?, ?> root, List<String> errors) {
+        if (!root.containsKey(SERVERS_KEY)) {
+            return List.of();
+        }
+        Object value = root.get(SERVERS_KEY);
+        if (!(value instanceof List<?> entries)) {
+            errors.add(SERVERS_KEY + ": expected a list");
+            return List.of();
+        }
 
-            // Configure YAML for proper output format
-            DumperOptions options = new DumperOptions();
-            options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
-            options.setPrettyFlow(true);
-            new Yaml(options);
-
-            // Convert servers to maps and write them
-            for (ServerMapping server : servers) {
-                writer.write("  # Server configuration for " + server.getServerName() + "\n");
-                writer.write("  - server_name: " + server.getServerName() + "\n");
-                writer.write("    container_name: " + server.getContainerName() + "\n");
-                writer.write("\n");
+        List<ServerMapping> mappings = new ArrayList<>();
+        Set<String> serverNames = new HashSet<>();
+        Set<String> containerNames = new HashSet<>();
+        for (int index = 0; index < entries.size(); index++) {
+            String path = SERVERS_KEY + "[" + index + "]";
+            Object entry = entries.get(index);
+            if (!(entry instanceof Map<?, ?> mapping)) {
+                errors.add(path + ": expected a mapping");
+                continue;
             }
+
+            String serverName = parseName(mapping.get("server_name"), path + ".server_name", errors);
+            String containerName = parseName(mapping.get("container_name"), path + ".container_name", errors);
+            if (serverName == null || containerName == null) {
+                continue;
+            }
+            if (!knownServer.test(serverName)) {
+                errors.add(path + ".server_name: unknown Velocity server '" + serverName + "'");
+            }
+            if (!serverNames.add(serverName)) {
+                errors.add(path + ".server_name: duplicate server mapping '" + serverName + "'");
+            }
+            if (!containerNames.add(containerName)) {
+                errors.add(path + ".container_name: duplicate container mapping '" + containerName + "'");
+            }
+            mappings.add(new ServerMapping(serverName, containerName));
+        }
+        return mappings;
+    }
+
+    private String parseName(Object value, String path, List<String> errors) {
+        if (!(value instanceof String name)) {
+            errors.add(path + ": expected a string");
+            return null;
+        }
+        String trimmed = name.trim();
+        if (trimmed.isEmpty()) {
+            errors.add(path + ": must not be blank");
+            return null;
+        }
+        if (!trimmed.equals(name)) {
+            errors.add(path + ": must not have leading or trailing whitespace");
+            return null;
+        }
+        return name;
+    }
+
+    private void writeDefaultConfig() throws IOException {
+        try (BufferedWriter writer = Files.newBufferedWriter(configFile, StandardCharsets.UTF_8)) {
+            writer.write("# AutoStopper Configuration\n");
+            writer.write("# Number of seconds of inactivity before a server is shut down.\n");
+            writer.write(TIMEOUT_KEY + ": " + ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS + "\n\n");
+            writer.write("# Add only server names already registered in Velocity.\n");
+            writer.write(SERVERS_KEY + ": []\n\n");
+            writer.write("# Example:\n");
+            writer.write("# monitored_servers:\n");
+            writer.write("#   - server_name: purpur\n");
+            writer.write("#     container_name: purpur-server\n");
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private void load() throws IOException {
-        Yaml yaml = new Yaml();
-        try (BufferedReader reader = Files.newBufferedReader(configFile)) {
-            Map<String, Object> data = yaml.load(reader);
-
-            // Load timeout setting
-            if (data.containsKey("inactivity_timeout_seconds")) {
-                Object timeoutObj = data.get("inactivity_timeout_seconds");
-                if (timeoutObj instanceof Integer) {
-                    inactivityTimeout = (Integer) timeoutObj;
-                } else if (timeoutObj != null) {
-                    inactivityTimeout = Integer.parseInt(timeoutObj.toString());
-                }
-            }
-
-            // Load servers
-            servers.clear();
-            if (data.containsKey("monitored_servers")) {
-                List<Map<String, Object>> serversData = (List<Map<String, Object>>) data.get("monitored_servers");
-                for (Map<String, Object> serverData : serversData) {
-                    String serverName = (String) serverData.get("server_name");
-                    String containerName = (String) serverData.get("container_name");
-
-                    if (serverName != null && containerName != null) {
-                        servers.add(new ServerMapping(serverName, containerName));
-                    }
-                }
-            }
-        }
-
-        logger.info("Applied configuration: ");
-        logger.info("- Inactivity timeout: " + inactivityTimeout + " seconds");
-        logger.info("- Monitored servers: " + String.join(", ", getServerNames()));
+    private void logAppliedConfig(ConfigSnapshot snapshot) {
+        logger.info("Configuration loaded successfully!");
+        logger.info("Applied configuration:");
+        logger.info("- Inactivity timeout: {} seconds", snapshot.inactivityTimeoutSeconds());
+        logger.info("- Monitored servers: {}", String.join(", ", snapshot.serverNames()));
     }
 
-    public static class ServerMapping {
-        private String serverName;
-        private String containerName;
-
-        public ServerMapping(String serverName, String containerName) {
-            this.serverName = serverName;
-            this.containerName = containerName;
+    private void logRejectedConfig(List<String> errors) {
+        for (String error : errors) {
+            logger.error("Configuration validation error: {}", error);
         }
+        logger.error("Configuration was not applied; previous configuration remains active");
+    }
 
-        public String getServerName() {
-            return serverName;
-        }
+    private String safeMessage(Exception error) {
+        return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+    }
 
-        public String getContainerName() {
-            return containerName;
-        }
+    public ConfigSnapshot snapshot() {
+        return current.get();
     }
 
     public int getInactivityTimeout() {
-        return inactivityTimeout;
+        return snapshot().inactivityTimeoutSeconds();
     }
 
     public List<ServerMapping> getServers() {
-        return servers;
+        return snapshot().servers();
     }
 
     public String[] getServerNames() {
-        return servers.stream()
-                .map(ServerMapping::getServerName)
-                .toArray(String[]::new);
+        return snapshot().serverNames().toArray(String[]::new);
     }
 
     public Map<String, String> getServerToContainerMap() {
-        Map<String, String> map = new HashMap<>();
-        for (ServerMapping server : servers) {
-            map.put(server.getServerName(), server.getContainerName());
+        return snapshot().serverToContainer();
+    }
+
+    private static final class ConfigValidationException extends Exception {
+        private final List<String> errors;
+
+        private ConfigValidationException(List<String> errors) {
+            this.errors = List.copyOf(errors);
         }
-        return map;
+
+        private List<String> errors() {
+            return errors;
+        }
     }
 }

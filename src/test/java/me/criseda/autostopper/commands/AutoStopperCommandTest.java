@@ -5,6 +5,9 @@ import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.plugin.PluginDescription;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.config.ConfigLoadResult;
+import me.criseda.autostopper.config.ConfigSnapshot;
+import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
@@ -118,9 +121,10 @@ public class AutoStopperCommandTest {
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"server1", "server2"};
 
-        when(config.getServerNames()).thenReturn(serverNames);
+        ConfigSnapshot snapshot = snapshot("server1", "server2");
+        when(config.snapshot()).thenReturn(snapshot);
         CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses = new CompletableFuture<>();
-        when(serverManager.getStatusesAsync(anyList())).thenReturn(statuses);
+        when(serverManager.getStatusesAsync(snapshot)).thenReturn(statuses);
         when(activityTracker.getLastActivity("server1")).thenReturn(Instant.now().minusSeconds(300));
         when(activityTracker.getMinutesSinceActivity("server1")).thenReturn(5L);
 
@@ -149,9 +153,10 @@ public class AutoStopperCommandTest {
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"server1"};
 
-        when(config.getServerNames()).thenReturn(serverNames);
+        ConfigSnapshot snapshot = snapshot("server1");
+        when(config.snapshot()).thenReturn(snapshot);
         CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses = new CompletableFuture<>();
-        when(serverManager.getStatusesAsync(anyList())).thenReturn(statuses);
+        when(serverManager.getStatusesAsync(snapshot)).thenReturn(statuses);
         when(activityTracker.getLastActivity("server1")).thenReturn(null);
 
         // Act
@@ -172,9 +177,10 @@ public class AutoStopperCommandTest {
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"s-missing", "s-inaccessible", "s-timedout", "s-failed", "s-unmapped"};
 
-        when(config.getServerNames()).thenReturn(serverNames);
+        ConfigSnapshot snapshot = snapshot(serverNames);
+        when(config.snapshot()).thenReturn(snapshot);
         CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses = new CompletableFuture<>();
-        when(serverManager.getStatusesAsync(anyList())).thenReturn(statuses);
+        when(serverManager.getStatusesAsync(snapshot)).thenReturn(statuses);
 
         // Act
         command.execute(invocation);
@@ -203,9 +209,10 @@ public class AutoStopperCommandTest {
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"server1"};
 
-        when(config.getServerNames()).thenReturn(serverNames);
+        ConfigSnapshot snapshot = snapshot("server1");
+        when(config.snapshot()).thenReturn(snapshot);
         CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses = new CompletableFuture<>();
-        when(serverManager.getStatusesAsync(anyList())).thenReturn(statuses);
+        when(serverManager.getStatusesAsync(snapshot)).thenReturn(statuses);
 
         // Act
         command.execute(invocation);
@@ -222,18 +229,42 @@ public class AutoStopperCommandTest {
     public void testExecuteReloadCommand() {
         // Arrange
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"reload"});
+        ConfigSnapshot previous = snapshot("server1");
+        ConfigSnapshot current = snapshot("server2");
+        when(config.snapshot()).thenReturn(previous);
+        when(config.loadConfig()).thenReturn(ConfigLoadResult.success(current));
         
         // Act
         command.execute(invocation);
         
         // Assert
         verify(config).loadConfig();
+        verify(serverManager).reconcileConfig(previous, current);
+        verify(activityTracker).reconcileConfig(previous, current);
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(messages.get(0).toString().contains("Reloading"));
         assertTrue(messages.get(1).toString().contains("reloaded successfully"));
+    }
+
+    @Test
+    public void testExecuteReloadCommand_InvalidConfigKeepsPreviousSnapshot() {
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"reload"});
+        ConfigSnapshot previous = snapshot("server1");
+        when(config.snapshot()).thenReturn(previous);
+        when(config.loadConfig()).thenReturn(
+                ConfigLoadResult.failure(previous, List.of("monitored_servers[0].server is unknown")));
+
+        command.execute(invocation);
+
+        verify(serverManager, never()).reconcileConfig(any(), any());
+        verify(activityTracker, never()).reconcileConfig(any(), any());
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(messageCaptor.capture());
+        assertTrue(messageCaptor.getAllValues().get(1).toString().contains("reload failed"));
+        assertTrue(messageCaptor.getAllValues().get(1).toString().contains("monitored_servers[0].server"));
     }
     
     @Test
@@ -313,5 +344,12 @@ public class AutoStopperCommandTest {
         lenient().when(invocation.source()).thenReturn(source);
         lenient().when(invocation.arguments()).thenReturn(args);
         return invocation;
+    }
+
+    private ConfigSnapshot snapshot(String... serverNames) {
+        List<ServerMapping> mappings = java.util.Arrays.stream(serverNames)
+                .map(name -> new ServerMapping(name, name + "-container"))
+                .toList();
+        return new ConfigSnapshot(ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS, mappings);
     }
 }
