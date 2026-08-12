@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import static me.criseda.autostopper.testing.ComponentTestUtils.plainText;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
@@ -74,8 +75,8 @@ public class AutoStopperCommandTest {
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("AutoStopper 1.1.2"));
-        assertTrue(messages.get(1).toString().contains("help"));
+        assertTrue(plainText(messages.get(0)).contains("AutoStopper 1.1.2"));
+        assertTrue(plainText(messages.get(1)).contains("help"));
     }
 
     @Test
@@ -92,8 +93,8 @@ public class AutoStopperCommandTest {
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("AutoStopper Unknown"));
-        assertTrue(messages.get(1).toString().contains("help"));
+        assertTrue(plainText(messages.get(0)).contains("AutoStopper Unknown"));
+        assertTrue(plainText(messages.get(1)).contains("help"));
     }
     
     @Test
@@ -110,11 +111,11 @@ public class AutoStopperCommandTest {
         verify(source, times(5)).sendMessage(messageCaptor.capture());
         
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("Help"));
-        assertTrue(messages.get(1).toString().contains("/autostopper"));
-        assertTrue(messages.get(2).toString().contains("help"));
-        assertTrue(messages.get(3).toString().contains("status"));
-        assertTrue(messages.get(4).toString().contains("reload"));
+        assertTrue(plainText(messages.get(0)).contains("Help"));
+        assertTrue(plainText(messages.get(1)).contains("/autostopper"));
+        assertTrue(plainText(messages.get(2)).contains("help"));
+        assertTrue(plainText(messages.get(3)).contains("status"));
+        assertTrue(plainText(messages.get(4)).contains("reload"));
     }
 
     @Test
@@ -126,11 +127,11 @@ public class AutoStopperCommandTest {
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(3)).sendMessage(messageCaptor.capture());
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("Help"));
-        assertTrue(messages.get(1).toString().contains("/autostopper"));
-        assertTrue(messages.get(2).toString().contains("help"));
-        assertTrue(messages.stream().noneMatch(message -> message.toString().contains("status")));
-        assertTrue(messages.stream().noneMatch(message -> message.toString().contains("reload")));
+        assertTrue(plainText(messages.get(0)).contains("Help"));
+        assertTrue(plainText(messages.get(1)).contains("/autostopper"));
+        assertTrue(plainText(messages.get(2)).contains("help"));
+        assertTrue(messages.stream().noneMatch(message -> plainText(message).contains("status")));
+        assertTrue(messages.stream().noneMatch(message -> plainText(message).contains("reload")));
     }
     
     @Test
@@ -158,12 +159,12 @@ public class AutoStopperCommandTest {
         verify(source, times(3)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("Status"));
-        assertTrue(messages.get(1).toString().contains("server1"));
-        assertTrue(messages.get(1).toString().contains("Running"));
-        assertTrue(messages.get(1).toString().contains("5 minutes"));
-        assertTrue(messages.get(2).toString().contains("server2"));
-        assertTrue(messages.get(2).toString().contains("Stopped"));
+        assertTrue(plainText(messages.get(0)).contains("Status"));
+        assertTrue(plainText(messages.get(1)).contains("server1"));
+        assertTrue(plainText(messages.get(1)).contains("Running"));
+        assertTrue(plainText(messages.get(1)).contains("5 minutes"));
+        assertTrue(plainText(messages.get(2)).contains("server2"));
+        assertTrue(plainText(messages.get(2)).contains("Stopped"));
     }
     
     @Test
@@ -188,7 +189,7 @@ public class AutoStopperCommandTest {
         verify(source, times(2)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(1).toString().contains("No activity recorded"));
+        assertTrue(plainText(messages.get(1)).contains("No activity recorded"));
     }
     
     @Test
@@ -217,11 +218,11 @@ public class AutoStopperCommandTest {
         verify(source, times(6)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(1).toString().contains("Missing"));
-        assertTrue(messages.get(2).toString().contains("Inaccessible"));
-        assertTrue(messages.get(3).toString().contains("Timed out"));
-        assertTrue(messages.get(4).toString().contains("Failed"));
-        assertTrue(messages.get(5).toString().contains("No container mapping"));
+        assertTrue(plainText(messages.get(1)).contains("Missing"));
+        assertTrue(plainText(messages.get(2)).contains("Inaccessible"));
+        assertTrue(plainText(messages.get(3)).contains("Timed out"));
+        assertTrue(plainText(messages.get(4)).contains("Failed"));
+        assertTrue(plainText(messages.get(5)).contains("No container mapping"));
     }
 
     @Test
@@ -244,7 +245,7 @@ public class AutoStopperCommandTest {
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(1).toString().contains("Could not collect server statuses"));
+        assertTrue(plainText(messages.get(1)).contains("Could not collect server statuses"));
     }
 
     @Test
@@ -281,7 +282,7 @@ public class AutoStopperCommandTest {
         command.execute(invocation);
 
         verify(serverManager).getStatusesAsync(snapshot);
-        verify(source).sendMessage(argThat(message -> message.toString().contains("Status")));
+        verify(source).sendMessage(argThat(message -> plainText(message).contains("Status")));
     }
     
     @Test
@@ -305,8 +306,8 @@ public class AutoStopperCommandTest {
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(messages.get(0).toString().contains("Reloading"));
-        assertTrue(messages.get(1).toString().contains("reloaded successfully"));
+        assertTrue(plainText(messages.get(0)).contains("Reloading"));
+        assertTrue(plainText(messages.get(1)).contains("reloaded successfully"));
     }
 
     @Test
@@ -324,8 +325,8 @@ public class AutoStopperCommandTest {
         verify(activityTracker, never()).reconcileConfig(any(), any());
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(2)).sendMessage(messageCaptor.capture());
-        assertTrue(messageCaptor.getAllValues().get(1).toString().contains("reload failed"));
-        assertTrue(messageCaptor.getAllValues().get(1).toString().contains("monitored_servers[0].server"));
+        assertTrue(plainText(messageCaptor.getAllValues().get(1)).contains("reload failed"));
+        assertTrue(plainText(messageCaptor.getAllValues().get(1)).contains("monitored_servers[0].server"));
     }
 
     @Test
@@ -379,7 +380,7 @@ public class AutoStopperCommandTest {
         verify(source).sendMessage(messageCaptor.capture());
         
         // Now we expect the "Unknown command" message
-        assertTrue(messageCaptor.getValue().toString().contains("Unknown command"));
+        assertTrue(plainText(messageCaptor.getValue()).contains("Unknown command"));
     }
     
     @Test
@@ -453,7 +454,7 @@ public class AutoStopperCommandTest {
     private void assertPermissionDenied(String action) {
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source).sendMessage(messageCaptor.capture());
-        String message = messageCaptor.getValue().toString();
+        String message = plainText(messageCaptor.getValue());
         assertTrue(message.contains("permission"));
         assertTrue(message.contains(action));
         assertFalse(message.contains("Docker"));

@@ -8,9 +8,9 @@ import me.criseda.autostopper.AutoStopperPlugin;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.messages.AutoStopperMessages;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
-import net.kyori.adventure.text.Component;
 
 import java.util.Optional;
 import java.util.Set;
@@ -57,14 +57,14 @@ public class ServerPreConnectListener {
 
         AtomicBoolean isStarting = serverManager.getServerStartingStatus(serverName);
         if (isStarting.get()) {
-            player.sendMessage(Component.text("§eServer is already being started, please wait..."));
+            player.sendMessage(AutoStopperMessages.serverAlreadyStarting());
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
             return;
         }
 
         if (!isStarting.compareAndSet(false, true)) {
             // Race condition hit: someone else started it just now
-            player.sendMessage(Component.text("§eServer is being started by another request, please wait..."));
+            player.sendMessage(AutoStopperMessages.serverStartingFromAnotherRequest());
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
             return;
         }
@@ -83,19 +83,17 @@ public class ServerPreConnectListener {
         String serverName = mapping.serverName();
         if (error != null) {
             if (error instanceof AutoStopperExecutor.SaturationException) {
-                player.sendMessage(Component
-                        .text("§cAutoStopper is overloaded right now; please try again in a moment."));
+                player.sendMessage(AutoStopperMessages.overloaded());
             } else {
                 plugin.getLogger().error("Error while checking status for server {}", serverName, error);
-                player.sendMessage(Component
-                        .text("§cError checking status of server §e" + serverName + "§c."));
+                player.sendMessage(AutoStopperMessages.statusCheckError(serverName));
             }
             releaseStarting(serverName, isStarting);
             return;
         }
 
         if (status.isEmpty()) {
-            player.sendMessage(Component.text("§cServer §e" + serverName + "§c has no container mapping."));
+            player.sendMessage(AutoStopperMessages.noContainerMapping(serverName));
             releaseStarting(serverName, isStarting);
             return;
         }
@@ -112,24 +110,19 @@ public class ServerPreConnectListener {
                 startServerForPlayer(player, targetServer, mapping, isStarting);
                 break;
             case MISSING:
-                player.sendMessage(Component
-                        .text("§cThe container for server §e" + serverName + "§c does not exist."));
+                player.sendMessage(AutoStopperMessages.containerMissing(serverName));
                 releaseStarting(serverName, isStarting);
                 break;
             case INACCESSIBLE:
-                player.sendMessage(Component
-                        .text("§cCannot reach the Docker daemon to manage server §e" + serverName + "§c."));
+                player.sendMessage(AutoStopperMessages.dockerUnavailable("manage", serverName));
                 releaseStarting(serverName, isStarting);
                 break;
             case TIMED_OUT:
-                player.sendMessage(Component
-                        .text("§cCould not check the status of server §e" + serverName
-                                + "§c in time. Try again."));
+                player.sendMessage(AutoStopperMessages.statusCheckTimedOut(serverName));
                 releaseStarting(serverName, isStarting);
                 break;
             case FAILED:
-                player.sendMessage(Component
-                        .text("§cCould not check the status of server §e" + serverName + "§c."));
+                player.sendMessage(AutoStopperMessages.statusCheckFailed(serverName));
                 releaseStarting(serverName, isStarting);
                 break;
         }
@@ -138,17 +131,16 @@ public class ServerPreConnectListener {
     private void startServerForPlayer(Player player, RegisteredServer targetServer, ServerMapping mapping,
             AtomicBoolean isStarting) {
         String serverName = mapping.serverName();
-        player.sendMessage(Component.text("§eServer is currently offline. Starting it up for you..."));
+        player.sendMessage(AutoStopperMessages.serverOfflineStarting());
 
         CompletableFuture<ContainerStatus> startFuture = serverManager.startServerAsync(mapping);
         startFuture.whenComplete((startResult, error) -> {
             if (error != null) {
                 if (error instanceof AutoStopperExecutor.SaturationException) {
-                    player.sendMessage(Component
-                            .text("§cAutoStopper is overloaded right now; please try again in a moment."));
+                    player.sendMessage(AutoStopperMessages.overloaded());
                 } else {
                     plugin.getLogger().error("Error while starting server {}", serverName, error);
-                    player.sendMessage(Component.text("§cError starting server §e" + serverName + "§c."));
+                    player.sendMessage(AutoStopperMessages.startError(serverName));
                 }
                 releaseStarting(serverName, isStarting);
                 return;
@@ -162,19 +154,16 @@ public class ServerPreConnectListener {
 
             switch (startResult) {
                 case MISSING:
-                    player.sendMessage(Component
-                            .text("§cThe container for server §e" + serverName + "§c does not exist."));
+                    player.sendMessage(AutoStopperMessages.containerMissing(serverName));
                     break;
                 case INACCESSIBLE:
-                    player.sendMessage(Component
-                            .text("§cCannot reach the Docker daemon to start server §e" + serverName + "§c."));
+                    player.sendMessage(AutoStopperMessages.dockerUnavailable("start", serverName));
                     break;
                 case TIMED_OUT:
-                    player.sendMessage(Component
-                            .text("§cTimed out starting server §e" + serverName + "§c. Try again."));
+                    player.sendMessage(AutoStopperMessages.startTimedOut(serverName));
                     break;
                 default:
-                    player.sendMessage(Component.text("§cFailed to start server §e" + serverName));
+                    player.sendMessage(AutoStopperMessages.startFailed(serverName));
                     break;
             }
             releaseStarting(serverName, isStarting);
@@ -193,20 +182,17 @@ public class ServerPreConnectListener {
                         plugin.getLogger().error("Error while waiting for server {} to become ready",
                                 serverName, error);
                     }
-                    player.sendMessage(Component
-                            .text("§cServer §e" + serverName + "§c may not be fully ready yet."));
+                    player.sendMessage(AutoStopperMessages.serverNotReady(serverName));
                     return;
                 }
 
                 if (ready) {
-                    player.sendMessage(Component.text("§aServer §e" + serverName + "§a is now ready!"));
+                    player.sendMessage(AutoStopperMessages.serverReady(serverName));
                     activityTracker.updateActivity(serverName);
                     reconnectPlayer(player, targetServer, serverName);
                 } else {
-                    player.sendMessage(Component
-                            .text("§cServer §e" + serverName + "§c may not be fully ready yet."));
-                    player.sendMessage(
-                            Component.text("§eTry again in a moment with §b/server " + serverName));
+                    player.sendMessage(AutoStopperMessages.serverNotReady(serverName));
+                    player.sendMessage(AutoStopperMessages.retryServerCommand(serverName));
                 }
             } finally {
                 releaseStarting(serverName, isStarting);
@@ -235,7 +221,7 @@ public class ServerPreConnectListener {
         } catch (RuntimeException error) {
             reconnectPermits.remove(permit);
             plugin.getLogger().error("Error creating reconnect request for server {}", serverName, error);
-            player.sendMessage(Component.text("§cCould not connect you to server §e" + serverName + "§c."));
+            player.sendMessage(AutoStopperMessages.connectionFailed(serverName));
         }
     }
 

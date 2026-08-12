@@ -1,0 +1,247 @@
+package me.criseda.autostopper.messages;
+
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+
+public final class AutoStopperMessages {
+    static final NamedTextColor BRAND_COLOR = NamedTextColor.GOLD;
+    static final NamedTextColor COMMAND_COLOR = NamedTextColor.AQUA;
+    static final NamedTextColor ARGUMENT_COLOR = NamedTextColor.YELLOW;
+    static final NamedTextColor NEUTRAL_COLOR = NamedTextColor.GRAY;
+    static final NamedTextColor SUCCESS_COLOR = NamedTextColor.GREEN;
+    static final NamedTextColor WARNING_COLOR = NamedTextColor.YELLOW;
+    static final NamedTextColor ERROR_COLOR = NamedTextColor.RED;
+
+    private static final Component PREFIX = Component.text("[AutoStopper] ", BRAND_COLOR);
+
+    private AutoStopperMessages() {
+    }
+
+    public static Component pluginInfo(String version) {
+        return Component.text()
+                .append(Component.text("AutoStopper ", BRAND_COLOR))
+                .append(argument(version))
+                .append(Component.text(" - ", NEUTRAL_COLOR))
+                .append(Component.text("Server Auto-Stop Plugin", ARGUMENT_COLOR))
+                .build();
+    }
+
+    public static Component helpHint() {
+        return Component.text()
+                .append(Component.text("Use ", NEUTRAL_COLOR))
+                .append(command("/autostopper help"))
+                .append(Component.text(" for more information", NEUTRAL_COLOR))
+                .build();
+    }
+
+    public static Component unknownCommand() {
+        return prefixed()
+                .append(Component.text("Unknown command. Use ", ERROR_COLOR))
+                .append(command("/autostopper help"))
+                .append(Component.text(" for help.", ERROR_COLOR))
+                .build();
+    }
+
+    public static Component helpHeader() {
+        return Component.text("AutoStopper Help:", BRAND_COLOR).decorate(TextDecoration.BOLD);
+    }
+
+    public static Component helpEntry(String commandText, String description) {
+        return Component.text()
+                .append(command(commandText))
+                .append(Component.text(" - " + description, NEUTRAL_COLOR))
+                .build();
+    }
+
+    public static Component statusHeader() {
+        return Component.text("AutoStopper Server Status:", BRAND_COLOR).decorate(TextDecoration.BOLD);
+    }
+
+    public static Component statusCollectionFailed() {
+        return error("Could not collect server statuses.");
+    }
+
+    public static Component statusNoMapping(String serverName) {
+        return statusLine(serverName, "No container mapping", ERROR_COLOR, null);
+    }
+
+    public static Component statusRunning(String serverName, Long minutesSinceActivity) {
+        String detail = minutesSinceActivity == null
+                ? "No activity recorded"
+                : minutesSinceActivity + " minutes since last activity";
+        return statusLine(serverName, "Running", SUCCESS_COLOR, detail);
+    }
+
+    public static Component statusStopped(String serverName) {
+        return statusLine(serverName, "Stopped", ERROR_COLOR, null);
+    }
+
+    public static Component statusMissing(String serverName) {
+        return statusLine(serverName, "Missing", ERROR_COLOR, "container does not exist");
+    }
+
+    public static Component statusInaccessible(String serverName) {
+        return statusLine(serverName, "Inaccessible", ERROR_COLOR, "Docker daemon unreachable");
+    }
+
+    public static Component statusTimedOut(String serverName) {
+        return statusLine(serverName, "Timed out", WARNING_COLOR,
+                "status check did not respond in time");
+    }
+
+    public static Component statusFailed(String serverName) {
+        return statusLine(serverName, "Failed", ERROR_COLOR, "status check failed");
+    }
+
+    public static Component reloadStarted() {
+        return progress("Reloading AutoStopper configuration...");
+    }
+
+    public static Component reloadFailed(String errorSummary) {
+        return prefixed()
+                .append(Component.text("Configuration reload failed: ", ERROR_COLOR))
+                .append(argument(errorSummary))
+                .build();
+    }
+
+    public static Component reloadSucceeded() {
+        return success("Configuration reloaded successfully!");
+    }
+
+    public static Component permissionDenied(String action) {
+        return prefixed()
+                .append(Component.text("You do not have permission to ", ERROR_COLOR))
+                .append(Component.text(action, ERROR_COLOR))
+                .append(Component.text(".", ERROR_COLOR))
+                .build();
+    }
+
+    public static Component serverAlreadyStarting() {
+        return progress("Server is already being started, please wait...");
+    }
+
+    public static Component serverStartingFromAnotherRequest() {
+        return progress("Server is being started by another request, please wait...");
+    }
+
+    public static Component overloaded() {
+        return warning("AutoStopper is overloaded right now; please try again in a moment.");
+    }
+
+    public static Component statusCheckError(String serverName) {
+        return serverMessage(ERROR_COLOR, "Error checking status of server ", serverName, ".");
+    }
+
+    public static Component noContainerMapping(String serverName) {
+        return serverMessage(ERROR_COLOR, "Server ", serverName, " has no container mapping.");
+    }
+
+    public static Component containerMissing(String serverName) {
+        return serverMessage(ERROR_COLOR, "The container for server ", serverName, " does not exist.");
+    }
+
+    public static Component dockerUnavailable(String operation, String serverName) {
+        return serverMessage(ERROR_COLOR, "Cannot reach the Docker daemon to " + operation + " server ",
+                serverName, ".");
+    }
+
+    public static Component statusCheckTimedOut(String serverName) {
+        return serverMessage(WARNING_COLOR, "Could not check the status of server ", serverName,
+                " in time. Try again.");
+    }
+
+    public static Component statusCheckFailed(String serverName) {
+        return serverMessage(ERROR_COLOR, "Could not check the status of server ", serverName, ".");
+    }
+
+    public static Component serverOfflineStarting() {
+        return progress("Server is currently offline. Starting it up for you...");
+    }
+
+    public static Component startError(String serverName) {
+        return serverMessage(ERROR_COLOR, "Error starting server ", serverName, ".");
+    }
+
+    public static Component startTimedOut(String serverName) {
+        return serverMessage(WARNING_COLOR, "Timed out starting server ", serverName, ". Try again.");
+    }
+
+    public static Component startFailed(String serverName) {
+        return serverMessage(ERROR_COLOR, "Failed to start server ", serverName, ".");
+    }
+
+    public static Component serverNotReady(String serverName) {
+        return serverMessage(WARNING_COLOR, "Server ", serverName, " may not be fully ready yet.");
+    }
+
+    public static Component serverReady(String serverName) {
+        return serverMessage(SUCCESS_COLOR, "Server ", serverName, " is now ready!");
+    }
+
+    public static Component retryServerCommand(String serverName) {
+        return prefixed()
+                .append(Component.text("Try again in a moment with ", WARNING_COLOR))
+                .append(command("/server "))
+                .append(argument(serverName))
+                .build();
+    }
+
+    public static Component connectionFailed(String serverName) {
+        return serverMessage(ERROR_COLOR, "Could not connect you to server ", serverName, ".");
+    }
+
+    private static Component statusLine(String serverName, String status,
+            NamedTextColor statusColor, String detail) {
+        TextComponent.Builder message = Component.text()
+                .append(argument(serverName))
+                .append(Component.text(": ", NEUTRAL_COLOR))
+                .append(Component.text(status, statusColor).decorate(TextDecoration.BOLD));
+        if (detail != null) {
+            message.append(Component.text(" - " + detail, NEUTRAL_COLOR));
+        }
+        return message.build();
+    }
+
+    private static Component serverMessage(NamedTextColor color, String before,
+            String serverName, String after) {
+        return prefixed()
+                .append(Component.text(before, color))
+                .append(argument(serverName))
+                .append(Component.text(after, color))
+                .build();
+    }
+
+    private static Component progress(String content) {
+        return message(content, WARNING_COLOR);
+    }
+
+    private static Component warning(String content) {
+        return message(content, WARNING_COLOR);
+    }
+
+    private static Component success(String content) {
+        return message(content, SUCCESS_COLOR);
+    }
+
+    private static Component error(String content) {
+        return message(content, ERROR_COLOR);
+    }
+
+    private static Component message(String content, NamedTextColor color) {
+        return prefixed().append(Component.text(content, color)).build();
+    }
+
+    private static TextComponent.Builder prefixed() {
+        return Component.text().append(PREFIX);
+    }
+
+    private static Component command(String content) {
+        return Component.text(content, COMMAND_COLOR);
+    }
+
+    private static Component argument(String content) {
+        return Component.text(content, ARGUMENT_COLOR);
+    }
+}
