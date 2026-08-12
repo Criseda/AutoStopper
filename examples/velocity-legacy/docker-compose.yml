@@ -1,0 +1,56 @@
+# AutoStopper example - legacy support line (Java 21 + Velocity 3.x)
+# Matches the support matrix defined in issue #3. The mc-proxy image Java
+# version and the pinned Velocity build must be upgraded together.
+services:
+  velocity:
+    image: itzg/mc-proxy:2026.8.0-java21
+    container_name: velocity-server
+    environment:
+      TYPE: "VELOCITY"
+      ONLINE_MODE: "true"
+      VELOCITY_VERSION: "3.5.1"
+      VELOCITY_BUILD_ID: "615"
+      REPLACE_ENV_VARIABLES: "true"
+    ports:
+      - "25565:25577"
+    volumes:
+      - ./velocity_server:/server
+      - /var/run/docker.sock:/var/run/docker.sock  # Required for AutoStopper
+      - ./docker-entrypoint.sh:/docker-entrypoint.sh:ro
+    networks:
+      - mc-network
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/docker-entrypoint.sh"]
+
+  # Example Minecraft servers that can be managed by AutoStopper
+  purpur:
+    image: itzg/minecraft-server:java21
+    container_name: purpur-server
+    environment:
+      TYPE: "PURPUR"
+      VERSION: "1.21.4"
+      EULA: "TRUE"
+      ONLINE_MODE: "FALSE"
+    volumes:
+      - ./purpur_data:/data
+    networks:
+      - mc-network
+    restart: "no"  # Important: Let AutoStopper manage the container lifecycle
+
+  fabric:
+    image: itzg/minecraft-server:java21
+    container_name: fabric-server
+    environment:
+      TYPE: "FABRIC"
+      VERSION: "1.21.4"
+      EULA: "TRUE"
+      ONLINE_MODE: "FALSE"
+    volumes:
+      - ./fabric_data:/data
+    networks:
+      - mc-network
+    restart: "no"  # Important: Let AutoStopper manage the container lifecycle
+
+networks:
+  mc-network:
+    driver: bridge
