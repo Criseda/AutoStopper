@@ -166,9 +166,11 @@ public class AutoStopperExecutorTest {
     @Test
     public void testCancellingQueuedTaskFreesQueueCapacity() throws InterruptedException {
         AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        CountDownLatch workerStarted = new CountDownLatch(1);
         CountDownLatch releaseWorker = new CountDownLatch(1);
         try {
             executor.supply(() -> {
+                workerStarted.countDown();
                 try {
                     releaseWorker.await();
                 } catch (InterruptedException e) {
@@ -176,6 +178,7 @@ public class AutoStopperExecutorTest {
                 }
                 return "running";
             });
+            assertTrue(workerStarted.await(2, TimeUnit.SECONDS));
 
             CompletableFuture<String> cancelled = executor.supply(() -> "cancelled");
             assertTrue(cancelled.cancel(false));
