@@ -9,7 +9,6 @@ import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 
 import me.criseda.autostopper.commands.AutoStopperCommand;
-import me.criseda.autostopper.commands.ServerCommandInterceptor;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.listeners.ServerPreConnectListener;
@@ -111,23 +110,6 @@ public class AutoStopperPlugin {
 		server.getCommandManager().register(autoStopperMeta,
 			new AutoStopperCommand(config, serverManager, activityTracker, pluginContainer));
 		logger.info("Registered command: /autostopper");
-		
-		// Register server command interceptor
-		try {
-			server.getCommandManager().unregister("server");
-			logger.info("Unregistered original server command");
-			
-			CommandMeta serverMeta = server.getCommandManager().metaBuilder("server")
-				.aliases("join", "s")
-				.plugin(this)
-				.build();
-				
-			server.getCommandManager().register(serverMeta,
-				new ServerCommandInterceptor.ServerCommand(server, this, serverManager, activityTracker));
-			logger.info("Registered command: /server");
-		} catch (Exception e) {
-			logger.error("Failed to register server command", e);
-		}
 		
 		logger.info("AutoStopper commands registered successfully!");
 	}

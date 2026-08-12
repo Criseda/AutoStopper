@@ -132,10 +132,27 @@ public class ServerManagerTest {
         Map<String, String> mapping = new HashMap<>();
         mapping.put("server1", "container1");
         when(config.getServerToContainerMap()).thenReturn(mapping);
-        
+
         // Execute & Verify
         assertEquals("container1", serverManager.getContainerName("server1"));
-        assertEquals("server2", serverManager.getContainerName("server2")); // Default behavior
+        assertNull(serverManager.getContainerName("server2"));
+    }
+
+    @Test
+    public void testUnmappedServerIsNeverInspectedStartedOrStopped() {
+        // Setup - no mapping for "server2"
+        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+
+        // Execute & Verify
+        assertFalse(serverManager.isServerRunning("server2"));
+        assertFalse(serverManager.startServer("server2"));
+        assertFalse(serverManager.stopServer("server2"));
+        assertFalse(serverManager.waitForServerReady("server2", 30));
+        verify(dockerManager, never()).isContainerRunning(anyString());
+        verify(dockerManager, never()).startContainer(anyString());
+        verify(dockerManager, never()).stopContainer(anyString());
+        verify(dockerManager, never()).waitForContainerReady(anyString(), anyInt(), anyString());
+        verify(logger, times(4)).warn(contains("No container mapped for server: server2"));
     }
     
     @Test
