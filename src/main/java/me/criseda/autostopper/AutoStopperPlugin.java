@@ -18,7 +18,7 @@ import me.criseda.autostopper.server.ServerManager;
 
 import org.slf4j.Logger;
 
-import javax.inject.Inject;
+import com.google.inject.Inject;
 import java.nio.file.Path;
 
 @Plugin(id = "autostopper", name = "AutoStopper", version = "1.1.2", authors = { "criseda" })

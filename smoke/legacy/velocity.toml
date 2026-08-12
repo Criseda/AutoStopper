@@ -1,0 +1,16 @@
+config-version = "2.7"
+bind = "0.0.0.0:25577"
+motd = "AutoStopper smoke test (legacy line)"
+show-max-players = 500
+online-mode = false
+forwarding-mode = "none"
+player-info-forwarding-mode = "none"
+ping-passthrough = "disabled"
+try-last-server = false
+
+[servers]
+try = []
+# no registered servers in the smoke test
+
+[forced-hosts]
+# no forced hosts configured

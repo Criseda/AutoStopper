@@ -1,0 +1,44 @@
+# AutoStopper smoke tests
+
+Verifies that the shaded plugin JAR builds and loads on the two supported
+Velocity runtime lines (see issue #3 and the README support matrix).
+
+| Profile  | JDK image             | Velocity runtime                 | SHA256 (Velocity jar)                                              |
+|----------|-----------------------|----------------------------------|--------------------------------------------------------------------|
+| legacy   | `eclipse-temurin:21-jre` | `velocity-3.5.1-615.jar`       | `b4e3164d...c6f0fb3`                                                |
+| current  | `eclipse-temurin:25-jre` | `velocity-4.1.0-SNAPSHOT-16.jar` | `aebade8b...c3e472f`                                                |
+
+Each stack runs a bare Velocity proxy with the freshly built AutoStopper jar
+in its `plugins/` directory. The test passes when the proxy log contains
+`AutoStopper plugin initialized!`.
+
+## Requirements
+
+- Docker (with Compose plugin)
+- A JDK 21+ for building (any JDK works; `mvn clean package` targets Java 21 bytecode)
+
+## Usage
+
+```powershell
+mvn clean package
+.\smoke\run-smoke.ps1            # run both profiles
+.\smoke\run-smoke.ps1 -Profile legacy
+.\smoke\run-smoke.ps1 -Profile current -KeepUp   # leave container running for inspection
+```
+
+The runner downloads the pinned Velocity jar (verifying its SHA256), copies the
+built plugin jar into the profile's `plugins/` directory, starts the compose
+stack, and polls the logs until the success marker or a timeout.
+
+## Moving the pinned versions
+
+1. Change the `Version`/`Build`/`Sha256` entries in `run-smoke.ps1`.
+2. Get the new SHA256 from the fill API
+   (`https://fill.papermc.io/v3/projects/velocity/versions/<version>/builds`).
+3. Delete the cached jar under `smoke\<profile>\runtime\` and re-run.
+
+## Scope
+
+These smoke tests prove the plugin loads and initializes on each runtime line.
+They do not exercise real Docker containers, Minecraft connections, or gameplay
+behavior; that is the release-gate end-to-end test tracked in issue #25.
