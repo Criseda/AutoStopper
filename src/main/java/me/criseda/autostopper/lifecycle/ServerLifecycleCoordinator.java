@@ -8,6 +8,7 @@ import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.messages.AutoStopperMessages;
+import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.readiness.ReadinessResult;
 import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
@@ -30,6 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.time.Instant;
 
 /**
  * Owns lifecycle state, the single in-flight startup operation, and connection waiters for every
@@ -216,6 +218,13 @@ public final class ServerLifecycleCoordinator {
                 transition(entry, result == ContainerStatus.STOPPED
                         ? ServerLifecycleState.STOPPED
                         : ServerLifecycleState.FAILED);
+                if (result == ContainerStatus.STOPPED) {
+                    entry.lastFailure = null;
+                } else {
+                    entry.lastFailure = failure("container stop",
+                            "container stop failed with " + result,
+                            "Check Docker access and container state, then allow the bounded retry or retry manually.");
+                }
                 return entry.retired && !entry.isBusy() ? null : entry;
             }
         });
@@ -245,6 +254,7 @@ public final class ServerLifecycleCoordinator {
                         || entry.state == ServerLifecycleState.FAILED) {
                     transition(entry, ServerLifecycleState.READY);
                 }
+                entry.lastFailure = null;
                 entry.readyConnectionSucceeded = true;
                 return entry;
             }
@@ -300,6 +310,16 @@ public final class ServerLifecycleCoordinator {
         }
         synchronized (entry) {
             return Optional.ofNullable(entry.lastConnectionOutcome);
+        }
+    }
+
+    public Optional<OperationalFailure> lastFailure(String serverName) {
+        LifecycleEntry entry = lifecycles.get(serverName);
+        if (entry == null) {
+            return Optional.empty();
+        }
+        synchronized (entry) {
+            return Optional.ofNullable(entry.lastFailure);
         }
     }
 
@@ -486,6 +506,13 @@ public final class ServerLifecycleCoordinator {
             transition(entry, outcome.ready ? ServerLifecycleState.READY : ServerLifecycleState.FAILED);
             if (outcome.ready) {
                 entry.readyConnectionSucceeded = false;
+                entry.lastFailure = null;
+            } else {
+                String detail = readinessFailure == null
+                        ? startupFailureDetail(outcome)
+                        : readinessFailure.playerDetail();
+                entry.lastFailure = failure("server startup", detail,
+                        startupRemediation(outcome));
             }
             waiters = new ArrayList<>(entry.waiters.values());
             if (!outcome.ready) {
@@ -603,6 +630,7 @@ public final class ServerLifecycleCoordinator {
             entry.lastConnectionOutcome = outcome;
             waiter.connectionFuture = null;
             if (outcome.isSuccessful()) {
+                entry.lastFailure = null;
                 entry.readyConnectionSucceeded = true;
                 if (entry.state == ServerLifecycleState.FAILED) {
                     transition(entry, ServerLifecycleState.READY);
@@ -613,6 +641,9 @@ public final class ServerLifecycleCoordinator {
                     && entry.waiters.isEmpty()
                     && !entry.readyConnectionSucceeded) {
                 transition(entry, ServerLifecycleState.FAILED);
+                entry.lastFailure = failure("player connection",
+                        "Velocity could not complete the backend connection: " + outcome,
+                        "Check the backend listener and Velocity server address, then retry.");
             }
         }
         waiter.future.complete(outcome);
@@ -728,6 +759,38 @@ public final class ServerLifecycleCoordinator {
         return current;
     }
 
+    private OperationalFailure failure(String context, String detail, String remediation) {
+        return new OperationalFailure(Instant.now(), context, detail, remediation);
+    }
+
+    private String startupFailureDetail(StartupOutcome outcome) {
+        return switch (outcome) {
+            case STATUS_NO_MAPPING -> "no active container mapping";
+            case STATUS_MISSING, START_MISSING -> "configured container does not exist";
+            case STATUS_INACCESSIBLE, START_INACCESSIBLE -> "Docker is unavailable";
+            case STATUS_TIMED_OUT, START_TIMED_OUT -> "Docker operation timed out";
+            case OVERLOADED -> "AutoStopper worker queue is saturated";
+            case CANCELLED -> "startup was cancelled";
+            case STATUS_FAILED, STATUS_ERROR, START_FAILED, START_ERROR -> "Docker operation failed";
+            case NOT_READY, READINESS_ERROR -> "server readiness check failed";
+            case READY_RUNNING, READY_AFTER_START -> throw new IllegalArgumentException("ready outcome is not a failure");
+        };
+    }
+
+    private String startupRemediation(StartupOutcome outcome) {
+        return switch (outcome) {
+            case STATUS_NO_MAPPING -> "Reload a valid monitored server mapping.";
+            case STATUS_MISSING, START_MISSING -> "Create the container or correct container_name, then retry.";
+            case STATUS_INACCESSIBLE, START_INACCESSIBLE -> "Restore Docker daemon and socket access, then retry.";
+            case STATUS_TIMED_OUT, START_TIMED_OUT -> "Check Docker daemon responsiveness and host load, then retry.";
+            case OVERLOADED -> "Wait for current AutoStopper operations to finish, then retry.";
+            case CANCELLED -> "Retry after the current reload or shutdown completes.";
+            case STATUS_FAILED, STATUS_ERROR, START_FAILED, START_ERROR -> "Review proxy logs and Docker state, then retry.";
+            case NOT_READY, READINESS_ERROR -> "Verify the configured readiness strategy and backend endpoint, then retry.";
+            case READY_RUNNING, READY_AFTER_START -> throw new IllegalArgumentException("ready outcome is not a failure");
+        };
+    }
+
     private void transition(LifecycleEntry entry, ServerLifecycleState next) {
         if (entry.state == next) {
             return;
@@ -781,6 +844,7 @@ public final class ServerLifecycleCoordinator {
         private CompletableFuture<StartupOutcome> startupFuture;
         private CompletableFuture<?> activeOperation;
         private ConnectionOutcome lastConnectionOutcome;
+        private OperationalFailure lastFailure;
         private boolean readyConnectionSucceeded;
         private boolean retired;
 

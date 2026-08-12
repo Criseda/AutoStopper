@@ -4,6 +4,9 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import me.criseda.autostopper.operational.OperationalFailure;
+import me.criseda.autostopper.operational.OperationalServerStatus;
+import me.criseda.autostopper.operational.OperationalState;
 
 public final class AutoStopperMessages {
     static final NamedTextColor BRAND_COLOR = NamedTextColor.GOLD;
@@ -95,6 +98,28 @@ public final class AutoStopperMessages {
         return statusLine(serverName, "Failed", ERROR_COLOR, "status check failed");
     }
 
+    public static Component operationalStatus(String serverName, OperationalServerStatus status,
+            Long minutesSinceActivity) {
+        StringBuilder detail = new StringBuilder();
+        if (status.waitingPlayers() > 0) {
+            detail.append(status.waitingPlayers()).append(" player(s) waiting");
+        }
+        if (status.state() == OperationalState.READY) {
+            appendDetail(detail, minutesSinceActivity == null
+                    ? "No activity recorded"
+                    : minutesSinceActivity + " minutes since last activity");
+        }
+        status.lastFailure().ifPresent(failure -> appendDetail(detail, failureDetail(failure)));
+        NamedTextColor color = switch (status.state()) {
+            case READY -> SUCCESS_COLOR;
+            case STARTING, STOPPING -> WARNING_COLOR;
+            case STOPPED -> NEUTRAL_COLOR;
+            case FAILED, DOCKER_UNAVAILABLE -> ERROR_COLOR;
+        };
+        return statusLine(serverName, status.state().name(), color,
+                detail.isEmpty() ? null : detail.toString());
+    }
+
     public static Component reloadStarted() {
         return progress("Reloading AutoStopper configuration...");
     }
@@ -108,6 +133,14 @@ public final class AutoStopperMessages {
 
     public static Component reloadSucceeded() {
         return success("Configuration reloaded successfully!");
+    }
+
+    public static Component preflightCompleted(int healthy, int degraded) {
+        if (degraded == 0) {
+            return success("Operational preflight passed for " + healthy + " mapping(s).");
+        }
+        return warning("Operational preflight found " + degraded + " degraded mapping(s); "
+                + "use /autostopper status for remediation.");
     }
 
     public static Component permissionDenied(String action) {
@@ -236,6 +269,18 @@ public final class AutoStopperMessages {
             message.append(Component.text(" - " + detail, NEUTRAL_COLOR));
         }
         return message.build();
+    }
+
+    private static String failureDetail(OperationalFailure failure) {
+        return "last failure " + failure.timestamp() + " during " + failure.context()
+                + ": " + failure.detail() + " Remediation: " + failure.remediation();
+    }
+
+    private static void appendDetail(StringBuilder target, String detail) {
+        if (!target.isEmpty()) {
+            target.append("; ");
+        }
+        target.append(detail);
     }
 
     private static Component serverMessage(NamedTextColor color, String before,
