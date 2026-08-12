@@ -9,10 +9,14 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 public class DockerManager {
     private static final Duration DEFAULT_COMMAND_TIMEOUT = Duration.ofSeconds(10);
+    private static final long READINESS_CLEANUP_GRACE_MILLIS = 250;
+    private static final int READINESS_EVENT_CAPACITY = 256;
 
     private final Logger logger;
     private final CommandRunner commandRunner;
@@ -162,53 +166,84 @@ public class DockerManager {
     }
 
     public boolean waitForContainerReady(String containerName, int timeoutSeconds, String... readyPatterns) {
+        if (timeoutSeconds <= 0) {
+            throw new IllegalArgumentException("timeoutSeconds must be positive");
+        }
         logger.info("Waiting for container {} to fully initialize...", containerName);
-        final long startTime = System.currentTimeMillis();
-        final long timeoutMillis = timeoutSeconds * 1000L;
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        boolean interrupted = false;
+        Process process = null;
+        Thread readerThread = null;
 
         try {
-            Process process = new ProcessBuilder("docker", "logs", "--follow", "--tail=0", containerName)
+            process = new ProcessBuilder("docker", "logs", "--follow", "--tail=0", containerName)
                     .redirectErrorStream(true)
                     .start();
 
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((System.currentTimeMillis() - startTime) < timeoutMillis) {
-                    if (reader.ready()) {
-                        line = reader.readLine();
-                        if (line == null) {
-                            break;
-                        }
+            BlockingQueue<LogEvent> events = new ArrayBlockingQueue<>(READINESS_EVENT_CAPACITY);
+            Process ownedProcess = process;
+            readerThread = new Thread(() -> readLogEvents(ownedProcess, events),
+                    "autostopper-readiness-" + containerName);
+            readerThread.setDaemon(true);
+            readerThread.start();
 
-                        for (String pattern : readyPatterns) {
-                            if (line.contains(pattern)) {
-                                logger.info("Container {} is ready (found: {})", containerName, pattern);
-                                terminateQuietly(process);
-                                return true;
-                            }
-                        }
-                    } else {
-                        try {
-                            Thread.sleep(100);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                        if (!process.isAlive()) {
-                            break;
-                        }
+            while (true) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    break;
+                }
+                LogEvent event = events.poll(remaining, TimeUnit.NANOSECONDS);
+                if (event == null) {
+                    break;
+                }
+                if (event.failure() != null) {
+                    logger.error("Error reading readiness logs for container {}", containerName, event.failure());
+                    return false;
+                }
+                if (event.endOfStream()) {
+                    logger.warn("Container {} stopped producing logs before it became ready", containerName);
+                    return false;
+                }
+                for (String pattern : readyPatterns) {
+                    if (event.line().contains(pattern)) {
+                        logger.info("Container {} is ready (found: {})", containerName, pattern);
+                        return true;
                     }
                 }
-            } finally {
-                terminateQuietly(process);
             }
-
             logger.warn("Timeout waiting for container {}", containerName);
+            return false;
+        } catch (InterruptedException e) {
+            interrupted = true;
+            logger.warn("Interrupted while waiting for container {} to become ready", containerName);
             return false;
         } catch (IOException e) {
             logger.error("Error waiting for container {} ready", containerName, e);
             return false;
+        } finally {
+            if (process != null) {
+                terminateQuietly(process);
+                closeProcessOutput(process);
+            }
+            joinReaderQuietly(readerThread);
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void readLogEvents(Process process, BlockingQueue<LogEvent> events) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                events.put(LogEvent.line(line));
+            }
+            events.put(LogEvent.end());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (IOException e) {
+            events.offer(LogEvent.failure(e));
         }
     }
 
@@ -224,12 +259,46 @@ public class DockerManager {
     private void terminateQuietly(Process process) {
         process.destroy();
         try {
-            if (!process.waitFor(1, TimeUnit.SECONDS)) {
+            if (!process.waitFor(READINESS_CLEANUP_GRACE_MILLIS, TimeUnit.MILLISECONDS)) {
                 process.destroyForcibly();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             process.destroyForcibly();
+        }
+    }
+
+    private void closeProcessOutput(Process process) {
+        try {
+            process.getInputStream().close();
+        } catch (IOException ignored) {
+            // Process teardown closes this stream during normal operation.
+        }
+    }
+
+    private void joinReaderQuietly(Thread readerThread) {
+        if (readerThread == null) {
+            return;
+        }
+        readerThread.interrupt();
+        try {
+            readerThread.join(READINESS_CLEANUP_GRACE_MILLIS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private record LogEvent(String line, boolean endOfStream, IOException failure) {
+        private static LogEvent line(String line) {
+            return new LogEvent(line, false, null);
+        }
+
+        private static LogEvent end() {
+            return new LogEvent("", true, null);
+        }
+
+        private static LogEvent failure(IOException failure) {
+            return new LogEvent("", false, failure);
         }
     }
 }

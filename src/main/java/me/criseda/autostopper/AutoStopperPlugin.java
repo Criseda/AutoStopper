@@ -57,7 +57,7 @@ public class AutoStopperPlugin {
 		this.serverManager = createServerManager(config, executor);
 		
 		// Initialize activity tracking but DON'T start the inactivity check yet
-		this.activityTracker = createActivityTracker(config, serverManager);
+		this.activityTracker = createActivityTracker(config, serverManager, executor);
 	
 		// Register event listeners
 		server.getEventManager().register(this, new ConnectionListener(activityTracker));
@@ -113,8 +113,9 @@ public class AutoStopperPlugin {
         return new ServerManager(server, logger, config, dockerManager, executor);
     }
 
-    protected ActivityTracker createActivityTracker(AutoStopperConfig config, ServerManager serverManager) {
-        return new ActivityTracker(server, logger, config, serverManager, this);
+    protected ActivityTracker createActivityTracker(AutoStopperConfig config, ServerManager serverManager,
+            AutoStopperExecutor executor) {
+        return new ActivityTracker(server, logger, config, serverManager, executor, this);
     }
 
 	private void registerCommands() {
