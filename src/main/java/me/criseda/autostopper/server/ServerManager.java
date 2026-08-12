@@ -5,10 +5,14 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigSnapshot;
+import me.criseda.autostopper.config.ReadinessSettings;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerManager;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.readiness.ReadinessResult;
+import me.criseda.autostopper.readiness.ServerReadinessChecker;
+import me.criseda.autostopper.readiness.SocketMinecraftStatusProbe;
 
 import org.slf4j.Logger;
 
@@ -24,14 +28,22 @@ public class ServerManager {
     private final AutoStopperConfig config;
     private final DockerManager dockerManager;
     private final AutoStopperExecutor executor;
+    private final ServerReadinessChecker readinessChecker;
 
     public ServerManager(ProxyServer server, Logger logger, AutoStopperConfig config, DockerManager dockerManager,
             AutoStopperExecutor executor) {
+        this(server, logger, config, dockerManager, executor,
+                new ServerReadinessChecker(logger, dockerManager, new SocketMinecraftStatusProbe()));
+    }
+
+    ServerManager(ProxyServer server, Logger logger, AutoStopperConfig config, DockerManager dockerManager,
+            AutoStopperExecutor executor, ServerReadinessChecker readinessChecker) {
         this.server = server;
         this.logger = logger;
         this.config = config;
         this.dockerManager = dockerManager;
         this.executor = executor;
+        this.readinessChecker = readinessChecker;
     }
 
     public Optional<ContainerStatus> getServerStatus(String serverName) {
@@ -76,22 +88,17 @@ public class ServerManager {
         return result;
     }
 
-    public boolean waitForServerReady(String serverName, int timeoutSeconds) {
+    public ReadinessResult waitForServerReady(String serverName) {
         Optional<ServerMapping> mapping = getServerMapping(serverName);
         if (mapping.isEmpty()) {
             logger.warn("No container mapped for server: {}", serverName);
-            return false;
+            return ReadinessResult.failure(ReadinessResult.Outcome.CONTAINER_MISSING, 0, null);
         }
-        return waitForServerReady(mapping.get(), timeoutSeconds);
+        return waitForServerReady(mapping.get());
     }
 
-    public boolean waitForServerReady(ServerMapping mapping, int timeoutSeconds) {
-        return dockerManager.waitForContainerReady(
-                mapping.containerName(),
-                timeoutSeconds,
-                "Done (",
-                "] Done (",
-                "For help, type \"help\"");
+    public ReadinessResult waitForServerReady(ServerMapping mapping) {
+        return readinessChecker.awaitReady(mapping, resolveReadinessTarget(mapping).orElse(null));
     }
 
     public boolean isMonitoredServer(String serverName) {
@@ -126,12 +133,12 @@ public class ServerManager {
         return executor.supply(() -> startServer(mapping));
     }
 
-    public CompletableFuture<Boolean> waitForServerReadyAsync(String serverName, int timeoutSeconds) {
-        return executor.supply(() -> waitForServerReady(serverName, timeoutSeconds));
+    public CompletableFuture<ReadinessResult> waitForServerReadyAsync(String serverName) {
+        return executor.supply(() -> waitForServerReady(serverName));
     }
 
-    public CompletableFuture<Boolean> waitForServerReadyAsync(ServerMapping mapping, int timeoutSeconds) {
-        return executor.supply(() -> waitForServerReady(mapping, timeoutSeconds));
+    public CompletableFuture<ReadinessResult> waitForServerReadyAsync(ServerMapping mapping) {
+        return executor.supply(() -> waitForServerReady(mapping));
     }
 
     public CompletableFuture<Map<String, Optional<ContainerStatus>>> getStatusesAsync(ConfigSnapshot snapshot) {
@@ -175,5 +182,19 @@ public class ServerManager {
             }
         });
         return result;
+    }
+
+    private Optional<ReadinessSettings.Target> resolveReadinessTarget(ServerMapping mapping) {
+        if (!mapping.readiness().strategy().usesMinecraftStatus()) {
+            return Optional.empty();
+        }
+        Optional<ReadinessSettings.Target> configured = mapping.readiness().explicitTarget();
+        if (configured.isPresent()) {
+            return configured;
+        }
+        return getServer(mapping.serverName())
+                .map(registered -> registered.getServerInfo().getAddress())
+                .map(address -> new ReadinessSettings.Target(
+                        address.getHostString(), address.getPort()));
     }
 }

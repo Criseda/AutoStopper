@@ -184,7 +184,15 @@ public final class AutoStopperMessages {
     }
 
     public static Component serverNotReady(String serverName) {
-        return serverMessage(WARNING_COLOR, "Server ", serverName, " may not be fully ready yet.");
+        return serverMessage(WARNING_COLOR, "Server ", serverName, " is not ready.");
+    }
+
+    public static Component serverNotReady(String serverName, String detail) {
+        return prefixed()
+                .append(Component.text("Server ", WARNING_COLOR))
+                .append(argument(serverName))
+                .append(Component.text(" is not ready. " + detail, WARNING_COLOR))
+                .build();
     }
 
     public static Component serverReady(String serverName) {

@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -150,6 +151,7 @@ public class AutoStopperConfig {
 
             String serverName = parseName(mapping.get("server_name"), path + ".server_name", errors);
             String containerName = parseName(mapping.get("container_name"), path + ".container_name", errors);
+            ReadinessSettings readiness = parseReadiness(mapping.get("readiness"), path + ".readiness", errors);
             if (serverName == null || containerName == null) {
                 continue;
             }
@@ -162,9 +164,114 @@ public class AutoStopperConfig {
             if (!containerNames.add(containerName)) {
                 errors.add(path + ".container_name: duplicate container mapping '" + containerName + "'");
             }
-            mappings.add(new ServerMapping(serverName, containerName));
+            mappings.add(new ServerMapping(serverName, containerName, readiness));
         }
         return mappings;
+    }
+
+    private ReadinessSettings parseReadiness(Object value, String path, List<String> errors) {
+        ReadinessSettings defaults = ReadinessSettings.defaults();
+        if (value == null) {
+            return defaults;
+        }
+        if (!(value instanceof Map<?, ?> readiness)) {
+            errors.add(path + ": expected a mapping");
+            return defaults;
+        }
+
+        ReadinessStrategy strategy = parseReadinessStrategy(readiness.get("strategy"), path + ".strategy", errors);
+        String targetHost = parseOptionalName(readiness.get("target_host"), path + ".target_host", errors);
+        Integer targetPort = parseOptionalPositiveInteger(
+                readiness.get("target_port"), path + ".target_port", 65_535, errors);
+        if ((targetHost == null) != (targetPort == null)) {
+            errors.add(path + ": target_host and target_port must be configured together");
+            targetHost = null;
+            targetPort = null;
+        }
+
+        int intervalMillis = parsePositiveInteger(
+                readiness.get("probe_interval_millis"),
+                path + ".probe_interval_millis",
+                ReadinessSettings.DEFAULT_PROBE_INTERVAL_MILLIS,
+                Integer.MAX_VALUE,
+                errors);
+        int timeoutSeconds = parsePositiveInteger(
+                readiness.get("timeout_seconds"),
+                path + ".timeout_seconds",
+                ReadinessSettings.DEFAULT_TIMEOUT_SECONDS,
+                Integer.MAX_VALUE,
+                errors);
+        int connectTimeoutMillis = parsePositiveInteger(
+                readiness.get("connect_timeout_millis"),
+                path + ".connect_timeout_millis",
+                ReadinessSettings.DEFAULT_CONNECT_TIMEOUT_MILLIS,
+                Integer.MAX_VALUE,
+                errors);
+        int readTimeoutMillis = parsePositiveInteger(
+                readiness.get("read_timeout_millis"),
+                path + ".read_timeout_millis",
+                ReadinessSettings.DEFAULT_READ_TIMEOUT_MILLIS,
+                Integer.MAX_VALUE,
+                errors);
+
+        return new ReadinessSettings(
+                strategy,
+                targetHost,
+                targetPort,
+                Duration.ofMillis(intervalMillis),
+                Duration.ofSeconds(timeoutSeconds),
+                Duration.ofMillis(connectTimeoutMillis),
+                Duration.ofMillis(readTimeoutMillis));
+    }
+
+    private ReadinessStrategy parseReadinessStrategy(Object value, String path, List<String> errors) {
+        if (value == null) {
+            return ReadinessStrategy.MINECRAFT_STATUS;
+        }
+        if (!(value instanceof String name)) {
+            errors.add(path + ": expected one of minecraft_status, docker_health, docker_health_or_status");
+            return ReadinessStrategy.MINECRAFT_STATUS;
+        }
+        return ReadinessStrategy.fromConfigValue(name).orElseGet(() -> {
+            errors.add(path + ": expected one of minecraft_status, docker_health, docker_health_or_status");
+            return ReadinessStrategy.MINECRAFT_STATUS;
+        });
+    }
+
+    private String parseOptionalName(Object value, String path, List<String> errors) {
+        return value == null ? null : parseName(value, path, errors);
+    }
+
+    private Integer parseOptionalPositiveInteger(Object value, String path, int maximum, List<String> errors) {
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)) {
+            errors.add(path + ": expected a positive integer");
+            return null;
+        }
+        long number = ((Number) value).longValue();
+        if (number <= 0 || number > maximum) {
+            errors.add(path + ": expected a positive integer no greater than " + maximum);
+            return null;
+        }
+        return (int) number;
+    }
+
+    private int parsePositiveInteger(Object value, String path, int defaultValue, int maximum, List<String> errors) {
+        if (value == null) {
+            return defaultValue;
+        }
+        if (!(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)) {
+            errors.add(path + ": expected a positive integer");
+            return defaultValue;
+        }
+        long number = ((Number) value).longValue();
+        if (number <= 0 || number > maximum) {
+            errors.add(path + ": expected a positive integer no greater than " + maximum);
+            return defaultValue;
+        }
+        return (int) number;
     }
 
     private String parseName(Object value, String path, List<String> errors) {
@@ -195,6 +302,14 @@ public class AutoStopperConfig {
             writer.write("# monitored_servers:\n");
             writer.write("#   - server_name: purpur\n");
             writer.write("#     container_name: purpur-server\n");
+            writer.write("#     readiness:\n");
+            writer.write("#       strategy: minecraft_status\n");
+            writer.write("#       target_host: purpur\n");
+            writer.write("#       target_port: 25565\n");
+            writer.write("#       probe_interval_millis: 1000\n");
+            writer.write("#       timeout_seconds: 120\n");
+            writer.write("#       connect_timeout_millis: 1000\n");
+            writer.write("#       read_timeout_millis: 1000\n");
         }
     }
 

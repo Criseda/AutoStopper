@@ -67,8 +67,18 @@ inactivity_timeout_seconds: 900
 monitored_servers:
   - server_name: purpur
     container_name: purpur-server
+    readiness:
+      strategy: minecraft_status
+      target_host: purpur
+      target_port: 25565
+      probe_interval_millis: 1000
+      timeout_seconds: 120
+      connect_timeout_millis: 1000
+      read_timeout_millis: 1000
   - server_name: fabric
     container_name: fabric-server
+    readiness:
+      strategy: docker_health
 ```
 
 ### Configuration Options
@@ -77,6 +87,25 @@ monitored_servers:
 - `monitored_servers`: List of server mappings
   - `server_name`: Name of the server in Velocity configuration
   - `container_name`: Corresponding Docker container name
+  - `readiness`: Optional per-server readiness policy. Existing configurations default to a
+    bounded `minecraft_status` probe against the server address registered in Velocity.
+    - `strategy`: `minecraft_status`, `docker_health`, or `docker_health_or_status`.
+      The combined strategy accepts either a healthy Docker health check or a valid
+      Minecraft status response, and is the explicit fallback option for images that
+      may not define a health check.
+    - `target_host` and `target_port`: Minecraft status target. Configure both or neither;
+      when omitted, AutoStopper uses the address registered for `server_name` in Velocity.
+      These values are ignored by the Docker-health-only strategy.
+    - `probe_interval_millis`: Delay between attempts (default: `1000`).
+    - `timeout_seconds`: Overall readiness deadline (default: `120`).
+    - `connect_timeout_millis`: Maximum socket connection time per Minecraft probe
+      (default: `1000`).
+    - `read_timeout_millis`: Maximum response-read time per Minecraft probe
+      (default: `1000`).
+
+Minecraft readiness uses the status protocol, not a bare open port or log text. Docker
+health readiness requires the container image to define a Docker `HEALTHCHECK`; otherwise
+`docker_health` fails immediately with a configuration-oriented diagnostic.
 
 ## Docker Setup
 
@@ -163,10 +192,10 @@ expose manual start or stop commands.
 ## How It Works
 
 1. When a player attempts to connect to a monitored server:
-   - If the server is running, the connection proceeds normally
-   - If the server is stopped, AutoStopper:
-     - Starts the Docker container
-     - Waits for the server to fully initialize
+   - AutoStopper separates the Docker container's running state from Minecraft readiness
+   - If the server is stopped, AutoStopper starts the Docker container
+   - Whether the container was already running or was just started, AutoStopper:
+     - Waits for the configured Docker-health and/or Minecraft status check to pass
      - Automatically connects the player once the server is ready
 
 2. The plugin tracks the last activity time for each server

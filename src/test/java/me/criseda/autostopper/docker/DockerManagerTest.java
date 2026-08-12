@@ -8,13 +8,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.mockito.MockedConstruction;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
-import java.io.ByteArrayInputStream;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,7 +18,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-import java.util.concurrent.TimeUnit;
 
 @ExtendWith(MockitoExtension.class)
 public class DockerManagerTest {
@@ -204,116 +199,43 @@ public class DockerManagerTest {
     }
 
     @Test
-    public void testWaitForContainerReady_Success() {
-        String containerName = "test-container";
-        String readyPattern = "Server started";
+    public void testGetContainerHealth_Healthy() {
+        commandRunner.stage("inspect", completed(0, "healthy", ""));
 
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    Process process = mock(Process.class);
-                    String output = "Starting up...\n" + readyPattern + "\n";
-                    when(process.getInputStream()).thenReturn(new ByteArrayInputStream(output.getBytes()));
-                    when(mock.start()).thenReturn(process);
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                })) {
-
-            boolean result = dockerManager.waitForContainerReady(containerName, 5, readyPattern);
-            assertTrue(result);
-            verify(logger).info(contains("is ready"), anyString(), anyString());
-        }
+        assertEquals(ContainerHealth.HEALTHY,
+                dockerManager.getContainerHealth("test-container", Duration.ofSeconds(30)));
+        assertEquals(Duration.ofSeconds(10), commandRunner.lastTimeout,
+                "health commands remain capped by the Docker command timeout");
     }
 
     @Test
-    public void testWaitForContainerReady_Timeout() {
-        String containerName = "test-container";
+    public void testGetContainerHealth_NoHealthcheck() {
+        commandRunner.stage("inspect", completed(0, "none", ""));
 
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    Process process = mock(Process.class);
-                    String output = "Starting up...\nWaiting...\n";
-                    when(process.getInputStream()).thenReturn(new ByteArrayInputStream(output.getBytes()));
-                    when(mock.start()).thenReturn(process);
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                })) {
-
-            boolean result = dockerManager.waitForContainerReady(containerName, 1, "Ready");
-            assertFalse(result);
-            verify(logger).warn(contains("stopped producing logs"), eq(containerName));
-        }
+        assertEquals(ContainerHealth.NO_HEALTHCHECK,
+                dockerManager.getContainerHealth("test-container", Duration.ofSeconds(1)));
     }
 
     @Test
-    public void testWaitForContainerReady_PartialLineCannotExceedDeadline() throws Exception {
-        String containerName = "partial-line-container";
-        PipedInputStream input = new PipedInputStream();
-        try (PipedOutputStream output = new PipedOutputStream(input);
-                MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                        (mock, context) -> {
-                            Process process = mock(Process.class);
-                            when(process.getInputStream()).thenReturn(input);
-                            when(process.waitFor(anyLong(), any(TimeUnit.class))).thenReturn(false);
-                            when(mock.start()).thenReturn(process);
-                            when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                        })) {
-            output.write("partial readiness output".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            output.flush();
+    public void testGetContainerHealth_StoppedAndMissing() {
+        commandRunner.stage("inspect", completed(0, "stopped", ""));
+        commandRunner.stage("inspect", completed(1, "", "No such object: test-container"));
 
-            long start = System.nanoTime();
-            boolean result = dockerManager.waitForContainerReady(containerName, 1, "Ready");
-            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
-
-            assertFalse(result);
-            assertTrue(elapsedMillis < 2000,
-                    "partial line must not hold the worker past the deadline; took " + elapsedMillis + "ms");
-            Process process = mockedPb.constructed().get(0).start();
-            verify(process).destroy();
-            assertFalse(hasLiveThread("autostopper-readiness-" + containerName));
-        }
+        assertEquals(ContainerHealth.STOPPED,
+                dockerManager.getContainerHealth("test-container", Duration.ofSeconds(1)));
+        assertEquals(ContainerHealth.MISSING,
+                dockerManager.getContainerHealth("test-container", Duration.ofSeconds(1)));
     }
 
     @Test
-    public void testWaitForContainerReady_InterruptionTerminatesReaderAndProcess() throws Exception {
-        String containerName = "interrupted-container";
-        PipedInputStream input = new PipedInputStream();
-        try (PipedOutputStream output = new PipedOutputStream(input);
-                MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                        (mock, context) -> {
-                            Process process = mock(Process.class);
-                            when(process.getInputStream()).thenReturn(input);
-                            when(process.waitFor(anyLong(), any(TimeUnit.class))).thenReturn(false);
-                            when(mock.start()).thenReturn(process);
-                            when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                        })) {
-            output.write("partial".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            output.flush();
+    public void testGetContainerHealth_InaccessibleAndTimedOut() {
+        commandRunner.stage("inspect", completed(1, "", "permission denied"));
+        commandRunner.stage("inspect", new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""));
 
-            Thread testThread = Thread.currentThread();
-            Thread interrupter = new Thread(() -> {
-                try {
-                    Thread.sleep(100);
-                    testThread.interrupt();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            interrupter.start();
-
-            boolean result = dockerManager.waitForContainerReady(containerName, 30, "Ready");
-            boolean interruptedAtExit = Thread.currentThread().isInterrupted();
-            Thread.interrupted();
-            interrupter.join(2000);
-
-            assertFalse(result);
-            assertTrue(interruptedAtExit);
-            Process process = mockedPb.constructed().get(0).start();
-            verify(process).destroy();
-            assertFalse(hasLiveThread("autostopper-readiness-" + containerName));
-        }
-    }
-
-    private boolean hasLiveThread(String name) {
-        return Thread.getAllStackTraces().keySet().stream()
-                .anyMatch(thread -> thread.isAlive() && name.equals(thread.getName()));
+        assertEquals(ContainerHealth.INACCESSIBLE,
+                dockerManager.getContainerHealth("test-container", Duration.ofSeconds(1)));
+        assertEquals(ContainerHealth.TIMED_OUT,
+                dockerManager.getContainerHealth("test-container", Duration.ofSeconds(1)));
     }
 
     private void assertOnlyInspectIssued() {
