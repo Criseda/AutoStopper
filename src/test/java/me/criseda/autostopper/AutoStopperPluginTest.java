@@ -31,6 +31,7 @@ import org.mockito.quality.Strictness;
 import org.slf4j.Logger;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.HashMap;
 import java.util.Map;
@@ -185,18 +186,28 @@ public class AutoStopperPluginTest {
     }
 
     @Test
-    void testOnProxyShutdownShutsDownExecutor() {
-        // Prepare
+    void testOnProxyShutdownCoordinatesTeardownOnce() {
         AutoStopperExecutor mockExecutor = mock(AutoStopperExecutor.class);
+        AutoStopperConfig mockConfig = mock(AutoStopperConfig.class);
+        ActivityTracker mockTracker = mock(ActivityTracker.class);
+        ServerLifecycleCoordinator mockCoordinator = mock(ServerLifecycleCoordinator.class);
         setPrivateField(plugin, "executor", mockExecutor);
-        when(mockExecutor.shutdown()).thenReturn(true);
+        setPrivateField(plugin, "config", mockConfig);
+        setPrivateField(plugin, "activityTracker", mockTracker);
+        setPrivateField(plugin, "lifecycleCoordinator", mockCoordinator);
+        when(mockConfig.snapshot()).thenReturn(new ConfigSnapshot(300, 7,
+                me.criseda.autostopper.config.StopRetrySettings.defaults(), java.util.List.of()));
+        when(mockExecutor.shutdown(Duration.ofSeconds(7))).thenReturn(true);
 
-        // Execute
+        plugin.onProxyShutdown(new ProxyShutdownEvent());
         plugin.onProxyShutdown(new ProxyShutdownEvent());
 
-        // Verify
-        verify(mockExecutor).shutdown();
-        verify(logger).info(contains("executor shut down"));
+        var order = inOrder(mockTracker, mockCoordinator, mockExecutor);
+        order.verify(mockTracker).shutdown();
+        order.verify(mockCoordinator).shutdown();
+        order.verify(mockExecutor).shutdown(Duration.ofSeconds(7));
+        verifyNoMoreInteractions(mockTracker, mockCoordinator, mockExecutor);
+        verify(logger).info(contains("shutdown completed"), eq(7));
     }
 
     @Test

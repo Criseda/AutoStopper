@@ -8,18 +8,27 @@ import java.util.Optional;
 
 public final class ConfigSnapshot {
     public static final int DEFAULT_INACTIVITY_TIMEOUT_SECONDS = 300;
+    public static final int DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10;
 
     private final int inactivityTimeoutSeconds;
+    private final int shutdownTimeoutSeconds;
     private final StopRetrySettings stopRetry;
     private final List<ServerMapping> servers;
     private final Map<String, String> serverToContainer;
 
     public ConfigSnapshot(int inactivityTimeoutSeconds, List<ServerMapping> servers) {
-        this(inactivityTimeoutSeconds, StopRetrySettings.defaults(), servers);
+        this(inactivityTimeoutSeconds, DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+                StopRetrySettings.defaults(), servers);
     }
 
     public ConfigSnapshot(int inactivityTimeoutSeconds, StopRetrySettings stopRetry, List<ServerMapping> servers) {
+        this(inactivityTimeoutSeconds, DEFAULT_SHUTDOWN_TIMEOUT_SECONDS, stopRetry, servers);
+    }
+
+    public ConfigSnapshot(int inactivityTimeoutSeconds, int shutdownTimeoutSeconds,
+            StopRetrySettings stopRetry, List<ServerMapping> servers) {
         this.inactivityTimeoutSeconds = inactivityTimeoutSeconds;
+        this.shutdownTimeoutSeconds = shutdownTimeoutSeconds;
         this.stopRetry = stopRetry;
         this.servers = List.copyOf(servers);
 
@@ -36,6 +45,10 @@ public final class ConfigSnapshot {
 
     public int inactivityTimeoutSeconds() {
         return inactivityTimeoutSeconds;
+    }
+
+    public int shutdownTimeoutSeconds() {
+        return shutdownTimeoutSeconds;
     }
 
     public StopRetrySettings stopRetry() {

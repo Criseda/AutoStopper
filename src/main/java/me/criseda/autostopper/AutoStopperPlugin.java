@@ -12,6 +12,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import me.criseda.autostopper.commands.AutoStopperCommand;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigLoadResult;
+import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.docker.DockerManager;
 import me.criseda.autostopper.docker.ProcessCommandRunner;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
@@ -25,6 +26,8 @@ import org.slf4j.Logger;
 
 import com.google.inject.Inject;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Plugin(id = "autostopper", name = "AutoStopper", version = "1.1.2", authors = { "criseda" })
 public class AutoStopperPlugin {
@@ -38,6 +41,7 @@ public class AutoStopperPlugin {
     private ActivityTracker activityTracker;
     private ServerLifecycleCoordinator lifecycleCoordinator;
     private AutoStopperExecutor executor;
+    private final AtomicBoolean shutdown = new AtomicBoolean(false);
 
     @Inject
     public AutoStopperPlugin(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory, PluginContainer pluginContainer) {
@@ -83,9 +87,26 @@ public class AutoStopperPlugin {
 
 	@Subscribe
 	public void onProxyShutdown(ProxyShutdownEvent event) {
+		if (!shutdown.compareAndSet(false, true)) {
+			return;
+		}
+		if (activityTracker != null) {
+			activityTracker.shutdown();
+		}
+		if (lifecycleCoordinator != null) {
+			lifecycleCoordinator.shutdown();
+		}
 		if (executor != null) {
-			executor.shutdown();
-			logger.info("AutoStopper executor shut down.");
+            int timeoutSeconds = config == null
+                    ? ConfigSnapshot.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
+                    : config.snapshot().shutdownTimeoutSeconds();
+			boolean terminated = executor.shutdown(Duration.ofSeconds(timeoutSeconds));
+            if (terminated) {
+                logger.info("AutoStopper shutdown completed within {} seconds.", timeoutSeconds);
+            } else {
+                logger.warn("AutoStopper shutdown deadline of {} seconds expired; remaining worker threads are daemon threads.",
+                        timeoutSeconds);
+            }
 		}
 	}
 

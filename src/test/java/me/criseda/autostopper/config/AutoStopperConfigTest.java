@@ -54,6 +54,8 @@ public class AutoStopperConfigTest {
         assertTrue(result.successful());
         assertEquals(ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS,
                 result.snapshot().inactivityTimeoutSeconds());
+        assertEquals(ConfigSnapshot.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
+                result.snapshot().shutdownTimeoutSeconds());
         assertTrue(result.snapshot().servers().isEmpty());
         assertTrue(Files.readString(configFile, StandardCharsets.UTF_8).contains("monitored_servers: []"));
         verify(logger).info(contains("Creating default configuration"));
@@ -101,6 +103,29 @@ public class AutoStopperConfigTest {
         assertEquals(4, result.snapshot().stopRetry().maxAttempts());
         assertEquals(15, result.snapshot().stopRetry().initialBackoff().toSeconds());
         assertEquals(45, result.snapshot().stopRetry().maxBackoff().toSeconds());
+    }
+
+    @Test
+    public void shutdownDeadlineIsValidatedAndPublishedAtomically() throws IOException {
+        writeConfig("""
+                shutdown_timeout_seconds: 7
+                monitored_servers: []
+                """);
+
+        ConfigLoadResult result = config.loadConfig();
+
+        assertTrue(result.successful());
+        assertEquals(7, result.snapshot().shutdownTimeoutSeconds());
+
+        ConfigSnapshot previous = config.snapshot();
+        writeConfig("""
+                shutdown_timeout_seconds: 0
+                monitored_servers: []
+                """);
+        ConfigLoadResult rejected = config.loadConfig();
+        assertFalse(rejected.successful());
+        assertSame(previous, config.snapshot());
+        assertTrue(rejected.errorSummary().contains("shutdown_timeout_seconds"));
     }
 
     @Test

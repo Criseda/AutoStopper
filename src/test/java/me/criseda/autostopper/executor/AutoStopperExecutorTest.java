@@ -226,6 +226,43 @@ public class AutoStopperExecutorTest {
         assertThrows(IllegalArgumentException.class, () -> new AutoStopperExecutor(1, 0));
     }
 
+    @Test
+    public void testShutdownHonorsHardDeadlineWhenTaskIgnoresInterrupts() throws InterruptedException {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        executor.supply(() -> {
+            started.countDown();
+            while (release.getCount() > 0) {
+                try {
+                    release.await();
+                } catch (InterruptedException ignored) {
+                    // Model a dependency which does not cooperate with interruption.
+                }
+            }
+            return null;
+        });
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+
+        long start = System.nanoTime();
+        boolean terminated = executor.shutdown(Duration.ofMillis(50));
+        long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+        release.countDown();
+
+        assertFalse(terminated);
+        assertTrue(elapsedMillis < 1000, "shutdown exceeded its hard deadline: " + elapsedMillis + "ms");
+    }
+
+    @Test
+    public void testShutdownRejectsInvalidDeadline() {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        try {
+            assertThrows(IllegalArgumentException.class, () -> executor.shutdown(Duration.ZERO));
+        } finally {
+            executor.shutdown();
+        }
+    }
+
     private static <T> void assertCompletesWith(CompletableFuture<T> future,
             Class<? extends Throwable> expectedType, String expectedMessage) {
         try {

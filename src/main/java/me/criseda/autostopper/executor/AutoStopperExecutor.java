@@ -1,5 +1,6 @@
 package me.criseda.autostopper.executor;
 
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -15,7 +16,7 @@ import java.util.function.Supplier;
 public class AutoStopperExecutor implements AutoCloseable {
     public static final int DEFAULT_WORKER_COUNT = 2;
     public static final int DEFAULT_QUEUE_CAPACITY = 32;
-    private static final long SHUTDOWN_GRACE_SECONDS = 5;
+    private static final Duration DEFAULT_SHUTDOWN_TIMEOUT = Duration.ofSeconds(10);
 
     private final ThreadPoolExecutor executor;
     private final Set<ManagedTask<?>> outstandingTasks = ConcurrentHashMap.newKeySet();
@@ -53,18 +54,21 @@ public class AutoStopperExecutor implements AutoCloseable {
     }
 
     public boolean shutdown() {
-        executor.shutdown();
+        return shutdown(DEFAULT_SHUTDOWN_TIMEOUT);
+    }
+
+    public boolean shutdown(Duration timeout) {
+        Objects.requireNonNull(timeout, "timeout");
+        if (timeout.isNegative() || timeout.isZero()) {
+            throw new IllegalArgumentException("timeout must be positive");
+        }
+        failOutstandingTasks(new ShutdownException("AutoStopper executor was shut down", null));
+        executor.shutdownNow();
         try {
-            if (executor.awaitTermination(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS)) {
-                return true;
-            }
-            failOutstandingTasks(new ShutdownException("AutoStopper executor was shut down", null));
-            executor.shutdownNow();
-            return executor.awaitTermination(SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS);
+            return executor.awaitTermination(timeout.toNanos(), TimeUnit.NANOSECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             failOutstandingTasks(new ShutdownException("AutoStopper executor shutdown was interrupted", e));
-            executor.shutdownNow();
             return false;
         }
     }

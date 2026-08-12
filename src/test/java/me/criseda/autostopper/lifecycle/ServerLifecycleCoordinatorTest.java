@@ -351,6 +351,88 @@ class ServerLifecycleCoordinatorTest {
         verify(serverManager).getServerStatusAsync(replacement);
     }
 
+    @Test
+    void shutdownDuringInspectCancelsOperationAndCompletesEveryWaiterExactlyOnce() {
+        CompletableFuture<Optional<ContainerStatus>> status = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(status);
+        PlayerHarness first = player("shutdown-inspect-first");
+        PlayerHarness second = player("shutdown-inspect-second");
+        CompletableFuture<ConnectionOutcome> firstOutcome =
+                coordinator.requestConnection(first.player, targetServer, mapping);
+        CompletableFuture<ConnectionOutcome> secondOutcome =
+                coordinator.requestConnection(second.player, targetServer, mapping);
+        java.util.concurrent.atomic.AtomicInteger completions = new java.util.concurrent.atomic.AtomicInteger();
+        firstOutcome.whenComplete((ignored, error) -> completions.incrementAndGet());
+        secondOutcome.whenComplete((ignored, error) -> completions.incrementAndGet());
+
+        coordinator.shutdown();
+        coordinator.shutdown();
+
+        assertTrue(status.isCancelled());
+        assertEquals(ConnectionOutcome.PROXY_SHUTDOWN, firstOutcome.join());
+        assertEquals(ConnectionOutcome.PROXY_SHUTDOWN, secondOutcome.join());
+        assertEquals(2, completions.get());
+        assertEquals(0, coordinator.waitingCount("survival"));
+        verify(first.player, never()).createConnectionRequest(any());
+        verify(second.player, never()).createConnectionRequest(any());
+    }
+
+    @Test
+    void shutdownDuringStartCancelsStartAndLeavesContainerUnchanged() {
+        CompletableFuture<ContainerStatus> start = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping)).thenReturn(start);
+        PlayerHarness player = player("shutdown-start");
+        CompletableFuture<ConnectionOutcome> outcome =
+                coordinator.requestConnection(player.player, targetServer, mapping);
+
+        coordinator.shutdown();
+
+        assertTrue(start.isCancelled());
+        assertEquals(ConnectionOutcome.PROXY_SHUTDOWN, outcome.join());
+        verify(serverManager, never()).stopServer(any(ServerMapping.class));
+        verify(player.player, never()).createConnectionRequest(any());
+    }
+
+    @Test
+    void shutdownDuringReadinessCancelsProbeAndSuppressesLateCallbacks() {
+        CompletableFuture<ReadinessResult> readiness = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        when(serverManager.waitForServerReadyAsync(mapping)).thenReturn(readiness);
+        PlayerHarness player = player("shutdown-readiness");
+        CompletableFuture<ConnectionOutcome> outcome =
+                coordinator.requestConnection(player.player, targetServer, mapping);
+        clearInvocations(player.player);
+
+        coordinator.shutdown();
+
+        assertTrue(readiness.isCancelled());
+        assertEquals(ConnectionOutcome.PROXY_SHUTDOWN, outcome.join());
+        verifyNoInteractions(player.player);
+    }
+
+    @Test
+    void shutdownClosesAdmissionAndCancelsPendingVelocityConnection() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness connecting = player("shutdown-connection");
+        CompletableFuture<ConnectionOutcome> outcome =
+                coordinator.requestConnection(connecting.player, targetServer, mapping);
+        clearInvocations(connecting.player);
+
+        coordinator.shutdown();
+
+        assertTrue(connecting.connection.isCancelled());
+        assertEquals(ConnectionOutcome.PROXY_SHUTDOWN, outcome.join());
+        PlayerHarness rejected = player("shutdown-rejected");
+        assertEquals(ConnectionOutcome.PROXY_SHUTDOWN,
+                coordinator.requestConnection(rejected.player, targetServer, mapping).join());
+        verifyNoInteractions(connecting.player, rejected.player);
+        assertFalse(coordinator.tryBeginStop(mapping));
+    }
+
     private PlayerHarness player(String name) {
         Player player = mock(Player.class, name);
         ConnectionRequestBuilder request = mock(ConnectionRequestBuilder.class, name + "-request");
