@@ -13,9 +13,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.util.Arrays;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.Queue;
 
 @ExtendWith(MockitoExtension.class)
 public class DockerManagerTest {
@@ -23,212 +27,245 @@ public class DockerManagerTest {
     @Mock
     private Logger logger;
 
+    private FakeCommandRunner commandRunner;
     private DockerManager dockerManager;
 
     @BeforeEach
     public void setup() {
-        dockerManager = new DockerManager(logger);
-    }
-
-    private void setupMockProcess(Process mockProcess, String stdout, String stderr, int exitCode) {
-        when(mockProcess.getInputStream()).thenReturn(new ByteArrayInputStream(stdout.getBytes()));
-        when(mockProcess.getErrorStream()).thenReturn(new ByteArrayInputStream(stderr.getBytes()));
-        try {
-            when(mockProcess.waitFor()).thenReturn(exitCode);
-        } catch (InterruptedException e) {
-            // Mock exception, theoretically unreachable in setup
-        }
+        commandRunner = new FakeCommandRunner();
+        dockerManager = new DockerManager(logger, commandRunner);
     }
 
     @Test
-    public void testIsContainerRunning_True() {
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    Process process = mock(Process.class);
-                    setupMockProcess(process, "true", "", 0);
-                    when(mock.start()).thenReturn(process);
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                })) {
-            
-            boolean result = dockerManager.isContainerRunning("test-container");
-            assertTrue(result);
-        }
+    public void testGetContainerStatus_Running() {
+        commandRunner.stage("inspect", completed(0, "true", ""));
+
+        assertEquals(ContainerStatus.RUNNING, dockerManager.getContainerStatus("test-container"));
+        assertEquals(Duration.ofSeconds(10), commandRunner.lastTimeout);
     }
 
     @Test
-    public void testIsContainerRunning_False() {
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    Process process = mock(Process.class);
-                    setupMockProcess(process, "false", "", 0);
-                    when(mock.start()).thenReturn(process);
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                })) {
+    public void testGetContainerStatus_Stopped() {
+        commandRunner.stage("inspect", completed(0, "false", ""));
 
-            boolean result = dockerManager.isContainerRunning("test-container");
-            assertFalse(result);
-        }
+        assertEquals(ContainerStatus.STOPPED, dockerManager.getContainerStatus("test-container"));
     }
 
     @Test
-    public void testIsContainerRunning_FailExitCode() {
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    Process process = mock(Process.class);
-                    setupMockProcess(process, "", "some error", 1);
-                    when(mock.start()).thenReturn(process);
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                })) {
+    public void testGetContainerStatus_Missing() {
+        commandRunner.stage("inspect", completed(1, "", "Error: No such object: test-container"));
 
-            boolean result = dockerManager.isContainerRunning("test-container");
-            assertFalse(result);
-            verify(logger).warn(contains("Could not check status"), any(), any(), any());
-        }
+        assertEquals(ContainerStatus.MISSING, dockerManager.getContainerStatus("test-container"));
+        verify(logger).warn(contains("does not exist"), anyString(), anyString());
     }
 
     @Test
-    public void testIsContainerRunning_IOException() {
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    when(mock.start()).thenThrow(new IOException("Test exception"));
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                })) {
+    public void testGetContainerStatus_PermissionDenied() {
+        commandRunner.stage("inspect", completed(1, "",
+                "Got permission denied while trying to connect to the Docker daemon socket"));
 
-            boolean result = dockerManager.isContainerRunning("test-container");
-            assertFalse(result);
-            verify(logger).error(contains("Error executing command"), any(IOException.class));
-        }
+        assertEquals(ContainerStatus.INACCESSIBLE, dockerManager.getContainerStatus("test-container"));
+        verify(logger).warn(contains("inaccessible"), anyString(), anyString());
+    }
+
+    @Test
+    public void testGetContainerStatus_GenericFailure() {
+        commandRunner.stage("inspect", completed(1, "", "some daemon error"));
+
+        assertEquals(ContainerStatus.FAILED, dockerManager.getContainerStatus("test-container"));
+        verify(logger).warn(contains("Could not check status"), anyString(), anyString(), anyInt());
+    }
+
+    @Test
+    public void testGetContainerStatus_MalformedOutput() {
+        commandRunner.stage("inspect", completed(0, "yes", ""));
+
+        assertEquals(ContainerStatus.FAILED, dockerManager.getContainerStatus("test-container"));
+        verify(logger).warn(contains("Unexpected output"), anyString(), anyString(), anyInt());
+    }
+
+    @Test
+    public void testGetContainerStatus_Timeout() {
+        commandRunner.stage("inspect", new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""));
+
+        assertEquals(ContainerStatus.TIMED_OUT, dockerManager.getContainerStatus("test-container"));
+        verify(logger).warn(contains("Timed out after"), any(Object.class), anyString(), anyString());
+    }
+
+    @Test
+    public void testGetContainerStatus_SpawnFailed() {
+        commandRunner.stage("inspect",
+                new CommandOutput(CommandOutput.Outcome.SPAWN_FAILED, -1, "", "docker not found"));
+
+        assertEquals(ContainerStatus.FAILED, dockerManager.getContainerStatus("test-container"));
+        verify(logger).error(contains("Could not execute docker inspect"), anyString(), anyString());
+    }
+
+    @Test
+    public void testStartContainer_AlreadyRunning() {
+        commandRunner.stage("inspect", completed(0, "true", ""));
+
+        assertEquals(ContainerStatus.RUNNING, dockerManager.startContainer("test-container"));
+        assertEquals(1, commandRunner.commands.size());
+        assertEquals("inspect", commandRunner.commands.get(0).get(1));
     }
 
     @Test
     public void testStartContainer_Success() {
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    List<?> args = context.arguments();
-                    String[] commandValue = (String[]) args.get(0);
-                    List<String> cmdList = Arrays.asList(commandValue);
-                    
-                    Process process = mock(Process.class);
-                    when(mock.start()).thenReturn(process);
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+        commandRunner.stage("inspect", completed(0, "false", ""));
+        commandRunner.stage("start", completed(0, "test-container", ""));
 
-                    if (cmdList.contains("inspect")) {
-                        setupMockProcess(process, "false", "", 0);
-                    } else if (cmdList.contains("start")) {
-                        setupMockProcess(process, "container started", "", 0);
-                    }
-                })) {
-
-            boolean result = dockerManager.startContainer("test-container");
-            assertTrue(result);
-            verify(logger).info(contains("Starting container"));
-            verify(logger).info(contains("Started container"));
-        }
-    }
-    
-    @Test
-    public void testStartContainer_AlreadyRunning() {
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    Process process = mock(Process.class);
-                    when(mock.start()).thenReturn(process);
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                    setupMockProcess(process, "true", "", 0);
-                })) {
-
-            boolean result = dockerManager.startContainer("test-container");
-            assertTrue(result);
-            verify(logger).info(contains("is already running"));
-        }
+        assertEquals(ContainerStatus.RUNNING, dockerManager.startContainer("test-container"));
+        assertEquals(2, commandRunner.commands.size());
+        assertEquals("start", commandRunner.commands.get(1).get(1));
     }
 
     @Test
-    public void testStartContainer_Failure() {
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    List<?> args = context.arguments();
-                    String[] commandValue = (String[]) args.get(0);
-                    List<String> cmdList = Arrays.asList(commandValue);
-                    
-                    Process process = mock(Process.class);
-                    when(mock.start()).thenReturn(process);
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
+    public void testStartContainer_PermissionDeniedOnStart() {
+        commandRunner.stage("inspect", completed(0, "false", ""));
+        commandRunner.stage("start", completed(1, "", "permission denied"));
 
-                    if (cmdList.contains("inspect")) {
-                        setupMockProcess(process, "false", "", 0);
-                    } else if (cmdList.contains("start")) {
-                        setupMockProcess(process, "", "permission denied", 1);
-                    }
-                })) {
+        assertEquals(ContainerStatus.INACCESSIBLE, dockerManager.startContainer("test-container"));
+        verify(logger).error(contains("Permission denied starting container"), anyString(), anyString());
+    }
 
-            boolean result = dockerManager.startContainer("test-container");
-            assertFalse(result);
-            verify(logger).error(contains("Failed to start container"));
-        }
+    @Test
+    public void testStartContainer_FailedToStart() {
+        commandRunner.stage("inspect", completed(0, "false", ""));
+        commandRunner.stage("start", completed(1, "", "container errored"));
+
+        assertEquals(ContainerStatus.FAILED, dockerManager.startContainer("test-container"));
+        verify(logger).error(contains("Failed to start container"), anyString(), anyString(), anyInt());
+    }
+
+    @Test
+    public void testStartContainer_TimedOut() {
+        commandRunner.stage("inspect", completed(0, "false", ""));
+        commandRunner.stage("start", new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""));
+
+        assertEquals(ContainerStatus.TIMED_OUT, dockerManager.startContainer("test-container"));
+    }
+
+    @Test
+    public void testStartContainer_NotAttemptedAfterMissing() {
+        commandRunner.stage("inspect", completed(1, "", "No such object: test-container"));
+
+        assertEquals(ContainerStatus.MISSING, dockerManager.startContainer("test-container"));
+        assertOnlyInspectIssued();
+    }
+
+    @Test
+    public void testStartContainer_NotAttemptedAfterInaccessible() {
+        commandRunner.stage("inspect", completed(1, "", "permission denied"));
+
+        assertEquals(ContainerStatus.INACCESSIBLE, dockerManager.startContainer("test-container"));
+        assertOnlyInspectIssued();
+    }
+
+    @Test
+    public void testStartContainer_NotAttemptedAfterTimeout() {
+        commandRunner.stage("inspect", new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""));
+
+        assertEquals(ContainerStatus.TIMED_OUT, dockerManager.startContainer("test-container"));
+        assertOnlyInspectIssued();
+    }
+
+    @Test
+    public void testStartContainer_NotAttemptedAfterFailedStatus() {
+        commandRunner.stage("inspect", completed(1, "", "daemon error"));
+
+        assertEquals(ContainerStatus.FAILED, dockerManager.startContainer("test-container"));
+        assertOnlyInspectIssued();
     }
 
     @Test
     public void testStopContainer_Success() {
-        try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
-                (mock, context) -> {
-                    Process process = mock(Process.class);
-                    setupMockProcess(process, "", "", 0);
-                    when(mock.start()).thenReturn(process);
-                    when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
-                })) {
+        commandRunner.stage("stop", completed(0, "test-container", ""));
 
-            boolean result = dockerManager.stopContainer("test-container");
-            assertTrue(result);
-            verify(logger).info(contains("Stopped container"));
-        }
+        assertEquals(ContainerStatus.STOPPED, dockerManager.stopContainer("test-container"));
+        verify(logger).info(contains("Stopped container"), anyString());
+    }
+
+    @Test
+    public void testStopContainer_Failed() {
+        commandRunner.stage("stop", completed(1, "", "container error"));
+
+        assertEquals(ContainerStatus.FAILED, dockerManager.stopContainer("test-container"));
+    }
+
+    @Test
+    public void testStopContainer_TimedOut() {
+        commandRunner.stage("stop", new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""));
+
+        assertEquals(ContainerStatus.TIMED_OUT, dockerManager.stopContainer("test-container"));
     }
 
     @Test
     public void testWaitForContainerReady_Success() {
         String containerName = "test-container";
         String readyPattern = "Server started";
-        
+
         try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
                 (mock, context) -> {
                     Process process = mock(Process.class);
-                    // Standard input stream for logs
                     String output = "Starting up...\n" + readyPattern + "\n";
                     when(process.getInputStream()).thenReturn(new ByteArrayInputStream(output.getBytes()));
                     when(mock.start()).thenReturn(process);
                     when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
                 })) {
-            
+
             boolean result = dockerManager.waitForContainerReady(containerName, 5, readyPattern);
             assertTrue(result);
-            verify(logger).info(contains("is ready"));
+            verify(logger).info(contains("is ready"), anyString(), anyString());
         }
     }
 
     @Test
     public void testWaitForContainerReady_Timeout() {
         String containerName = "test-container";
-        String readyPattern = "Ready";
-        
+
         try (MockedConstruction<ProcessBuilder> mockedPb = mockConstruction(ProcessBuilder.class,
                 (mock, context) -> {
                     Process process = mock(Process.class);
-                    // Output without the pattern
                     String output = "Starting up...\nWaiting...\n";
                     when(process.getInputStream()).thenReturn(new ByteArrayInputStream(output.getBytes()));
-                    // Ensure the process isn't "alive" forever to allow loop to exit if read isn't blocking (Test logic simulation)
-                    // The loop checks (System.currentTimeMillis() - startTime) < timeoutMillis.
-                    // If readLine returns, it checks pattern. If not found, it loops.
-                    // ByteArrayInputStream yields bytes then is empty. `reader.ready()` might be false or `readLine` null.
-                    // If `readLine` returns null, loop breaks -> returns false.
-                    
                     when(mock.start()).thenReturn(process);
                     when(mock.redirectErrorStream(anyBoolean())).thenReturn(mock);
                 })) {
-            
-            // Short timeout, but loop should exit on stream EOF anyway
-            boolean result = dockerManager.waitForContainerReady(containerName, 1, readyPattern);
+
+            boolean result = dockerManager.waitForContainerReady(containerName, 1, "Ready");
             assertFalse(result);
-            verify(logger).warn(contains("Timeout waiting for container"));
+            verify(logger).warn(contains("Timeout waiting for container"), eq(containerName));
+        }
+    }
+
+    private void assertOnlyInspectIssued() {
+        assertEquals(1, commandRunner.commands.size());
+        assertEquals("inspect", commandRunner.commands.get(0).get(1));
+    }
+
+    private static CommandOutput completed(int exitCode, String stdout, String stderr) {
+        return new CommandOutput(CommandOutput.Outcome.COMPLETED, exitCode, stdout, stderr);
+    }
+
+    private static class FakeCommandRunner implements CommandRunner {
+        private final Map<String, Queue<CommandOutput>> responses = new LinkedHashMap<>();
+        private final List<List<String>> commands = new ArrayList<>();
+        private Duration lastTimeout;
+
+        void stage(String command, CommandOutput output) {
+            responses.computeIfAbsent(command, k -> new LinkedList<>()).add(output);
+        }
+
+        @Override
+        public CommandOutput run(List<String> command, Duration timeout) {
+            commands.add(command);
+            lastTimeout = timeout;
+            Queue<CommandOutput> queue = responses.get(command.get(1));
+            if (queue == null || queue.isEmpty()) {
+                throw new AssertionError("Unexpected docker command: " + command);
+            }
+            return queue.poll();
         }
     }
 }

@@ -3,6 +3,7 @@ package me.criseda.autostopper.server;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,44 +39,48 @@ public class ServerManagerTest {
     
     @BeforeEach
     public void setup() {
-        // Create ServerManager with mocked dependencies
-        serverManager = new ServerManager(proxyServer, logger, config);
-        
-        // Replace the internal DockerManager with our mock
-        try {
-            var dockerManagerField = ServerManager.class.getDeclaredField("dockerManager");
-            dockerManagerField.setAccessible(true);
-            dockerManagerField.set(serverManager, dockerManager);
-        } catch (Exception e) {
-            fail("Failed to inject mock DockerManager: " + e.getMessage());
-        }
+        serverManager = new ServerManager(proxyServer, logger, config, dockerManager);
     }
     
     @Test
-    public void testIsServerRunning() {
+    public void testGetServerStatus_Running() {
         // Setup
         when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
-        when(dockerManager.isContainerRunning("container1")).thenReturn(true);
+        when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.RUNNING);
         
         // Execute
-        boolean result = serverManager.isServerRunning("server1");
+        Optional<ContainerStatus> result = serverManager.getServerStatus("server1");
         
         // Verify
-        assertTrue(result);
-        verify(dockerManager).isContainerRunning("container1");
+        assertEquals(Optional.of(ContainerStatus.RUNNING), result);
+        verify(dockerManager).getContainerStatus("container1");
+    }
+    
+    @Test
+    public void testGetServerStatus_Stopped() {
+        // Setup
+        when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
+        when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.STOPPED);
+        
+        // Execute
+        Optional<ContainerStatus> result = serverManager.getServerStatus("server1");
+        
+        // Verify
+        assertEquals(Optional.of(ContainerStatus.STOPPED), result);
+        verify(dockerManager).getContainerStatus("container1");
     }
     
     @Test
     public void testStartServer() {
         // Setup
         when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
-        when(dockerManager.startContainer("container1")).thenReturn(true);
+        when(dockerManager.startContainer("container1")).thenReturn(ContainerStatus.RUNNING);
         
         // Execute
-        boolean result = serverManager.startServer("server1");
+        ContainerStatus result = serverManager.startServer("server1");
         
         // Verify
-        assertTrue(result);
+        assertEquals(ContainerStatus.RUNNING, result);
         verify(dockerManager).startContainer("container1");
     }
     
@@ -83,15 +88,15 @@ public class ServerManagerTest {
     public void testStopServer() {
         // Setup
         when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
-        when(dockerManager.stopContainer("container1")).thenReturn(true);
+        when(dockerManager.stopContainer("container1")).thenReturn(ContainerStatus.STOPPED);
         
         // Execute
-        boolean result = serverManager.stopServer("server1");
+        ContainerStatus result = serverManager.stopServer("server1");
         
         // Verify
-        assertTrue(result);
+        assertEquals(ContainerStatus.STOPPED, result);
         verify(dockerManager).stopContainer("container1");
-        verify(logger).info(contains("Stopped server: server1"));
+        verify(logger).info(contains("Stopped server:"), eq("server1"), any(), any());
     }
     
     @Test
@@ -144,15 +149,15 @@ public class ServerManagerTest {
         when(config.getServerToContainerMap()).thenReturn(Map.of("server1", "container1"));
 
         // Execute & Verify
-        assertFalse(serverManager.isServerRunning("server2"));
-        assertFalse(serverManager.startServer("server2"));
-        assertFalse(serverManager.stopServer("server2"));
+        assertEquals(Optional.empty(), serverManager.getServerStatus("server2"));
+        assertEquals(ContainerStatus.MISSING, serverManager.startServer("server2"));
+        assertEquals(ContainerStatus.MISSING, serverManager.stopServer("server2"));
         assertFalse(serverManager.waitForServerReady("server2", 30));
-        verify(dockerManager, never()).isContainerRunning(anyString());
+        verify(dockerManager, never()).getContainerStatus(anyString());
         verify(dockerManager, never()).startContainer(anyString());
         verify(dockerManager, never()).stopContainer(anyString());
         verify(dockerManager, never()).waitForContainerReady(anyString(), anyInt(), anyString());
-        verify(logger, times(4)).warn(contains("No container mapped for server: server2"));
+        verify(logger, times(4)).warn(contains("No container mapped for server:"), eq("server2"));
     }
     
     @Test

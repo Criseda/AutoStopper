@@ -4,6 +4,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 
 import me.criseda.autostopper.AutoStopperPlugin;
 import me.criseda.autostopper.config.AutoStopperConfig;
+import me.criseda.autostopper.docker.ContainerStatus;
 
 import org.slf4j.Logger;
 
@@ -11,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 public class ActivityTracker {
@@ -58,9 +60,22 @@ public class ActivityTracker {
                     }
 
                     // If no players are connected, check if the server is actually running
-                    if (!serverManager.isServerRunning(serverName)) {
+                    Optional<ContainerStatus> status = serverManager.getServerStatus(serverName);
+                    if (status.isEmpty()) {
                         removeActivity(serverName);
                         return;
+                    }
+
+                    switch (status.get()) {
+                        case STOPPED, MISSING, INACCESSIBLE, TIMED_OUT, FAILED:
+                            if (status.get().isIndeterminate()) {
+                                logger.warn("Server {} status is {}; skipping inactivity shutdown",
+                                        serverName, status.get());
+                            }
+                            removeActivity(serverName);
+                            return;
+                        case RUNNING:
+                            break;
                     }
 
                     // If it is running but not being tracked, start tracking it now
