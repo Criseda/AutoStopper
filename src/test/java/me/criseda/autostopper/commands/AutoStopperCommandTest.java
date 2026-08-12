@@ -2,6 +2,7 @@ package me.criseda.autostopper.commands;
 
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
+import com.velocitypowered.api.permission.Tristate;
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.plugin.PluginDescription;
 import me.criseda.autostopper.config.AutoStopperConfig;
@@ -55,9 +56,9 @@ public class AutoStopperCommandTest {
     public void setup() {
         lenient().when(pluginContainer.getDescription()).thenReturn(pluginDescription);
         lenient().when(pluginDescription.getVersion()).thenReturn(Optional.of("1.1.2"));
+        lenient().when(source.getPermissionValue(anyString())).thenReturn(Tristate.UNDEFINED);
         
         command = new AutoStopperCommand(config, serverManager, activityTracker, pluginContainer);
-        // Removed default permission setup - will be set in individual tests when needed
     }
     
     @Test
@@ -98,6 +99,7 @@ public class AutoStopperCommandTest {
     @Test
     public void testExecuteHelpCommand() {
         // Arrange
+        grant(AutoStopperCommand.ADMIN_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"help"});
         
         // Act
@@ -114,10 +116,27 @@ public class AutoStopperCommandTest {
         assertTrue(messages.get(3).toString().contains("status"));
         assertTrue(messages.get(4).toString().contains("reload"));
     }
+
+    @Test
+    public void testExecuteHelpCommand_OnlyShowsPublicCommandsWhenPermissionsAreUndefined() {
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"help"});
+
+        command.execute(invocation);
+
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(3)).sendMessage(messageCaptor.capture());
+        List<Component> messages = messageCaptor.getAllValues();
+        assertTrue(messages.get(0).toString().contains("Help"));
+        assertTrue(messages.get(1).toString().contains("/autostopper"));
+        assertTrue(messages.get(2).toString().contains("help"));
+        assertTrue(messages.stream().noneMatch(message -> message.toString().contains("status")));
+        assertTrue(messages.stream().noneMatch(message -> message.toString().contains("reload")));
+    }
     
     @Test
     public void testExecuteStatusCommand_RunningServerWithActivity() {
         // Arrange
+        grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"server1", "server2"};
 
@@ -150,6 +169,7 @@ public class AutoStopperCommandTest {
     @Test
     public void testExecuteStatusCommand_RunningServerWithNoActivity() {
         // Arrange
+        grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"server1"};
 
@@ -174,6 +194,7 @@ public class AutoStopperCommandTest {
     @Test
     public void testExecuteStatusCommand_DistinctTypedStates() {
         // Arrange
+        grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"s-missing", "s-inaccessible", "s-timedout", "s-failed", "s-unmapped"};
 
@@ -206,6 +227,7 @@ public class AutoStopperCommandTest {
     @Test
     public void testExecuteStatusCommand_StatusCollectionFails() {
         // Arrange
+        grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"server1"};
 
@@ -224,10 +246,48 @@ public class AutoStopperCommandTest {
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(messages.get(1).toString().contains("Could not collect server statuses"));
     }
+
+    @Test
+    public void testExecuteStatusCommand_ExplicitDenialDoesNotStartStatusChecks() {
+        deny(AutoStopperCommand.STATUS_PERMISSION);
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
+
+        command.execute(invocation);
+
+        assertPermissionDenied("view AutoStopper status");
+        verifyNoInteractions(config, serverManager, activityTracker);
+    }
+
+    @Test
+    public void testExecuteStatusCommand_UndefinedPermissionDoesNotStartStatusChecks() {
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
+
+        command.execute(invocation);
+
+        assertPermissionDenied("view AutoStopper status");
+        verifyNoInteractions(config, serverManager, activityTracker);
+    }
+
+    @Test
+    public void testExecuteStatusCommand_AdminOverridesSpecificDenial() {
+        deny(AutoStopperCommand.STATUS_PERMISSION);
+        grant(AutoStopperCommand.ADMIN_PERMISSION);
+        ConfigSnapshot snapshot = snapshot();
+        when(config.snapshot()).thenReturn(snapshot);
+        when(serverManager.getStatusesAsync(snapshot)).thenReturn(
+                CompletableFuture.completedFuture(Map.of()));
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
+
+        command.execute(invocation);
+
+        verify(serverManager).getStatusesAsync(snapshot);
+        verify(source).sendMessage(argThat(message -> message.toString().contains("Status")));
+    }
     
     @Test
     public void testExecuteReloadCommand() {
         // Arrange
+        grant(AutoStopperCommand.RELOAD_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"reload"});
         ConfigSnapshot previous = snapshot("server1");
         ConfigSnapshot current = snapshot("server2");
@@ -251,6 +311,7 @@ public class AutoStopperCommandTest {
 
     @Test
     public void testExecuteReloadCommand_InvalidConfigKeepsPreviousSnapshot() {
+        grant(AutoStopperCommand.RELOAD_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"reload"});
         ConfigSnapshot previous = snapshot("server1");
         when(config.snapshot()).thenReturn(previous);
@@ -265,6 +326,44 @@ public class AutoStopperCommandTest {
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         assertTrue(messageCaptor.getAllValues().get(1).toString().contains("reload failed"));
         assertTrue(messageCaptor.getAllValues().get(1).toString().contains("monitored_servers[0].server"));
+    }
+
+    @Test
+    public void testExecuteReloadCommand_ExplicitDenialDoesNotLoadConfig() {
+        deny(AutoStopperCommand.RELOAD_PERMISSION);
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"reload"});
+
+        command.execute(invocation);
+
+        assertPermissionDenied("reload AutoStopper configuration");
+        verifyNoInteractions(config, serverManager, activityTracker);
+    }
+
+    @Test
+    public void testExecuteReloadCommand_UndefinedPermissionDoesNotLoadConfig() {
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"reload"});
+
+        command.execute(invocation);
+
+        assertPermissionDenied("reload AutoStopper configuration");
+        verifyNoInteractions(config, serverManager, activityTracker);
+    }
+
+    @Test
+    public void testExecuteReloadCommand_AdminOverridesSpecificDenial() {
+        deny(AutoStopperCommand.RELOAD_PERMISSION);
+        grant(AutoStopperCommand.ADMIN_PERMISSION);
+        ConfigSnapshot previous = snapshot("server1");
+        ConfigSnapshot current = snapshot("server2");
+        when(config.snapshot()).thenReturn(previous);
+        when(config.loadConfig()).thenReturn(ConfigLoadResult.success(current));
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"reload"});
+
+        command.execute(invocation);
+
+        verify(config).loadConfig();
+        verify(serverManager).reconcileConfig(previous, current);
+        verify(activityTracker).reconcileConfig(previous, current);
     }
     
     @Test
@@ -286,6 +385,7 @@ public class AutoStopperCommandTest {
     @Test
     public void testSuggest_FirstArgument() {
         // Arrange
+        grant(AutoStopperCommand.ADMIN_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{""});
         
         // Act
@@ -308,11 +408,7 @@ public class AutoStopperCommandTest {
         List<String> suggestions = command.suggest(invocation);
         
         // Assert
-        // Now expecting all three commands even without permissions
-        assertEquals(3, suggestions.size());
-        assertTrue(suggestions.contains("help"));
-        assertTrue(suggestions.contains("status"));
-        assertTrue(suggestions.contains("reload"));
+        assertEquals(List.of("help"), suggestions);
     }
     
     @Test
@@ -344,6 +440,24 @@ public class AutoStopperCommandTest {
         lenient().when(invocation.source()).thenReturn(source);
         lenient().when(invocation.arguments()).thenReturn(args);
         return invocation;
+    }
+
+    private void grant(String permission) {
+        when(source.getPermissionValue(permission)).thenReturn(Tristate.TRUE);
+    }
+
+    private void deny(String permission) {
+        when(source.getPermissionValue(permission)).thenReturn(Tristate.FALSE);
+    }
+
+    private void assertPermissionDenied(String action) {
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(messageCaptor.capture());
+        String message = messageCaptor.getValue().toString();
+        assertTrue(message.contains("permission"));
+        assertTrue(message.contains(action));
+        assertFalse(message.contains("Docker"));
+        assertFalse(message.contains("container"));
     }
 
     private ConfigSnapshot snapshot(String... serverNames) {

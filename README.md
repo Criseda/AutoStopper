@@ -142,11 +142,23 @@ The minimal load-path smoke harness used during development lives in
 - `/autostopper` or `/as` - Main command
 - `/autostopper help` - Displays help information
 - `/autostopper status` - Shows the status of all monitored servers
-- `/autostopper reload` - Reloads the configuration (requires `autostopper.admin` permission)
+- `/autostopper reload` - Reloads the configuration
 
 ## Permissions
 
-- `autostopper.admin` - Allows use of the reload command
+| Command or action | Permission rule | Behavior when undefined |
+|-------------------|-----------------|-------------------------|
+| `/autostopper`, `/as` | Public | Allowed |
+| `/autostopper help` | Public | Allowed |
+| `/autostopper status` | `autostopper.command.status` or `autostopper.admin` | Denied |
+| `/autostopper reload` | `autostopper.command.reload` or `autostopper.admin` | Denied |
+| Automatic start on connection | No AutoStopper permission; Velocity's normal server connection rules apply | Unchanged |
+| Automatic inactivity stop | Internal configured lifecycle action; no player permission | Not applicable |
+
+`autostopper.admin` is an explicit umbrella: granting it authorizes every
+restricted AutoStopper command, even if a command-specific node is denied.
+AutoStopper does not check or change `velocity.command.server`, and it does not
+expose manual start or stop commands.
 
 ## How It Works
 
