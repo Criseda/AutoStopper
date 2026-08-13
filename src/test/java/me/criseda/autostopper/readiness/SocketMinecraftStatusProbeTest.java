@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.io.EOFException;
+import java.io.InputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.Duration;
@@ -75,7 +77,8 @@ class SocketMinecraftStatusProbeTest {
 
     private void respondWithStatus(ServerSocket server) {
         try (Socket socket = server.accept()) {
-            socket.getInputStream().readNBytes(2);
+            readPacket(socket.getInputStream());
+            readPacket(socket.getInputStream());
             byte[] json = "{\"version\":{\"name\":\"test\",\"protocol\":0}}"
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
             ByteArrayOutputStream payloadBytes = new ByteArrayOutputStream();
@@ -91,6 +94,28 @@ class SocketMinecraftStatusProbeTest {
         } catch (Exception error) {
             throw new RuntimeException(error);
         }
+    }
+
+    private void readPacket(InputStream input) throws Exception {
+        int length = readVarInt(input);
+        if (input.readNBytes(length).length != length) {
+            throw new EOFException("truncated fixture request");
+        }
+    }
+
+    private int readVarInt(InputStream input) throws Exception {
+        int value = 0;
+        for (int position = 0; position < 35; position += 7) {
+            int current = input.read();
+            if (current == -1) {
+                throw new EOFException("truncated fixture VarInt");
+            }
+            value |= (current & 0x7f) << position;
+            if ((current & 0x80) == 0) {
+                return value;
+            }
+        }
+        throw new IllegalArgumentException("fixture VarInt is too long");
     }
 
     private void acceptSilently(ServerSocket server) {

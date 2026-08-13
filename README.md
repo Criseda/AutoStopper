@@ -240,10 +240,13 @@ build hosts must provide `unzip` for the checksummed ZIP distribution.
 
 3. Find the verified plugin JAR at `target/AutoStopper-1.1.2.jar`.
 
-The `verify` lifecycle runs unit tests, strict direct-dependency analysis, and checks the final
-shaded JAR's manifest, Velocity metadata, isolated SnakeYAML classes, and absence of
-Velocity-provided libraries. Use the Wrapper for local and automated builds so the same Maven
-version is used everywhere.
+The `verify` lifecycle runs unit tests, enforces 83.4% line and 66.9% branch coverage, rejects new
+unsuppressed medium/high-confidence SpotBugs findings, performs strict direct-dependency analysis,
+and checks the final shaded JAR's manifest, Velocity metadata, bytecode target, isolated SnakeYAML
+classes, and absence of Velocity-provided libraries. Use the Wrapper for local and automated builds
+so the same Maven version and quality gates are used everywhere. These thresholds floor the
+refreshed 83.4% line / 66.9% branch baseline for the complete Phase 2 codebase; raise them as test
+coverage improves.
 
 ## License
 
