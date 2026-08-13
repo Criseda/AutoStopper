@@ -1,0 +1,17 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Support
+    url: https://github.com/Criseda/AutoStopper/blob/master/SUPPORT.md
+    about: Supported versions, supported runtimes, and where usage questions belong.
+  - name: Configuration reference
+    url: https://github.com/Criseda/AutoStopper/blob/master/docs/configuration.md
+    about: Every option and its exact contract.
+  - name: Troubleshooting guide
+    url: https://github.com/Criseda/AutoStopper/blob/master/docs/troubleshooting.md
+    about: Common installation, Docker, and startup problems.
+  - name: Security guidance
+    url: https://github.com/Criseda/AutoStopper/blob/master/docs/security.md
+    about: The Docker socket trust boundary; read this before installing.
+  - name: Security disclosures
+    url: https://github.com/Criseda/AutoStopper/security/policy
+    about: Report a vulnerability privately. Do not file public security issues.

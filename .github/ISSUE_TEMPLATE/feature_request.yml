@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a new capability or a change to existing behavior.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What gap or limitation does this solve? Describe the situation that motivates the request.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should AutoStopper do instead, in concrete terms? Include configuration or command shape when relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other designs you evaluated and why they fall short.
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: Expected impact
+      description: Who benefits, what it changes for existing users, and any compatibility, security, or performance considerations.
+    validations:
+      required: false
+  - type: markdown
+    attributes:
+      value: |
+        Roadmap work is tracked in issues and delivered in release order. A feature request is a
+        proposal, not a commitment: it may be discussed, prioritized, or closed with a pointer to a
+        better alternative. Usage questions belong in the issue tracker with the `question` label
+        rather than here.

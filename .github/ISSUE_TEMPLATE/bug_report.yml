@@ -1,0 +1,100 @@
+name: Bug report
+description: Report a defect in AutoStopper with the runtime details needed for first-pass triage.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!WARNING]
+        > **Redact everything sensitive before submitting.** Remove tokens, passwords, API keys,
+        > Docker socket paths, private IPs, container secrets, and any file path you consider
+        > sensitive. AutoStopper's Docker socket access is host-root-equivalent; do not paste
+        > daemon or host details that would help an attacker.
+        >
+        > Security vulnerabilities must not be filed here. See
+        > [SECURITY.md](SECURITY.md) for private disclosure.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened instead of the expected behavior?
+      placeholder: Describe the defect, including what you did and what you expected.
+    validations:
+      required: true
+  - type: input
+    id: autostopper-version
+    attributes:
+      label: AutoStopper version
+      description: Version shown by `/autostopper` or in the JAR manifest, and the download source (GitHub Releases or Modrinth).
+      placeholder: "2.0.0 from GitHub Releases, checksum verified"
+    validations:
+      required: true
+  - type: input
+    id: velocity-version
+    attributes:
+      label: Velocity runtime
+      description: Exact Velocity version and build number (for example `4.0.0`, build `6`).
+      placeholder: "4.0.0, build 6"
+    validations:
+      required: true
+  - type: input
+    id: proxy-image
+    attributes:
+      label: Proxy image and JVM
+      description: Proxy container image tag and its Java version (for example `itzg/mc-proxy:2026.8.0-java25` running Java 25).
+      placeholder: "itzg/mc-proxy:2026.8.0-java25 (Java 25)"
+    validations:
+      required: true
+  - type: input
+    id: host-os
+    attributes:
+      label: Host operating system
+      description: OS and distribution/version of the machine running Docker and the proxy.
+      placeholder: "Debian 12 on the Docker host; Windows 11 client"
+    validations:
+      required: true
+  - type: input
+    id: docker-versions
+    attributes:
+      label: Docker / Compose versions
+      description: Output of `docker --version` and `docker compose version`. Include only if relevant to the defect.
+      placeholder: "Docker 28.x, Compose v2.x"
+    validations:
+      required: false
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration
+      description: The `monitored_servers` section of your `config.yml`, redacted. Include only the parts relevant to the defect.
+      placeholder: |
+        monitored_servers:
+          - server_name: purpur
+            container_name: purpur-server
+            readiness:
+              strategy: minecraft_status
+      render: yaml
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs
+      description: |
+        Relevant proxy, plugin, and container logs, redacted. Include timestamps and the command
+        you used to capture them. Raw Docker stderr is kept only in operator logs; paste it here
+        only after removing host and container identifiers you consider sensitive.
+      placeholder: Paste sanitized logs between backticks, e.g. `docker compose logs velocity`.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, deterministic steps. Note which support line you are on (legacy, stable, or preview).
+      placeholder: |
+        1. Start the stable example stack with one mapped server.
+        2. ...
+        3. ...
+      validations:
+        required: true
