@@ -3,6 +3,7 @@ package me.criseda.autostopper.lifecycle;
 import com.velocitypowered.api.proxy.ConnectionRequestBuilder;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.proxy.ServerConnection;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
@@ -101,6 +102,28 @@ class ServerLifecycleCoordinatorTest {
         verify(second.player).sendMessage(argThat(this::containsContainerStopped));
         verify(first.player, never()).createConnectionRequest(any(RegisteredServer.class));
         verify(second.player, never()).createConnectionRequest(any(RegisteredServer.class));
+    }
+
+    @Test
+    void readinessFailureDisconnectsInitialPlayerWithTypedReason() {
+        CompletableFuture<ReadinessResult> readiness = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        when(serverManager.waitForServerReadyAsync(mapping)).thenReturn(readiness);
+        PlayerHarness player = initialPlayer("initial-readiness-waiter");
+
+        CompletableFuture<ConnectionOutcome> outcome =
+                coordinator.requestConnection(player.player, targetServer, mapping);
+        readiness.complete(ReadinessResult.failure(
+                ReadinessResult.Outcome.TIMED_OUT,
+                3,
+                MinecraftStatusProbe.Outcome.UNREACHABLE));
+
+        assertEquals(ConnectionOutcome.SERVER_NOT_READY, outcome.join());
+        verify(player.player).disconnect(argThat(message ->
+                plainText(message).toLowerCase().contains("remained unreachable")));
+        verify(player.player, never()).sendMessage(any(Component.class));
+        verify(player.player, never()).createConnectionRequest(any(RegisteredServer.class));
     }
 
     @Test
@@ -456,9 +479,16 @@ class ServerLifecycleCoordinatorTest {
         lenient().when(player.getUniqueId())
                 .thenReturn(UUID.nameUUIDFromBytes(name.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         lenient().when(player.isActive()).thenReturn(true);
+        lenient().when(player.getCurrentServer()).thenReturn(Optional.of(mock(ServerConnection.class)));
         lenient().when(player.createConnectionRequest(targetServer)).thenReturn(request);
         lenient().when(request.connect()).thenReturn(connection);
         return new PlayerHarness(player, connection);
+    }
+
+    private PlayerHarness initialPlayer(String name) {
+        PlayerHarness player = player(name);
+        when(player.player.getCurrentServer()).thenReturn(Optional.empty());
+        return player;
     }
 
     private boolean containsCancelled(Component message) {
