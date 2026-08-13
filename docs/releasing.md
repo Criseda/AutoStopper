@@ -12,16 +12,19 @@ Keep these controls configured outside the repository:
 
 - protect stable numeric tags matching `*.*.*` from update and deletion;
 - enable immutable GitHub Releases;
-- keep the `release` environment restricted to stable tags, with required maintainer approval,
-  self-review disabled, and administrator bypass disabled;
+- keep the `release` environment restricted to stable tags plus protected branch `master` for the
+  reviewed recovery workflow, with required maintainer approval and administrator bypass disabled;
+- allow self-approval only while AutoStopper has a sole maintainer; require independent approval
+  when a second active maintainer is available;
 - store `MODRINTH_TOKEN` only as an environment secret in `release`; and
 - give the Modrinth token only `VERSION_CREATE` and `VERSION_WRITE` access to AutoStopper project
   `PG4gqnzX`. It does not need repository, organization, or account-wide administration access.
 
 The workflow's generated GitHub token receives read-only permissions until the environment-approved
-publication job, where only `actions: read` and `contents: write` are granted. Never print, copy into
-release notes, or commit either token. Rotate the Modrinth token immediately if its value or a
-publication runner may have been exposed.
+publication job, where normal publication grants only `actions: read` and `contents: write`;
+recovery additionally grants `attestations: read`. Never print, copy into release notes, or commit
+either token. Rotate the Modrinth token immediately if its value or a publication runner may have
+been exposed.
 
 ## Normal release
 
@@ -81,9 +84,15 @@ There is no long-lived hotfix or release branch and nothing to back-merge.
 
 ## Reruns and partial publication
 
-Rerun the failed job first. If a whole workflow rerun is required, the run-attempt artifact name
-avoids overwriting prior evidence; all available attempts must still be byte-identical. Safe states
-resume automatically:
+Rerun the failed job first. If that run's tagged workflow code cannot complete recovery, merge the
+fix through protected `master` without moving the release tag. Add protected branch `master` to the
+`release` environment's deployment branches, then manually run `Validated release recovery` from
+`master` with the immutable tag and failed source-run ID. The recovery workflow requires every
+source candidate gate to have passed, reuses only that run's preserved artifact, verifies its
+manifest, hashes, and build attestation, and enters the same approval-gated publisher.
+
+If a whole tagged workflow rerun is required, the run-attempt artifact name avoids overwriting prior
+evidence; all available attempts must still be byte-identical. Safe states resume automatically:
 
 | Observed state | Recovery |
 |---|---|

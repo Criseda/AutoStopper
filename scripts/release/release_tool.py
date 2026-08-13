@@ -16,6 +16,7 @@ from release_lib import (
     prepare_candidate,
     previous_stable_tag,
     select_candidate,
+    validate_recovery_run,
     validate_source,
     verify_candidate,
 )
@@ -77,6 +78,14 @@ def parser() -> argparse.ArgumentParser:
     select.add_argument("--commit", required=True)
     select.add_argument("--repository-name", required=True)
 
+    recovery = subcommands.add_parser("validate-recovery-run")
+    recovery.add_argument("--run-json", type=Path, required=True)
+    recovery.add_argument("--jobs-json", type=Path, required=True)
+    recovery.add_argument("--source-run-id", type=int, required=True)
+    recovery.add_argument("--version", required=True)
+    recovery.add_argument("--commit", required=True)
+    recovery.add_argument("--repository-name", required=True)
+
     publish = subcommands.add_parser("publish")
     publish.add_argument("--candidate", type=Path, required=True)
     publish.add_argument("--version", required=True)
@@ -125,6 +134,16 @@ def main() -> int:
             arguments.repository_name,
         )
         print(f"Selected release candidate SHA-256 {manifest['artifact']['sha256']}")
+    elif arguments.command == "validate-recovery-run":
+        validate_recovery_run(
+            arguments.run_json,
+            arguments.jobs_json,
+            arguments.source_run_id,
+            arguments.version,
+            arguments.commit,
+            arguments.repository_name,
+        )
+        print(f"Verified failed release run {arguments.source_run_id} for recovery")
     elif arguments.command == "publish":
         manifest = verify_candidate(
             arguments.candidate,
