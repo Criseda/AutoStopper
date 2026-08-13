@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
-public class AutoStopperExecutor implements AutoCloseable {
+public final class AutoStopperExecutor implements AutoCloseable {
     public static final int DEFAULT_WORKER_COUNT = 2;
     public static final int DEFAULT_QUEUE_CAPACITY = 32;
     private static final Duration DEFAULT_SHUTDOWN_TIMEOUT = Duration.ofSeconds(10);

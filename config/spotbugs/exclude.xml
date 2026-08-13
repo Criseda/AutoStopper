@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+    <!--
+      These fields are shared lifecycle collaborators supplied by the plugin composition root.
+      The receiving adapters do not expose the references. Copying their mutable state would
+      split lifecycle ownership and violate the one-operation-per-server invariant.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2" />
+        <Class name="me.criseda.autostopper.commands.AutoStopperCommand" />
+        <Field name="config" />
+    </Match>
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2" />
+        <Class name="me.criseda.autostopper.commands.AutoStopperCommand" />
+        <Field name="activityTracker" />
+    </Match>
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2" />
+        <Class name="me.criseda.autostopper.listeners.ConnectionListener" />
+        <Field name="activityTracker" />
+    </Match>
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2" />
+        <Class name="me.criseda.autostopper.listeners.ServerPreConnectListener" />
+        <Field name="activityTracker" />
+    </Match>
+</FindBugsFilter>
