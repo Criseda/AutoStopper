@@ -1,12 +1,13 @@
 # Modrinth listing source for AutoStopper 2.0.0
 
-This file is the repository-reviewed source for the Modrinth project and version metadata. Issue
-#21 applies it when the already-validated, byte-identical 2.0.0 JAR is published. Do not mark the
-version stable or upload a separately rebuilt artifact before that release workflow passes.
+This file is the repository-reviewed source for the Modrinth project and version metadata. The
+project-page copy and gallery were applied by the maintainer on 2026-08-13. The protected release
+workflow publishes only the already-validated, byte-identical JAR and its version metadata.
 
-The public listing was audited on 2026-08-13. Its old copy still claimed Velocity 3.3+, a generic
+The prior public listing was audited on 2026-08-13. Its old copy claimed Velocity 3.3+, a generic
 Java 21+ runtime, a 900-second default, `plugins/AutoStopper`, unpinned `latest` images, one admin
-permission, and socket-group setup without the host-control warning. Replace that copy in full.
+permission, and socket-group setup without the host-control warning. The replacement below remains
+the source of truth for future listing reviews.
 
 ## Project metadata
 
@@ -24,9 +25,9 @@ permission, and socket-group setup without the host-control warning. Replace tha
 | Installation | `https://github.com/Criseda/AutoStopper#installation` |
 | Migration | `https://github.com/Criseda/AutoStopper/blob/master/docs/migration-1.1.2-to-2.0.0.md` |
 
-Use `docs/assets/autostopper-banner.png` as the project banner/gallery image. Remove stale Wiki and
-Discord links unless maintained destinations are verified during #21. Do not use a README URL as a
-fake Wiki destination.
+Use `docs/assets/autostopper-banner.png` as the project banner/gallery image. Keep Wiki and Discord
+links only while their maintainer-selected destinations remain supported; remove them when they
+become stale.
 
 Upload the banner as the featured Modrinth gallery image with:
 
@@ -193,7 +194,7 @@ and install the same validated JAR published here and on GitHub Releases.
 
 ## 2.0.0 version changelog
 
-Use the `2.0.0` section of [`CHANGELOG.md`](../CHANGELOG.md) as the version changelog. At publication,
-replace `Unreleased` with the release date and replace any `HEAD` comparison link with the protected
-2.0.0 tag. The Modrinth file hash, GitHub asset hash, tag, POM version, Velocity descriptor version,
-and changelog version must all agree under issue #21's release workflow.
+The protected release workflow derives the version changelog from the dated `2.0.0` section of
+[`CHANGELOG.md`](../CHANGELOG.md). The Modrinth file hash, GitHub asset hash, tag, POM version,
+Velocity descriptor version, and changelog version must all agree. See
+[`releasing.md`](releasing.md) for the publication and recovery procedure.

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "artifactName": "AutoStopper-{version}.jar",
+  "javaBytecode": 21,
+  "velocityRuntimes": [
+    {
+      "line": "legacy",
+      "java": 21,
+      "version": "3.5.1",
+      "build": "615",
+      "image": "itzg/mc-proxy:2026.8.0-java21"
+    },
+    {
+      "line": "current",
+      "java": 25,
+      "version": "4.1.0-SNAPSHOT",
+      "build": "16",
+      "image": "itzg/mc-proxy:2026.8.0-java25"
+    }
+  ],
+  "modrinth": {
+    "projectId": "PG4gqnzX",
+    "loaders": [
+      "velocity"
+    ],
+    "gameVersions": [
+      "1.21.4"
+    ],
+    "environment": "server_only"
+  },
+  "releaseCandidate": {
+    "velocityImage": "itzg/mc-proxy:2026.8.0-java25",
+    "velocityVersion": "4.1.0-SNAPSHOT-16",
+    "backendImage": "itzg/minecraft-server:java21",
+    "minecraftVersion": "1.21.4",
+    "purpurBuild": "2416"
+  }
+}

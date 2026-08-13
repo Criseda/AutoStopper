@@ -2,12 +2,29 @@ name: Release candidate E2E
 
 on:
   workflow_call:
+    inputs:
+      version:
+        description: Stable release version; derived from the POM when omitted
+        required: false
+        type: string
+      previous_tag:
+        description: Previous stable tag; derived from repository tags when omitted
+        required: false
+        type: string
+      preserve_release_artifact:
+        description: Prepare, attest, and upload the exact candidate for a tagged release
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
   schedule:
     - cron: "43 2 * * *"
 
 permissions:
+  artifact-metadata: write
+  attestations: write
   contents: read
+  id-token: write
 
 concurrency:
   group: release-candidate-e2e-${{ github.ref }}
@@ -44,11 +61,63 @@ jobs:
           ./mvnw --batch-mode --no-transfer-progress clean verify
           -Prelease-candidate-e2e
 
+      - name: Resolve candidate metadata
+        if: inputs.preserve_release_artifact
+        id: metadata
+        shell: bash
+        env:
+          REQUESTED_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="$REQUESTED_VERSION"
+          if [[ -z "$version" ]]; then
+            version="$(python3 -c 'import xml.etree.ElementTree as E; print(E.parse("pom.xml").getroot().find("{http://maven.apache.org/POM/4.0.0}version").text)')"
+          fi
+          previous_tag="$REQUESTED_PREVIOUS_TAG"
+          if [[ -z "$previous_tag" ]]; then
+            previous_tag="$(python3 scripts/release/release_tool.py previous-tag --version "$version")"
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'previous_tag=%s\n' "$previous_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve the exact validated candidate
+        if: inputs.preserve_release_artifact
+        env:
+          PREVIOUS_TAG: ${{ steps.metadata.outputs.previous_tag }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          python3 scripts/release/release_tool.py prepare-candidate
+          --jar "target/AutoStopper-${RELEASE_VERSION}.jar"
+          --evidence-manifest target/release-candidate-e2e/evidence/candidate-manifest.json
+          --output target/release-artifact
+          --version "${RELEASE_VERSION}"
+          --previous-tag "${PREVIOUS_TAG}"
+          --commit "${GITHUB_SHA}"
+          --repository-name "${GITHUB_REPOSITORY}"
+          --run-url "${RUN_URL}"
+
+      - name: Attest candidate build provenance
+        if: inputs.preserve_release_artifact
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: target/release-artifact/AutoStopper-${{ steps.metadata.outputs.version }}.jar
+
+      - name: Upload validated release candidate
+        if: inputs.preserve_release_artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-candidate-${{ github.sha }}-${{ github.run_attempt }}
+          path: target/release-artifact/
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload failure reports and E2E evidence
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: release-candidate-e2e-failure-${{ github.sha }}
+          name: release-candidate-e2e-failure-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             target/surefire-reports/
             target/site/jacoco/

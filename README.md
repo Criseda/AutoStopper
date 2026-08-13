@@ -22,6 +22,7 @@
   <a href="docs/configuration.md">Configuration</a> ·
   <a href="docs/troubleshooting.md">Troubleshooting</a> ·
   <a href="docs/migration-1.1.2-to-2.0.0.md">Migration</a> ·
+  <a href="docs/releasing.md">Releasing</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="https://modrinth.com/plugin/autostopper">Modrinth</a>
@@ -33,9 +34,9 @@ readiness, simultaneous players share one lifecycle operation, and all Docker wo
 Velocity's event and command workers.
 
 > [!IMPORTANT]
-> These instructions describe the upcoming **2.0.0 release candidate**. Publication of the
-> validated artifact is tracked by [issue #21](https://github.com/Criseda/AutoStopper/issues/21).
-> Until then, 1.1.2 remains the migration source, not a substitute 2.0.0 artifact.
+> These instructions describe **AutoStopper 2.0.0**. Download only from the project's GitHub or
+> Modrinth release pages and verify the published SHA-256 checksum before installation. Users of
+> 1.1.2 should follow the complete migration guide before replacing the artifact.
 
 ## Why AutoStopper?
 
@@ -196,7 +197,8 @@ release-candidate gates are documented in [`smoke/README.md`](smoke/README.md) a
 short-lived branches and pull requests; the former long-lived `dev` flow is retired. Required
 checks, review and merge rules, branch cleanup, hotfixes, version ownership, tag points, and the
 historical `dev`/`master` reconciliation are documented in
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+[`CONTRIBUTING.md`](CONTRIBUTING.md). The protected, byte-identical GitHub and Modrinth publication
+flow is documented in [`docs/releasing.md`](docs/releasing.md).
 
 ## License and credits
 

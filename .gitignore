@@ -22,6 +22,10 @@ nb-configuration.xml
 # Compiled class files
 *.class
 
+# Python release tooling caches
+__pycache__/
+*.py[cod]
+
 # Log files
 *.log
 logs/

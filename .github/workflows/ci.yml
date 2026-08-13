@@ -1,6 +1,7 @@
 name: Deterministic CI
 
 on:
+  workflow_call:
   push:
     branches:
       - master
@@ -44,6 +45,10 @@ jobs:
 
       - name: Verify with Maven Wrapper
         run: ./mvnw --batch-mode --no-transfer-progress clean verify
+
+      - name: Test release tooling
+        if: matrix.java == '21'
+        run: python3 -m unittest discover -s scripts/release -p "test_*.py"
 
       - name: Upload failure reports
         if: failure()
