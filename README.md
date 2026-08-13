@@ -74,7 +74,10 @@ is tested on both runtime lines below; keep each proxy image and Velocity build 
 
 Velocity 4.1 is currently supplied by PaperMC as a snapshot. Do not run that build on Java 21.
 The release-candidate stack is tested with Purpur 1.21.4; backend Java is independent of the proxy
-JVM. Other Velocity, Java, proxy-image, and backend combinations are not part of the tested matrix.
+JVM. AutoStopper observes Velocity API events and a generic Minecraft status request rather than
+backend-specific APIs, so it is compatible with Minecraft Java Edition 1.7.2 through 26.2 when used
+through a supported Velocity runtime; only the listed backend is directly exercised. Other
+Velocity, Java, proxy-image, and backend combinations are not part of the tested matrix.
 
 ## Installation
 

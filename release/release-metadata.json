@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "artifactName": "AutoStopper-{version}.jar",
   "previousTag": "1.1.2",
   "javaBytecode": 21,
@@ -24,8 +24,9 @@
     "loaders": [
       "velocity"
     ],
-    "gameVersions": [
-      "1.21.4"
+    "minecraftVersionRange": [
+      "1.7.2",
+      "26.2"
     ],
     "environment": "server_only"
   },

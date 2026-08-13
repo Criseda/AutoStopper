@@ -75,14 +75,54 @@ def digest_bytes(content: bytes, algorithm: str = "sha256") -> str:
     return hashlib.new(algorithm, content).hexdigest()
 
 
+MINECRAFT_RELEASE_VERSIONS: tuple[str, ...] = (
+    "1.7.2", "1.7.3", "1.7.4", "1.7.5", "1.7.6", "1.7.7", "1.7.8", "1.7.9",
+    "1.7.10", "1.8", "1.8.1", "1.8.2", "1.8.3", "1.8.4", "1.8.5", "1.8.6",
+    "1.8.7", "1.8.8", "1.8.9", "1.9", "1.9.1", "1.9.2", "1.9.3", "1.9.4",
+    "1.10", "1.10.1", "1.10.2", "1.11", "1.11.1", "1.11.2", "1.12", "1.12.1",
+    "1.12.2", "1.13", "1.13.1", "1.13.2", "1.14", "1.14.1", "1.14.2",
+    "1.14.3", "1.14.4", "1.15", "1.15.1", "1.15.2", "1.16", "1.16.1",
+    "1.16.2", "1.16.3", "1.16.4", "1.16.5", "1.17", "1.17.1", "1.18",
+    "1.18.1", "1.18.2", "1.19", "1.19.1", "1.19.2", "1.19.3", "1.19.4",
+    "1.20", "1.20.1", "1.20.2", "1.20.3", "1.20.4", "1.20.5", "1.20.6",
+    "1.21", "1.21.1", "1.21.2", "1.21.3", "1.21.4", "1.21.5", "1.21.6",
+    "1.21.7", "1.21.8", "1.21.9", "1.21.10", "1.21.11", "26.1", "26.1.1",
+    "26.1.2", "26.2",
+)
+"""Ordered release catalogue of supported Minecraft Java Edition versions.
+
+Must be extended when a new Minecraft release ships; a release fails loudly if a
+configured range endpoint is not present here. Mirrors the current release-type
+game versions offered by Modrinth, oldest first.
+"""
+
+
+def expand_minecraft_range(first: str, last: str) -> tuple[str, ...]:
+    if first not in MINECRAFT_RELEASE_VERSIONS:
+        raise ReleaseError(
+            f"Minecraft release range start {first!r} is not in the known release catalogue"
+        )
+    if last not in MINECRAFT_RELEASE_VERSIONS:
+        raise ReleaseError(
+            f"Minecraft release range end {last!r} is not in the known release catalogue"
+        )
+    start = MINECRAFT_RELEASE_VERSIONS.index(first)
+    end = MINECRAFT_RELEASE_VERSIONS.index(last)
+    if start > end:
+        raise ReleaseError(
+            f"Minecraft release range start {first!r} sorts after end {last!r}"
+        )
+    return MINECRAFT_RELEASE_VERSIONS[start : end + 1]
+
+
 def load_metadata(repository: Path) -> dict[str, Any]:
     metadata_path = repository / "release" / "release-metadata.json"
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ReleaseError(f"Cannot read {metadata_path}: {error}") from error
-    if metadata.get("schemaVersion") != 1:
-        raise ReleaseError("release-metadata.json must use schemaVersion 1")
+    if metadata.get("schemaVersion") != 2:
+        raise ReleaseError("release-metadata.json must use schemaVersion 2")
     return metadata
 
 
@@ -170,10 +210,12 @@ def validate_source(repository: Path, version: str, previous_tag: str) -> str:
         raise ReleaseError("release metadata has the wrong Modrinth project ID")
     if modrinth.get("loaders") != ["velocity"]:
         raise ReleaseError("Modrinth loader metadata must be exactly Velocity")
-    if modrinth.get("gameVersions") != ["1.21.4"]:
+    minecraft_range = modrinth.get("minecraftVersionRange")
+    if minecraft_range != ["1.7.2", "26.2"]:
         raise ReleaseError(
-            "Modrinth game-version metadata must match the tested 1.21.4 backend"
+            "Modrinth minecraft-version range must be the supported Velocity range 1.7.2 to 26.2"
         )
+    expand_minecraft_range(*minecraft_range)
     if modrinth.get("environment") != "server_only":
         raise ReleaseError("Modrinth environment must be server_only")
     if metadata.get("javaBytecode") != 21:
@@ -330,7 +372,14 @@ def prepare_candidate(
         "compatibility": {
             "javaBytecode": metadata["javaBytecode"],
             "velocityRuntimes": metadata["velocityRuntimes"],
-            "modrinth": metadata["modrinth"],
+            "modrinth": {
+                "projectId": metadata["modrinth"]["projectId"],
+                "loaders": metadata["modrinth"]["loaders"],
+                "gameVersions": list(
+                    expand_minecraft_range(*metadata["modrinth"]["minecraftVersionRange"])
+                ),
+                "environment": metadata["modrinth"]["environment"],
+            },
             "releaseCandidate": metadata["releaseCandidate"],
         },
         "evidence": {

@@ -29,8 +29,10 @@ been exposed.
 ## Normal release
 
 1. Prepare a short-lived release pull request from current `master`. Coordinate the stable
-   `X.Y.Z` value in `pom.xml`, the dated `CHANGELOG.md` section and comparison link, and any public
-   compatibility metadata. The source Velocity descriptor must remain `${project.version}`.
+   `X.Y.Z` value in `pom.xml`, the dated `CHANGELOG.md` section and comparison link, and the
+   `minecraftVersionRange` endpoints in `release/release-metadata.json` when the supported
+   Minecraft range changes. The source Velocity descriptor must remain `${project.version}`.
+   Do not hand-edit the Modrinth game-version selector; the workflow derives it from the range.
 2. Merge only after the protected `master` checks pass. Do not tag an unmerged branch commit.
 3. From a clean, current `master`, create a numeric tag with no `v` prefix at the exact merged
    commit, then push only that tag:
@@ -94,6 +96,13 @@ Both public note texts are derived from exactly one dated `## [X.Y.Z]` section i
 5. Both generated note files travel inside the candidate bundle, and their digests are recorded in
    the release manifest. Publication refuses any bundle whose note files do not match those
    digests.
+
+The Modrinth game-version list is likewise derived rather than hand-curated: `prepare-candidate`
+expands the `minecraftVersionRange` endpoints from `release/release-metadata.json` against the
+release catalogue in `scripts/release/release_lib.py` into every release in between (currently
+Java Edition 1.7.2 through 26.2), and records the exact expanded list in the candidate manifest.
+Publication rejects a range whose endpoint is unknown or reversed, so a release cannot silently
+publish an empty, partial, or mistyped selector.
 
 ## Hotfix
 

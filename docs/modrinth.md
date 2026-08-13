@@ -48,14 +48,21 @@ so the published project page uses its own gallery asset.
 | Version type | Release only after all Phase 4 gates pass |
 | Loader | Velocity |
 | Java | Java 21 bytecode; validated proxy runtimes are Java 21 and Java 25 as paired below |
-| Validated Minecraft backend | Java Edition 1.21.4 (Purpur release-candidate stack) |
+| Compatible Minecraft range | Java Edition 1.7.2 through 26.2 when used through a supported Velocity runtime |
+| Directly tested backend | Java Edition 1.21.4 (Purpur release-candidate stack) |
 | Dependencies | None declared on Modrinth; Docker Engine/CLI/socket access are external operational prerequisites |
 | File | Exact shaded JAR already validated by CI and the release-candidate E2E gate |
 | Integrity | Publish and cross-check the same SHA-256 as the GitHub release |
 
-Modrinth's Minecraft game-version tags do not express the proxy/JVM contract. Select only backend
-versions explicitly validated for the release. Do not describe untested newer Velocity, Java,
-image, or backend combinations as supported merely because Modrinth offers a broad selector.
+The release pipeline derives the full per-version game list from the `minecraftVersionRange`
+endpoints in [`release-metadata.json`](../release/release-metadata.json), expanded against the
+release catalogue in `scripts/release/release_lib.py`; the 2.0.0 listing was created from the same
+list. Modrinth's Minecraft game-version tags do not express the proxy/JVM contract. The full range
+is compatible because AutoStopper uses Velocity API events and a generic Minecraft status request
+rather than backend-specific APIs; only the listed backend is directly exercised by the
+release-candidate stack. Backend implementation and Velocity player-forwarding requirements still
+apply, and untested newer Velocity, Java, proxy-image, or backend combinations are not described as
+supported merely because Modrinth offers a broad selector.
 
 ## Replacement project description
 
@@ -195,6 +202,7 @@ and install the same validated JAR published here and on GitHub Releases.
 ## 2.0.0 version changelog
 
 The protected release workflow derives the version changelog from the dated `2.0.0` section of
-[`CHANGELOG.md`](../CHANGELOG.md). The Modrinth file hash, GitHub asset hash, tag, POM version,
-Velocity descriptor version, and changelog version must all agree. See
+[`CHANGELOG.md`](../CHANGELOG.md) and the game-version list from the `minecraftVersionRange` in
+[`release-metadata.json`](../release/release-metadata.json). The Modrinth file hash, GitHub asset
+hash, tag, POM version, Velocity descriptor version, and changelog version must all agree. See
 [`releasing.md`](releasing.md) for the publication and recovery procedure.
