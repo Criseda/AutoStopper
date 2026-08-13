@@ -1,25 +1,53 @@
 ![AutoStopper - Empty servers sleep. Players wake them.](docs/assets/autostopper-banner.png)
 
-# AutoStopper
+<h1 align="center">AutoStopper</h1>
 
-AutoStopper is a Velocity proxy plugin that starts mapped Docker-based Minecraft servers when a
-player connects and stops them after a configurable period with no players. Startup waits for a
-real readiness signal, concurrent connection requests share one startup, and Docker work runs off
+<p align="center"><strong>Empty servers sleep. Players wake them.</strong></p>
+
+<p align="center">
+  Automatic, readiness-aware Docker lifecycle management for Velocity networks.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml"><img alt="Deterministic CI" src="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml/badge.svg?branch=master"></a>
+  <a href="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml"><img alt="Release candidate E2E" src="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml/badge.svg?branch=master&amp;event=schedule"></a>
+  <a href="#supported-runtimes"><img alt="Java 21 bytecode" src="https://img.shields.io/badge/Java-21%20bytecode-ED8B00?logo=openjdk&amp;logoColor=white"></a>
+  <a href="#supported-runtimes"><img alt="Velocity 3.5.1 and 4.1" src="https://img.shields.io/badge/Velocity-3.5.1%20%7C%204.1-5865F2"></a>
+  <a href="https://modrinth.com/plugin/autostopper"><img alt="Modrinth downloads" src="https://img.shields.io/modrinth/dt/PG4gqnzX?logo=modrinth&amp;label=downloads"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/Criseda/AutoStopper"></a>
+</p>
+
+<p align="center">
+  <a href="#installation">Installation</a> ·
+  <a href="docs/configuration.md">Configuration</a> ·
+  <a href="docs/troubleshooting.md">Troubleshooting</a> ·
+  <a href="docs/migration-1.1.2-to-2.0.0.md">Migration</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="https://modrinth.com/plugin/autostopper">Modrinth</a>
+</p>
+
+AutoStopper lets a Velocity network stop mapped Docker-based Minecraft servers when they are empty
+and wake them automatically when players return. Startup waits for real Minecraft or Docker-health
+readiness, simultaneous players share one lifecycle operation, and all Docker work stays off
 Velocity's event and command workers.
 
-> **2.0.0 release-candidate documentation:** the instructions below describe the upcoming 2.0.0
-> release. Publication of the validated artifact is tracked by
-> [issue #21](https://github.com/Criseda/AutoStopper/issues/21). Until then, 1.1.2 remains the
-> migration source, not a substitute 2.0.0 artifact.
+> [!IMPORTANT]
+> These instructions describe the upcoming **2.0.0 release candidate**. Publication of the
+> validated artifact is tracked by [issue #21](https://github.com/Criseda/AutoStopper/issues/21).
+> Until then, 1.1.2 remains the migration source, not a substitute 2.0.0 artifact.
 
-- [GitHub releases](https://github.com/Criseda/AutoStopper/releases)
-- [Modrinth](https://modrinth.com/plugin/autostopper)
-- [Changelog](CHANGELOG.md)
-- [Migration from 1.1.2](docs/migration-1.1.2-to-2.0.0.md)
+## Why AutoStopper?
+
+| | |
+|---|---|
+| **⚡ Wake on demand**<br>Players connect normally while AutoStopper starts a sleeping backend. | **🌙 Sleep when empty**<br>Mapped containers stop after a configurable player-free inactivity period. |
+| **✓ Wait for real readiness**<br>Use Minecraft status, Docker health, or either signal—not a blind delay. | **👥 Share simultaneous startups**<br>Multiple arriving players wait on one bounded lifecycle operation. |
+| **↻ Recover safely**<br>Failed stops retry with capped backoff; invalid reloads keep the prior configuration. | **◎ Diagnose quickly**<br>`/autostopper status` reports safe details and concrete operator actions. |
 
 ## Security boundary
 
-> **DANGER — HOST-ROOT-EQUIVALENT ACCESS:** The tested installation mounts
+> [!WARNING]
+> **Docker socket access is host-root-equivalent.** The tested installation mounts
 > `/var/run/docker.sock` into the Velocity container. Any process that can use that socket can
 > control the Docker host with privileges effectively equivalent to root. Adding the `bungeecord`
 > user to the socket's group changes which user can reach the socket; it does **not** create
