@@ -1,259 +1,196 @@
+![AutoStopper - Empty servers sleep. Players wake them.](docs/assets/autostopper-banner.png)
+
+<h1 align="center">AutoStopper</h1>
+
+<p align="center"><strong>Empty servers sleep. Players wake them.</strong></p>
+
 <p align="center">
-  <img src="https://cdn.modrinth.com/data/PG4gqnzX/images/b2003a220072c1bfbb6255af452a39dab08a5377.png" width="200" alt="AutoStopper Logo">
+  Automatic, readiness-aware Docker lifecycle management for Velocity networks.
 </p>
 
-# AutoStopper
+<p align="center">
+  <a href="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml"><img alt="Deterministic CI" src="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml/badge.svg?branch=master"></a>
+  <a href="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml"><img alt="Release candidate E2E" src="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml/badge.svg?branch=master&amp;event=schedule"></a>
+  <a href="#supported-runtimes"><img alt="Java 21 bytecode" src="https://img.shields.io/badge/Java-21%20bytecode-ED8B00?logo=openjdk&amp;logoColor=white"></a>
+  <a href="#supported-runtimes"><img alt="Velocity 3.5.1 and 4.1" src="https://img.shields.io/badge/Velocity-3.5.1%20%7C%204.1-5865F2"></a>
+  <a href="https://modrinth.com/plugin/autostopper"><img alt="Modrinth downloads" src="https://img.shields.io/modrinth/dt/PG4gqnzX?logo=modrinth&amp;label=downloads"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/Criseda/AutoStopper"></a>
+</p>
 
-AutoStopper is a Velocity proxy plugin that automatically stops and starts Minecraft server containers based on player activity. It helps server administrators save resources by shutting down inactive Docker-based Minecraft servers.
+<p align="center">
+  <a href="#installation">Installation</a> ·
+  <a href="docs/configuration.md">Configuration</a> ·
+  <a href="docs/troubleshooting.md">Troubleshooting</a> ·
+  <a href="docs/migration-1.1.2-to-2.0.0.md">Migration</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="https://modrinth.com/plugin/autostopper">Modrinth</a>
+</p>
 
-## Download links
+AutoStopper lets a Velocity network stop mapped Docker-based Minecraft servers when they are empty
+and wake them automatically when players return. Startup waits for real Minecraft or Docker-health
+readiness, simultaneous players share one lifecycle operation, and all Docker work stays off
+Velocity's event and command workers.
 
-- [Modrinth](https://modrinth.com/plugin/autostopper)
+> [!IMPORTANT]
+> These instructions describe the upcoming **2.0.0 release candidate**. Publication of the
+> validated artifact is tracked by [issue #21](https://github.com/Criseda/AutoStopper/issues/21).
+> Until then, 1.1.2 remains the migration source, not a substitute 2.0.0 artifact.
 
-## Features
+## Why AutoStopper?
 
-- Automatically monitors server activity
-- Stops inactive Docker containers after a configurable timeout
-- Starts servers on-demand when players try to connect
-- Seamlessly connects players to servers after starting them
-- Maintains server state tracking
+| | |
+|---|---|
+| **⚡ Wake on demand**<br>Players connect normally while AutoStopper starts a sleeping backend. | **🌙 Sleep when empty**<br>Mapped containers stop after a configurable player-free inactivity period. |
+| **✓ Wait for real readiness**<br>Use Minecraft status, Docker health, or either signal—not a blind delay. | **👥 Share simultaneous startups**<br>Multiple arriving players wait on one bounded lifecycle operation. |
+| **↻ Recover safely**<br>Failed stops retry with capped backoff; invalid reloads keep the prior configuration. | **◎ Diagnose quickly**<br>`/autostopper status` reports safe details and concrete operator actions. |
 
-## Requirements
+## Security boundary
 
-- Velocity proxy server (3.5.1 or newer)
-- Docker environment with itzg/minecraft-server containers
-- Docker socket mounted to the Velocity container
-- Java 21+
+> [!WARNING]
+> **Docker socket access is host-root-equivalent.** The tested installation mounts
+> `/var/run/docker.sock` into the Velocity container. Any process that can use that socket can
+> control the Docker host with privileges effectively equivalent to root. Adding the `bungeecord`
+> user to the socket's group changes which user can reach the socket; it does **not** create
+> ordinary non-root isolation. Treat a compromise of Velocity, AutoStopper, another proxy plugin,
+> or the proxy container as a compromise of the Docker host.
 
-## Support matrix
+Use a dedicated host or VM where practical, install only trusted proxy plugins, restrict host and
+Compose-file access, do not expose the Docker API over TCP, and grant the proxy access only on a
+host whose containers it is allowed to control. A read-only socket mount is not sufficient because
+AutoStopper must start and stop containers. See [Docker socket security](docs/security.md) before
+installing.
 
-AutoStopper is compiled as **one Java 21 bytecode artifact** against the latest
-stable 3.x Velocity API (3.5.1). The same packaged JAR is system-tested on both supported
-runtime lines:
+## Supported runtimes
 
-| Runtime line | Java | Velocity runtime (pinned)          | Status |
-|--------------|------|-------------------------------------|--------|
-| Legacy       | 21   | `velocity-3.5.1-615.jar`            | Tested |
-| Current      | 25   | `velocity-4.1.0-SNAPSHOT-16.jar`    | Tested |
+AutoStopper is one Java 21 bytecode JAR compiled against Velocity API 3.5.1. The same packaged JAR
+is tested on both runtime lines below; keep each proxy image and Velocity build together.
 
-The `4.1.0` line is currently distributed as PaperMC snapshot builds; a stable
-`4.1.0` download is pinned here as soon as one is published. The proxy's Java
-version must always match the velocity bytecode line (see the Docker setup
-notes below).
+| Support line | Proxy image | Proxy JVM | Velocity runtime | Example |
+|---|---|---:|---|---|
+| Legacy | `itzg/mc-proxy:2026.8.0-java21` | 21 | `3.5.1`, build `615` | [`examples/velocity-legacy`](examples/velocity-legacy/) |
+| Current | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.1.0-SNAPSHOT`, build `16` | [`examples/velocity-current`](examples/velocity-current/) |
 
-The packaged-runtime harness lives in [`smoke/`](smoke/README.md) and is run with:
-
-```powershell
-.\mvnw.cmd verify -Psystem-tests
-```
+Velocity 4.1 is currently supplied by PaperMC as a snapshot. Do not run that build on Java 21.
+The release-candidate stack is tested with Purpur 1.21.4; backend Java is independent of the proxy
+JVM. Other Velocity, Java, proxy-image, and backend combinations are not part of the tested matrix.
 
 ## Installation
 
-1. Download the latest AutoStopper JAR from the [releases](https://github.com/criseda/AutoStopper/releases) page
-2. Place the JAR in your Velocity server's `plugins` directory
-3. Start (or restart) your Velocity server
-4. Edit the generated configuration file to match your setup
+Prerequisites are Docker Engine with Linux containers and Docker Compose v2, enough access to create
+the backend containers in advance, and acceptance of the security boundary above.
 
-## Configuration
+1. Copy one complete support-line directory to the Docker host. Do not combine the Java 21 image
+   from one example with the Velocity 4.1 build from the other.
+2. Download the 2.0.0 JAR from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) or
+   [Modrinth](https://modrinth.com/plugin/autostopper) after it is published. Put the unchanged JAR
+   at `velocity_server/plugins/AutoStopper.jar` inside the copied example directory.
+3. Review the socket mount and entrypoint in `docker-compose.yml`, then start the stack:
 
-After the first run, AutoStopper will generate a `config.yml` in the `plugins/AutoStopper` directory:
-
-```yaml
-# Time in seconds before an inactive server is stopped
-inactivity_timeout_seconds: 900
-
-# Hard deadline for cancelling AutoStopper work during proxy shutdown
-shutdown_timeout_seconds: 10
-
-# Failed stops use capped exponential backoff
-stop_retry:
-  max_attempts: 3
-  initial_backoff_seconds: 60
-  max_backoff_seconds: 300
-
-# List of servers AutoStopper should manage
-monitored_servers:
-  - server_name: purpur
-    container_name: purpur-server
-    readiness:
-      strategy: minecraft_status
-      target_host: purpur
-      target_port: 25565
-      probe_interval_millis: 1000
-      timeout_seconds: 120
-      connect_timeout_millis: 1000
-      read_timeout_millis: 1000
-  - server_name: fabric
-    container_name: fabric-server
-    readiness:
-      strategy: docker_health
-```
-
-### Configuration Options
-
-- `inactivity_timeout_seconds`: Time in seconds a server must be inactive before being shut down (default: 300 seconds/5 minutes)
-- `shutdown_timeout_seconds`: Hard deadline for cancelling scheduled checks, lifecycle requests,
-  readiness probes, Docker CLI subprocesses, and plugin worker threads during proxy shutdown
-  (default: `10`). Managed Minecraft containers are left unchanged.
-- `stop_retry`: Bounded retry policy for failed or timed-out automatic stops. Activity is retained
-  between attempts, and a successful stop is the only outcome that clears it.
-  - `max_attempts`: Maximum attempts in one stop cycle (default: `3`, maximum: `100`).
-  - `initial_backoff_seconds`: Delay after the first failed attempt (default: `60`).
-  - `max_backoff_seconds`: Cap for exponential backoff (default: `300`); must not be less
-    than `initial_backoff_seconds`.
-- `monitored_servers`: List of server mappings
-  - `server_name`: Name of the server in Velocity configuration
-  - `container_name`: Corresponding Docker container name
-  - `readiness`: Optional per-server readiness policy. Existing configurations default to a
-    bounded `minecraft_status` probe against the server address registered in Velocity.
-    - `strategy`: `minecraft_status`, `docker_health`, or `docker_health_or_status`.
-      The combined strategy accepts either a healthy Docker health check or a valid
-      Minecraft status response, and is the explicit fallback option for images that
-      may not define a health check.
-    - `target_host` and `target_port`: Minecraft status target. Configure both or neither;
-      when omitted, AutoStopper uses the address registered for `server_name` in Velocity.
-      These values are ignored by the Docker-health-only strategy.
-    - `probe_interval_millis`: Delay between attempts (default: `1000`).
-    - `timeout_seconds`: Overall readiness deadline (default: `120`).
-    - `connect_timeout_millis`: Maximum socket connection time per Minecraft probe
-      (default: `1000`).
-    - `read_timeout_millis`: Maximum response-read time per Minecraft probe
-      (default: `1000`).
-
-Minecraft readiness uses the status protocol, not a bare open port or log text. Docker
-health readiness requires the container image to define a Docker `HEALTHCHECK`; otherwise
-`docker_health` fails immediately with a configuration-oriented diagnostic.
-
-## Docker Setup
-
-AutoStopper requires the Docker socket to be mounted in your Velocity container.
-Tested, fully pinned Compose examples are provided for both support lines
-(issue #3 matrix):
-
-| Support line | Example                                    | mc-proxy image             | Velocity build |
-|--------------|--------------------------------------------|----------------------------|----------------|
-| Legacy       | [`examples/velocity-legacy/`](examples/velocity-legacy/) | `itzg/mc-proxy:2026.8.0-java21` | 3.5.1 (build 615) |
-| Current      | [`examples/velocity-current/`](examples/velocity-current/) | `itzg/mc-proxy:2026.8.0-java25` | 4.1.0-SNAPSHOT (build 16) |
-
-Each example contains a `docker-compose.yml` and a `docker-entrypoint.sh`:
-
-1. ```bash
-   cd examples/velocity-legacy   # or examples/velocity-current
-   ```
-2. Drop the AutoStopper JAR into `./velocity_server/plugins/`
-3. ```bash
+   ```sh
    docker compose up -d
    ```
 
-Both examples are boot-tested against the exact pinned builds in the support
-matrix. Copy one of them to your server and adapt the Minecraft services.
+4. Add every managed backend to the `[servers]` section of
+   `velocity_server/velocity.toml`. The key must exactly match AutoStopper's `server_name`:
 
-### Upgrade Note
+   ```toml
+   [servers]
+   purpur = "purpur:25565"
+   fabric = "fabric:25565"
+   try = ["purpur"]
+   ```
 
-The mc-proxy image Java version and the Velocity bytecode version must move
-together: the legacy example uses a Java 21 image with Velocity 3.5.1 (Java 21
-bytecode), the current example uses a Java 25 image with Velocity 4.1 (Java 25
-bytecode). Never mix, e.g., a Java 21 image with a Velocity 4.x build.
+5. Edit the generated lowercase data path
+   `velocity_server/plugins/autostopper/config.yml`. Start with one mapping if desired:
 
-### Verify It Works / Troubleshooting
+   ```yaml
+   inactivity_timeout_seconds: 300
+   shutdown_timeout_seconds: 10
+   stop_retry:
+     max_attempts: 3
+     initial_backoff_seconds: 60
+     max_backoff_seconds: 300
+   monitored_servers:
+     - server_name: purpur
+       container_name: purpur-server
+       readiness:
+         strategy: minecraft_status
+         target_host: purpur
+         target_port: 25565
+         probe_interval_millis: 1000
+         timeout_seconds: 120
+         connect_timeout_millis: 1000
+         read_timeout_millis: 1000
+   ```
 
-Check the proxy log for the plugin's startup line:
+6. Restart the proxy, or run `/autostopper reload` with the required permission. Verify startup and
+   the mapping preflight:
 
-```bash
-docker logs velocity-server | grep "AutoStopper"
+   ```sh
+   docker compose logs velocity
+   docker compose ps
+   ```
+
+   In Velocity, `/autostopper status` should report the monitored server as `READY` or `STOPPED`.
+   `DOCKER_UNAVAILABLE` or `FAILED` includes an operator-safe detail such as a missing container;
+   raw Docker stderr remains only in the proxy log.
+
+Managed containers must already exist and use `restart: "no"` so Docker does not immediately undo
+an inactivity stop. Unmonitored hubs or lobbies are not intercepted or stopped by AutoStopper and
+may retain `restart: unless-stopped`.
+
+## Behavior
+
+- A connection to a monitored server is held while AutoStopper inspects or starts its mapped
+  container and completes the configured readiness check. Simultaneous players share that work.
+- A connection to an unmonitored Velocity server proceeds normally; AutoStopper never infers a
+  container name and never manages it.
+- The inactivity scan runs once per minute. A mapped, running server with no players is stopped
+  after its configured inactivity period.
+- Failed and timed-out automatic stops retain activity and use bounded exponential retry. After the
+  attempt limit, a new retry cycle requires another full inactivity period.
+- A successful reload atomically replaces the configuration and runs a Docker mapping preflight. A
+  malformed or invalid reload is rejected in full and the previous snapshot remains active.
+- Proxy shutdown cancels plugin work within `shutdown_timeout_seconds`; it does not stop managed
+  Minecraft containers.
+
+See the [configuration reference](docs/configuration.md) and
+[troubleshooting guide](docs/troubleshooting.md) for the complete contract.
+
+## Commands and permissions
+
+| Command | Required permission | Notes |
+|---|---|---|
+| `/autostopper`, `/as` | None | Shows plugin information. |
+| `/autostopper help` | None | Shows only commands the source may use. |
+| `/autostopper status` | `autostopper.command.status` or `autostopper.admin` | Collects current operational state for every mapping. |
+| `/autostopper reload` | `autostopper.command.reload` or `autostopper.admin` | Atomically validates, applies, and preflights the new configuration. |
+
+`autostopper.admin` is an explicit umbrella. If it is granted, it authorizes both restricted
+commands even when a command-specific node is not granted. Automatic starts and stops have no
+player permission node; normal Velocity connection rules still apply. AutoStopper does not register
+or replace `/server`, does not check or change `velocity.command.server`, and exposes no manual
+start or stop command.
+
+## Building and verification
+
+Builds require JDK 21 through 25. The committed Maven Wrapper pins Maven 3.9.16 and is the canonical
+entry point:
+
+```sh
+./mvnw --batch-mode --no-transfer-progress clean verify
 ```
 
-If the plugin fails to load, look for a Java bytecode mismatch:
+```powershell
+.\mvnw.cmd --batch-mode --no-transfer-progress clean verify
+```
 
-- `Unsupported class file major version` / `class file version 69` means the
-  proxy JVM is too old for the pinned Velocity build - keep the Velocity
-  version and the `itzg/mc-proxy` java tag in the same support line.
-- A generic `Plugin ... failed to load` without a bytecode error usually means
-  the JAR is not in the profile's `plugins` directory or the wrong JAR name was
-  used.
+The verified shaded JAR is written under `target/`. The optional packaged-runtime and live
+release-candidate gates are documented in [`smoke/README.md`](smoke/README.md) and
+[`e2e/README.md`](e2e/README.md).
 
-The minimal load-path smoke harness used during development lives in
-[`smoke/`](smoke/README.md).
+## License and credits
 
-### Important Docker Configuration Notes
-
-1. The Velocity container must have Docker CLI installed, which is why the entrypoint script installs it
-2. The Docker socket must be mounted (`/var/run/docker.sock:/var/run/docker.sock`)
-3. The script automatically handles permissions by detecting the socket group ID and adding the server user to it.
-4. Set `restart: "no"` for managed servers so Docker doesn't automatically restart them
-5. Keep any hub/lobby servers with `restart: unless-stopped` if you want them to always be available
-
-## Commands
-
-- `/autostopper` or `/as` - Main command
-- `/autostopper help` - Displays help information
-- `/autostopper status` - Shows the status of all monitored servers
-- `/autostopper reload` - Reloads the configuration
-
-## Permissions
-
-| Command or action | Permission rule | Behavior when undefined |
-|-------------------|-----------------|-------------------------|
-| `/autostopper`, `/as` | Public | Allowed |
-| `/autostopper help` | Public | Allowed |
-| `/autostopper status` | `autostopper.command.status` or `autostopper.admin` | Denied |
-| `/autostopper reload` | `autostopper.command.reload` or `autostopper.admin` | Denied |
-| Automatic start on connection | No AutoStopper permission; Velocity's normal server connection rules apply | Unchanged |
-| Automatic inactivity stop | Internal configured lifecycle action; no player permission | Not applicable |
-
-`autostopper.admin` is an explicit umbrella: granting it authorizes every
-restricted AutoStopper command, even if a command-specific node is denied.
-AutoStopper does not check or change `velocity.command.server`, and it does not
-expose manual start or stop commands.
-
-## How It Works
-
-1. When a player attempts to connect to a monitored server:
-   - AutoStopper separates the Docker container's running state from Minecraft readiness
-   - If the server is stopped, AutoStopper starts the Docker container
-   - Whether the container was already running or was just started, AutoStopper:
-     - Waits for the configured Docker-health and/or Minecraft status check to pass
-     - Automatically connects the player once the server is ready
-
-2. The plugin tracks the last activity time for each server
-3. A scheduled task checks for inactive servers and stops them after the configured timeout period
-4. Servers that are always needed (like hubs/lobbies) can be excluded from monitoring
-
-## Building from Source
-
-AutoStopper requires JDK 21 through 25. The committed Maven Wrapper is the canonical build entry
-point and downloads the pinned Maven distribution after verifying its checksum. Linux and macOS
-build hosts must provide `unzip` for the checksummed ZIP distribution.
-
-1. Clone the repository.
-2. Run the complete build on Linux/macOS or CI:
-
-   ```bash
-   ./mvnw verify
-   ```
-
-   On Windows, run:
-
-   ```powershell
-   .\mvnw.cmd verify
-   ```
-
-3. Find the verified plugin JAR at `target/AutoStopper-1.1.2.jar`.
-
-The `verify` lifecycle runs unit tests, enforces 83.4% line and 66.9% branch coverage, rejects new
-unsuppressed medium/high-confidence SpotBugs findings, performs strict direct-dependency analysis,
-and checks the final shaded JAR's manifest, Velocity metadata, bytecode target, isolated SnakeYAML
-classes, and absence of Velocity-provided libraries. Use the Wrapper for local and automated builds
-so the same Maven version and quality gates are used everywhere. These thresholds floor the
-refreshed 83.4% line / 66.9% branch baseline for the complete Phase 2 codebase; raise them as test
-coverage improves.
-
-## License
-
-This project is licensed under the [MIT License](LICENSE). See the LICENSE file for details.
-
-## Credits
-
-- Built for Velocity by [Criseda](https://criseda.com)
-- Uses [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server)
-- Uses [itzg/mc-proxy](https://github.com/itzg/docker-mc-proxy)
+AutoStopper is licensed under the [MIT License](LICENSE). It uses the
+[`itzg/mc-proxy`](https://github.com/itzg/docker-mc-proxy) and
+[`itzg/minecraft-server`](https://github.com/itzg/docker-minecraft-server) container projects.

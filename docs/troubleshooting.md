@@ -1,0 +1,83 @@
+# Troubleshooting
+
+Start with the proxy log and `/autostopper status`. Status output contains bounded, sanitized
+details and a remediation for the latest failure; raw Docker stderr is logged only for operators.
+Run Docker checks from inside the Velocity container because host access alone does not prove that
+the proxy user can reach the daemon:
+
+```sh
+docker compose exec velocity docker version
+docker compose exec velocity docker inspect purpur-server
+```
+
+## Load and configuration failures
+
+| Symptom | Likely cause | Action |
+|---|---|---|
+| `Unsupported class file major version 65` or an AutoStopper class-version error | The proxy JVM is older than Java 21. | Use the pinned Java 21 or Java 25 support line. |
+| `Unsupported class file major version 69` while loading Velocity 4.1 | Velocity 4.1 is running on a JVM older than Java 25. | Use `itzg/mc-proxy:2026.8.0-java25` with the pinned Velocity 4.1 snapshot build, or use the complete Java 21 / Velocity 3.5.1 line. |
+| AutoStopper JAR is not discovered | The JAR is missing from the active proxy volume or the wrong host directory is mounted. | Confirm the container sees `/server/plugins/AutoStopper.jar` and restart Velocity. |
+| Configuration is not found where expected | The old mixed-case path is being edited. | Use `plugins/autostopper/config.yml`, based on plugin ID `autostopper`. |
+| `unknown Velocity server` | `server_name` is absent from Velocity's `[servers]` table or does not match case/spelling. | Add or correct the Velocity entry, then reload. |
+| Reload reports YAML, type, range, duplicate, or mapping errors | The candidate file failed whole-file validation. | Correct every reported error and reload. The previous configuration remains active meanwhile. |
+
+## Docker diagnostics
+
+| Status/detail | Typed classification | Operator action |
+|---|---|---|
+| `Docker CLI could not be found` | `CLI_MISSING` | Ensure the example entrypoint completed, `/usr/bin/docker` exists in the proxy container, and the proxy process can find `docker` on `PATH`. |
+| `Docker daemon is unavailable` | `DAEMON_UNAVAILABLE` | Start Docker, verify the socket is mounted at `/var/run/docker.sock`, and check daemon/host health. |
+| `permission denied accessing Docker` | `PERMISSION_DENIED` | Check the socket GID, the group created by the entrypoint, and the groups of the `bungeecord` process. Restart the container after permission changes. Remember that granting access is host-root-equivalent. |
+| `configured container does not exist` / `MISSING` | `CONTAINER_MISSING` | Run `docker ps -a`, create the backend with `docker compose create` or `up`, or correct `container_name`. AutoStopper never creates containers. |
+| `Docker status check timed out` / `Timed out` | `TIMED_OUT` | Check daemon responsiveness, disk pressure, host load, and stuck Docker operations. The built-in Docker command deadline is bounded; retry after the daemon recovers. |
+| `Docker status check failed` / `FAILED` | `INDETERMINATE` | Run the equivalent `docker inspect` inside the proxy container and review raw proxy logs. Correct the Docker/container error before retrying. |
+
+The example entrypoint adds `bungeecord` to the socket group. Seeing a non-root UID after that is
+expected but is not evidence of reduced host authority; see [Docker socket security](security.md).
+
+## Readiness failures
+
+| Player/status detail | Meaning | Operator action |
+|---|---|---|
+| `The configured Minecraft status target remained unreachable` | TCP connection attempts did not reach the configured backend before the readiness deadline. | Verify service DNS, network membership, host, port, firewall, and that Minecraft is listening. In Compose, prefer the service name and port `25565`. |
+| `did not respond in time` | A connection or status response exceeded the per-probe or overall deadline. | Check backend startup time and load. Increase `readiness.timeout_seconds` only after confirming the target is correct; tune connect/read timeouts deliberately. |
+| `did not return a valid Minecraft status response` | The target accepted a connection but did not speak the Minecraft status protocol. | Correct the port/address and remove TCP proxies that return non-Minecraft data. A bare open port is insufficient. |
+| `container has no Docker health check configured` | `docker_health` was selected but the image defines no `HEALTHCHECK`. | Add a meaningful image health check, switch to `minecraft_status`, or explicitly use `docker_health_or_status`. |
+| `Minecraft readiness target is not configured correctly` | The explicit target is incomplete/invalid or the Velocity address cannot be resolved into a target. | Configure both `target_host` and `target_port`, or correct the Velocity server address. |
+| Container stopped or disappeared while starting | The backend exited, was manually removed, or its name changed during readiness. | Inspect backend logs and exit state, restore the container, and correct the mapping before retrying. |
+| Docker became inaccessible during readiness | Socket, daemon, or permission access was lost after startup began. | Restore Docker access and retry the connection. |
+
+`docker_health_or_status` succeeds when either signal passes. It is not a way to ignore both a
+broken health check and an unreachable status endpoint.
+
+## Failed stops and retries
+
+Automatic stops use `docker stop` only after the server has no connected players and exceeds the
+inactivity timeout. If a stop fails, times out, or loses Docker access:
+
+- AutoStopper retains the activity record instead of pretending the container stopped;
+- the next attempt uses the configured capped exponential backoff;
+- live player activity or conflicting lifecycle work cancels the pending stop safely; and
+- after `max_attempts`, a new attempt cycle requires another full inactivity period.
+
+Check the proxy log for `Stop attempt ... failed` and the last `ContainerStatus`. Verify the daemon,
+container state, stop behavior, and host load. Do not add an automatic restart policy to a monitored
+container: Docker would restart it after AutoStopper successfully stops it.
+
+## Connection behavior
+
+- AutoStopper intercepts only destinations present in `monitored_servers`. If a hub should remain
+  always on, omit it from that list.
+- Multiple players connecting to one stopped server share one bounded startup/readiness operation.
+- `SERVER_STOPPING`, overload, cancellation, or a mapping change asks the player to retry; it does
+  not launch a second conflicting operation.
+- AutoStopper does not implement a custom `/server` command. Players use Velocity's command and
+  permissions. On failure the plugin may suggest retrying with `/server <name>`, but it does not own
+  that command.
+
+## Shutdown
+
+`shutdown_timeout_seconds` bounds cancellation of AutoStopper's own scheduled checks, readiness
+work, Docker subprocesses, lifecycle requests, and worker threads. Velocity shutdown deliberately
+leaves backend containers unchanged. If the deadline expires, remaining AutoStopper worker threads
+are daemon threads and the proxy log records the expiration.
