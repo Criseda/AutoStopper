@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="https://cdn.modrinth.com/data/PG4gqnzX/images/b2003a220072c1bfbb6255af452a39dab08a5377.png" width="200" alt="AutoStopper logo">
-</p>
+![AutoStopper - Empty servers sleep. Players wake them.](docs/assets/autostopper-banner.png)
 
 # AutoStopper
 
