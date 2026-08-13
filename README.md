@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml"><img alt="Deterministic CI" src="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml/badge.svg?branch=master"></a>
-  <a href="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml"><img alt="Release candidate E2E" src="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml/badge.svg?branch=master&amp;event=schedule"></a>
+  <a href="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml"><img alt="Release candidate E2E" src="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml/badge.svg?branch=master"></a>
   <a href="#supported-runtimes"><img alt="Java 21 bytecode" src="https://img.shields.io/badge/Java-21%20bytecode-ED8B00?logo=openjdk&amp;logoColor=white"></a>
   <a href="#supported-runtimes"><img alt="Velocity 3.5.1 and 4.1" src="https://img.shields.io/badge/Velocity-3.5.1%20%7C%204.1-5865F2"></a>
   <a href="https://modrinth.com/plugin/autostopper"><img alt="Modrinth downloads" src="https://img.shields.io/modrinth/dt/PG4gqnzX?logo=modrinth&amp;label=downloads"></a>
