@@ -1,6 +1,16 @@
 name: Dependency review
 
 on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: Base Git ref for a non-PR release comparison
+        required: false
+        type: string
+      head_ref:
+        description: Head Git ref for a non-PR release comparison
+        required: false
+        type: string
   pull_request:
     branches:
       - master
@@ -24,4 +34,12 @@ jobs:
           persist-credentials: false
 
       - name: Review dependency changes
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+
+      - name: Review release dependency changes
+        if: github.event_name != 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          base-ref: ${{ inputs.base_ref }}
+          head-ref: ${{ inputs.head_ref }}

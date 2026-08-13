@@ -1,0 +1,138 @@
+name: Validated release
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Release / validate tag and metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      previous_tag: ${{ steps.release.outputs.previous_tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm tagged commit belongs to protected master
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/master:refs/remotes/origin/master
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/master
+
+      - name: Validate coordinated release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$GITHUB_REF_NAME"
+          previous_tag="$(python3 scripts/release/release_tool.py previous-tag --version "$version")"
+          test "$(git rev-parse "${version}^{commit}")" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$previous_tag" "$GITHUB_SHA"
+          python3 scripts/release/release_tool.py validate-source \
+            --version "$version" \
+            --previous-tag "$previous_tag"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'previous_tag=%s\n' "$previous_tag" >> "$GITHUB_OUTPUT"
+
+  deterministic-ci:
+    name: Release / required deterministic CI
+    needs: preflight
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  dependency-review:
+    name: Release / dependency review
+    needs: preflight
+    permissions:
+      contents: read
+    uses: ./.github/workflows/dependency-review.yml
+    with:
+      base_ref: ${{ needs.preflight.outputs.previous_tag }}
+      head_ref: ${{ github.sha }}
+
+  release-candidate:
+    name: Release / exact Docker Minecraft candidate
+    needs:
+      - preflight
+      - deterministic-ci
+      - dependency-review
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/release-candidate-e2e.yml
+    with:
+      preserve_release_artifact: true
+      version: ${{ needs.preflight.outputs.version }}
+      previous_tag: ${{ needs.preflight.outputs.previous_tag }}
+
+  publish:
+    name: Release / publish GitHub and Modrinth
+    needs:
+      - preflight
+      - deterministic-ci
+      - dependency-review
+      - release-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.preflight.outputs.version }}
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out tagged release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download exact validated candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-candidate-${{ github.sha }}-*
+          path: target/release-artifact-downloads
+          digest-mismatch: error
+
+      - name: Select and re-verify byte-identical artifact handoff
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: >-
+          python3 scripts/release/release_tool.py select-candidate
+          --downloads target/release-artifact-downloads
+          --output target/release-artifact
+          --artifact-prefix "release-candidate-${GITHUB_SHA}"
+          --version "${RELEASE_VERSION}"
+          --commit "${GITHUB_SHA}"
+          --repository-name "${GITHUB_REPOSITORY}"
+
+      - name: Publish or safely resume both destinations
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: >-
+          python3 scripts/release/release_tool.py publish
+          --candidate target/release-artifact
+          --version "${RELEASE_VERSION}"
+          --commit "${GITHUB_SHA}"
+          --repository-name "${GITHUB_REPOSITORY}"

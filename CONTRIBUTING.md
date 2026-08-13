@@ -2,8 +2,8 @@
 
 AutoStopper uses one authoritative branch: `master`. It is the default development, integration,
 and release branch. Long-lived `dev`, `develop`, `release`, and `hotfix` branches are retired and
-must not be recreated. Release publication automation is tracked separately in
-[issue #21](https://github.com/Criseda/AutoStopper/issues/21).
+must not be recreated. Protected publication and recovery are documented in
+[`docs/releasing.md`](docs/releasing.md).
 
 ## Branch workflow
 
@@ -85,15 +85,14 @@ The release maintainer owns each coordinated version change. Prepare it in a sho
 `chore/<issue>-prepare-<version>` branch and update the POM, Velocity plugin descriptor, changelog,
 and other public version metadata together in one pull request.
 
-After that pull request merges, run the release-candidate gate against the resulting protected
-`master` commit and its exact candidate JAR. Create the release tag only after the required checks
-and release-candidate gate pass. The tag points exactly to that validated `master` commit; it must
+After that pull request merges, create the stable release tag at the exact resulting protected
+`master` commit. The protected tag workflow reruns the required checks, builds one candidate, runs
+the release-candidate gate against that exact JAR, and preserves it for publication. The tag must
 not point to an earlier branch tip or a separately rebuilt candidate. Follow the repository's
 existing tag style, such as `2.0.0` rather than `v2.0.0`.
 
-Issue #21 owns tag protection, artifact publication, release secrets, GitHub Releases, Modrinth,
-checksums, and publication recovery. This branch policy defines the commit that #21 may publish but
-does not duplicate that automation.
+Tag protection, artifact publication, release secrets, GitHub Releases, Modrinth, checksums, and
+publication recovery are defined in [`docs/releasing.md`](docs/releasing.md).
 
 ## Hotfix flow
 
@@ -101,9 +100,9 @@ Start a hotfix from the current protected `master` on a short-lived `fix/<issue>
 Use the normal pull-request, review-conversation, and required-check policy. Include the patch
 version and changelog update in the hotfix pull request when it will produce a release.
 
-After merge, validate the resulting `master` commit with the release-candidate gate and tag that
-exact commit. There is no `dev` branch to back-merge into; subsequent work starts from the updated
-`master`.
+After merge, tag the resulting `master` commit and let the protected release workflow validate and
+publish its exact candidate. There is no `dev` branch to back-merge into; subsequent work starts
+from the updated `master`.
 
 ## Historical `dev`/`master` reconciliation
 

@@ -10,7 +10,7 @@ only needs to satisfy the normal build requirement.
 | `current` | `eclipse-temurin:25-jre` | `velocity-4.1.0-SNAPSHOT-16.jar` | `aebade8be3b15d7c3c61514a50ce857cbf78ee87bd32e8d16d2352c6ca3e472f` |
 
 The harness downloads each content-addressed Velocity JAR, verifies its hash,
-and copies the exact `target/AutoStopper-1.1.2.jar` produced by the current
+and copies the exact versioned `target/AutoStopper-<project-version>.jar` produced by the current
 Maven invocation into an isolated runtime. Each profile must prove:
 
 - Velocity discovers the plugin metadata and constructs the injected plugin;
@@ -47,5 +47,6 @@ Startup and shutdown are bounded. Runtime logs are retained under
 containers are removed even when an assertion fails.
 
 These tests deliberately do not mount the Docker socket, start Minecraft, or
-exercise a real managed container. That release-candidate gate remains owned
-by issue #25.
+exercise a real managed container. The live gate is the reusable
+`release-candidate-e2e.yml` workflow and Maven `release-candidate-e2e` profile; the protected
+release workflow must pass that gate against the exact JAR it publishes.
