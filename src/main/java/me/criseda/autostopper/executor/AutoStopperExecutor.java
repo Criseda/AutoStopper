@@ -10,6 +10,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -20,6 +21,7 @@ public final class AutoStopperExecutor implements AutoCloseable {
 
     private final ThreadPoolExecutor executor;
     private final Set<ManagedTask<?>> outstandingTasks = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean shutdownStarted = new AtomicBoolean();
 
     public AutoStopperExecutor() {
         this(DEFAULT_WORKER_COUNT, DEFAULT_QUEUE_CAPACITY);
@@ -42,6 +44,10 @@ public final class AutoStopperExecutor implements AutoCloseable {
     public <T> CompletableFuture<T> supply(Supplier<T> task) {
         ManagedTask<T> managedTask = new ManagedTask<>(Objects.requireNonNull(task, "task"));
         outstandingTasks.add(managedTask);
+        if (shutdownStarted.get()) {
+            managedTask.fail(new ShutdownException("AutoStopper executor is shut down", null), false);
+            return managedTask.future;
+        }
         try {
             executor.execute(managedTask);
         } catch (RejectedExecutionException e) {
@@ -62,8 +68,9 @@ public final class AutoStopperExecutor implements AutoCloseable {
         if (timeout.isNegative() || timeout.isZero()) {
             throw new IllegalArgumentException("timeout must be positive");
         }
-        failOutstandingTasks(new ShutdownException("AutoStopper executor was shut down", null));
+        shutdownStarted.set(true);
         executor.shutdownNow();
+        failOutstandingTasks(new ShutdownException("AutoStopper executor was shut down", null));
         try {
             return executor.awaitTermination(timeout.toNanos(), TimeUnit.NANOSECONDS);
         } catch (InterruptedException e) {
@@ -116,10 +123,10 @@ public final class AutoStopperExecutor implements AutoCloseable {
             runner = Thread.currentThread();
             try {
                 if (!future.isDone()) {
-                    future.complete(task.get());
+                    complete(task.get());
                 }
             } catch (Throwable t) {
-                future.completeExceptionally(t);
+                fail(t, false);
             } finally {
                 runner = null;
                 outstandingTasks.remove(this);
@@ -139,8 +146,19 @@ public final class AutoStopperExecutor implements AutoCloseable {
             return cancelled;
         }
 
-        private void fail(Throwable failure, boolean interruptIfRunning) {
-            if (future.completeExceptionally(failure)) {
+        private synchronized void complete(T value) {
+            if (shutdownStarted.get()) {
+                future.completeExceptionally(new ShutdownException("AutoStopper executor was shut down", null));
+            } else {
+                future.complete(value);
+            }
+        }
+
+        private synchronized void fail(Throwable failure, boolean interruptIfRunning) {
+            Throwable completionFailure = shutdownStarted.get() && !(failure instanceof ShutdownException)
+                    ? new ShutdownException("AutoStopper executor was shut down", failure)
+                    : failure;
+            if (future.completeExceptionally(completionFailure)) {
                 executor.remove(this);
                 outstandingTasks.remove(this);
                 Thread runningThread = runner;
