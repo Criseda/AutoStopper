@@ -9,7 +9,10 @@ import java.io.InputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.Duration;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,8 +23,9 @@ class SocketMinecraftStatusProbeTest {
 
     @Test
     void acceptsAValidMinecraftStatusResponse() throws Exception {
+        ExecutorService responderExecutor = Executors.newSingleThreadExecutor();
         try (ServerSocket server = new ServerSocket(0)) {
-            CompletableFuture<Void> responder = CompletableFuture.runAsync(() -> respondWithStatus(server));
+            Future<?> responder = responderExecutor.submit(() -> respondWithStatus(server));
 
             MinecraftStatusProbe.ProbeResult result = probe.probe(
                     "127.0.0.1",
@@ -32,6 +36,8 @@ class SocketMinecraftStatusProbeTest {
 
             assertEquals(MinecraftStatusProbe.Outcome.READY, result.outcome());
             responder.get(2, TimeUnit.SECONDS);
+        } finally {
+            shutdown(responderExecutor);
         }
     }
 
@@ -57,8 +63,10 @@ class SocketMinecraftStatusProbeTest {
 
     @Test
     void silentTargetFailsWithinReadDeadline() throws Exception {
+        ExecutorService responderExecutor = Executors.newSingleThreadExecutor();
+        CountDownLatch releaseResponder = new CountDownLatch(1);
         try (ServerSocket server = new ServerSocket(0)) {
-            CompletableFuture<Void> responder = CompletableFuture.runAsync(() -> acceptSilently(server));
+            Future<?> responder = responderExecutor.submit(() -> acceptSilently(server, releaseResponder));
 
             long started = System.nanoTime();
             MinecraftStatusProbe.ProbeResult result = probe.probe(
@@ -71,7 +79,11 @@ class SocketMinecraftStatusProbeTest {
 
             assertEquals(MinecraftStatusProbe.Outcome.TIMED_OUT, result.outcome());
             assertTrue(elapsedMillis < 1_000, "read timeout must remain bounded");
+            releaseResponder.countDown();
             responder.get(2, TimeUnit.SECONDS);
+        } finally {
+            releaseResponder.countDown();
+            shutdown(responderExecutor);
         }
     }
 
@@ -118,11 +130,20 @@ class SocketMinecraftStatusProbeTest {
         throw new IllegalArgumentException("fixture VarInt is too long");
     }
 
-    private void acceptSilently(ServerSocket server) {
+    private void acceptSilently(ServerSocket server, CountDownLatch releaseResponder) {
         try (Socket ignored = server.accept()) {
-            Thread.sleep(300);
+            if (!releaseResponder.await(2, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("silent fixture was not released");
+            }
         } catch (Exception error) {
             throw new RuntimeException(error);
+        }
+    }
+
+    private void shutdown(ExecutorService executor) throws InterruptedException {
+        executor.shutdownNow();
+        if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("fixture executor did not terminate");
         }
     }
 
