@@ -24,6 +24,7 @@
   <a href="docs/migration-1.1.2-to-2.0.0.md">Migration</a> ·
   <a href="docs/releasing.md">Releasing</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
+  <a href="CODE_OF_CONDUCT.md">Code of Conduct</a> ·
   <a href="SUPPORT.md">Support</a> ·
   <a href="SECURITY.md">Security</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·

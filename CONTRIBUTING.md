@@ -5,6 +5,8 @@ and release branch. Long-lived `dev`, `develop`, `release`, and `hotfix` branche
 must not be recreated. Protected publication and recovery are documented in
 [`docs/releasing.md`](docs/releasing.md).
 
+All participants are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Development setup
 
 A clean checkout needs only JDK 21 through 25 and network access to Maven Central on the first
@@ -46,7 +48,8 @@ has no routine bypass. Any emergency ruleset change must be recorded in an issue
 minimum necessary action, and restored before ordinary development resumes.
 
 Keep one primary roadmap issue per branch and pull request where practical. Pull requests should
-describe behavior, risks, public or configuration impact, and every verification command run.
+describe behavior, risks, public or configuration impact, and every verification command run; the
+repository's [pull-request template](.github/PULL_REQUEST_TEMPLATE.md) prompts for these.
 
 ## Required pull-request checks
 
