@@ -1,9 +1,12 @@
 package me.criseda.autostopper.testing;
 
+import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -14,6 +17,7 @@ import java.util.regex.Pattern;
 
 /** Verifies contracts that only exist in the final shaded plugin JAR. */
 public final class PackagedArtifactVerifier {
+    private static final int JAVA_21_CLASS_MAJOR_VERSION = 65;
     private static final String RELOCATED_SNAKEYAML_PREFIX =
             "me/criseda/autostopper/internal/snakeyaml/";
     private static final String SNAKEYAML_METADATA = "META-INF/maven/org.yaml/snakeyaml/pom.properties";
@@ -40,11 +44,39 @@ public final class PackagedArtifactVerifier {
         String expectedSnakeYamlVersion = arguments[3];
 
         try (JarFile jar = new JarFile(artifact.toFile())) {
+            verifyUniqueEntries(jar);
             verifyManifest(jar.getManifest(), expectedVersion);
             verifyPluginDescriptor(jar, expectedVersion, expectedPluginMain);
-            requireEntry(jar, expectedPluginMain.replace('.', '/') + ".class");
+            verifyClassFileTarget(jar, expectedPluginMain);
             verifySnakeYamlRelocation(jar, expectedSnakeYamlVersion);
             verifyVelocityProvidedLibrariesAreAbsent(jar);
+            verifyNoUnexpectedClasses(jar);
+        }
+    }
+
+    private static void verifyUniqueEntries(JarFile jar) {
+        Set<String> entries = new HashSet<>();
+        jar.stream()
+                .map(JarEntry::getName)
+                .filter(name -> !entries.add(name))
+                .findFirst()
+                .ifPresent(name -> {
+                    throw new IllegalStateException("Packaged plugin JAR contains duplicate entry " + name);
+                });
+    }
+
+    private static void verifyClassFileTarget(JarFile jar, String expectedPluginMain) throws IOException {
+        String classEntry = expectedPluginMain.replace('.', '/') + ".class";
+        try (DataInputStream input = new DataInputStream(jar.getInputStream(requireEntry(jar, classEntry)))) {
+            if (input.readInt() != 0xCAFEBABE) {
+                throw new IllegalStateException(classEntry + " is not a valid class file");
+            }
+            input.readUnsignedShort();
+            int majorVersion = input.readUnsignedShort();
+            if (majorVersion != JAVA_21_CLASS_MAJOR_VERSION) {
+                throw new IllegalStateException(classEntry + " targets class-file major version " + majorVersion
+                        + ", expected Java 21 major version " + JAVA_21_CLASS_MAJOR_VERSION);
+            }
         }
     }
 
@@ -67,6 +99,17 @@ public final class PackagedArtifactVerifier {
         for (String prefix : VELOCITY_PROVIDED_PREFIXES) {
             rejectEntryPrefix(jar, prefix);
         }
+    }
+
+    private static void verifyNoUnexpectedClasses(JarFile jar) {
+        jar.stream()
+                .map(JarEntry::getName)
+                .filter(name -> name.endsWith(".class"))
+                .filter(name -> !name.startsWith("me/criseda/autostopper/"))
+                .findFirst()
+                .ifPresent(name -> {
+                    throw new IllegalStateException("Packaged plugin JAR contains unexpected class " + name);
+                });
     }
 
     private static void rejectEntryPrefix(JarFile jar, String prefix) {
