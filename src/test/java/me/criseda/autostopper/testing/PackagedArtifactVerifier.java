@@ -8,29 +8,85 @@ import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
+import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Verifies contracts that only exist in the final shaded plugin JAR. */
 public final class PackagedArtifactVerifier {
+    private static final String RELOCATED_SNAKEYAML_PREFIX =
+            "me/criseda/autostopper/internal/snakeyaml/";
+    private static final String SNAKEYAML_METADATA = "META-INF/maven/org.yaml/snakeyaml/pom.properties";
+    private static final String UNRELOCATED_SNAKEYAML_PREFIX = "org/yaml/snakeyaml/";
+    private static final String[] VELOCITY_PROVIDED_PREFIXES = {
+        "com/google/inject/",
+        "com/velocitypowered/",
+        "net/kyori/adventure/",
+        "org/slf4j/"
+    };
+
     private PackagedArtifactVerifier() {
     }
 
     public static void main(String[] arguments) throws IOException {
-        if (arguments.length != 3) {
+        if (arguments.length != 4) {
             throw new IllegalArgumentException(
-                    "Expected arguments: <plugin-jar> <project-version> <plugin-main-class>");
+                    "Expected arguments: <plugin-jar> <project-version> <plugin-main-class> <snakeyaml-version>");
         }
 
         Path artifact = Path.of(arguments[0]);
         String expectedVersion = arguments[1];
         String expectedPluginMain = arguments[2];
+        String expectedSnakeYamlVersion = arguments[3];
 
         try (JarFile jar = new JarFile(artifact.toFile())) {
             verifyManifest(jar.getManifest(), expectedVersion);
             verifyPluginDescriptor(jar, expectedVersion, expectedPluginMain);
             requireEntry(jar, expectedPluginMain.replace('.', '/') + ".class");
+            verifySnakeYamlRelocation(jar, expectedSnakeYamlVersion);
+            verifyVelocityProvidedLibrariesAreAbsent(jar);
         }
+    }
+
+    private static void verifySnakeYamlRelocation(JarFile jar, String expectedVersion) throws IOException {
+        requireEntry(jar, RELOCATED_SNAKEYAML_PREFIX + "Yaml.class");
+        rejectEntryNamespace(jar, UNRELOCATED_SNAKEYAML_PREFIX);
+
+        Properties metadata = new Properties();
+        try (InputStream input = jar.getInputStream(requireEntry(jar, SNAKEYAML_METADATA))) {
+            metadata.load(input);
+        }
+        String packagedVersion = metadata.getProperty("version");
+        if (!expectedVersion.equals(packagedVersion)) {
+            throw new IllegalStateException(
+                    "Packaged SnakeYAML version is " + packagedVersion + ", expected " + expectedVersion);
+        }
+    }
+
+    private static void verifyVelocityProvidedLibrariesAreAbsent(JarFile jar) {
+        for (String prefix : VELOCITY_PROVIDED_PREFIXES) {
+            rejectEntryPrefix(jar, prefix);
+        }
+    }
+
+    private static void rejectEntryPrefix(JarFile jar, String prefix) {
+        jar.stream()
+                .map(JarEntry::getName)
+                .filter(name -> name.startsWith(prefix))
+                .findFirst()
+                .ifPresent(name -> {
+                    throw new IllegalStateException("Packaged plugin JAR must not contain " + name);
+                });
+    }
+
+    private static void rejectEntryNamespace(JarFile jar, String namespace) {
+        jar.stream()
+                .map(JarEntry::getName)
+                .filter(name -> name.startsWith(namespace) || name.contains("/" + namespace))
+                .findFirst()
+                .ifPresent(name -> {
+                    throw new IllegalStateException("Packaged plugin JAR must not contain " + name);
+                });
     }
 
     private static void verifyManifest(Manifest manifest, String expectedVersion) {
