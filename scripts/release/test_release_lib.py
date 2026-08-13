@@ -48,6 +48,7 @@ class FakeHttpClient:
             encoding="utf-8"
         )
         self.github_release = None
+        self.additional_github_releases: list[dict] = []
         self.github_assets: dict[str, bytes] = {}
         self.modrinth_version = None
         self.modrinth_project = {
@@ -68,9 +69,16 @@ class FakeHttpClient:
         if url.startswith(f"{GITHUB_API}/repos/Criseda/AutoStopper/releases/tags/"):
             return (
                 self.response(200, self.github_release)
-                if self.github_release
+                if self.github_release and not self.github_release["draft"]
                 else self.response(404)
             )
+        if method == "GET" and url.startswith(
+            f"{GITHUB_API}/repos/Criseda/AutoStopper/releases?"
+        ):
+            releases = self.additional_github_releases.copy()
+            if self.github_release:
+                releases.insert(0, self.github_release)
+            return self.response(200, releases)
         if (
             method == "POST"
             and url == f"{GITHUB_API}/repos/Criseda/AutoStopper/releases"
@@ -290,6 +298,36 @@ class PublisherTest(unittest.TestCase):
         first_mutations = list(self.client.mutations)
         self.publisher.publish()
         self.assertEqual(first_mutations, self.client.mutations)
+
+    def test_existing_draft_hidden_from_tag_lookup_is_resumed(self) -> None:
+        staged = self.publisher._stage_github()
+        self.assertTrue(staged["draft"])
+
+        self.publisher.publish()
+
+        self.assertFalse(self.client.github_release["draft"])
+        self.assertEqual("listed", self.client.modrinth_version["status"])
+        self.assertEqual(
+            1,
+            self.client.mutations.count(
+                ("POST", f"{GITHUB_API}/repos/Criseda/AutoStopper/releases")
+            ),
+        )
+        self.assertEqual(
+            2,
+            sum(
+                method == "POST"
+                and url.startswith("https://uploads.github.test/releases/7/assets?")
+                for method, url in self.client.mutations
+            ),
+        )
+
+    def test_duplicate_releases_in_authenticated_listing_are_rejected(self) -> None:
+        self.publisher._stage_github()
+        self.client.additional_github_releases.append(dict(self.client.github_release))
+
+        with self.assertRaisesRegex(ReleaseError, "duplicate releases"):
+            self.publisher.publish()
 
     def test_conflicting_github_asset_is_rejected_without_clobber(self) -> None:
         self.publisher.publish()

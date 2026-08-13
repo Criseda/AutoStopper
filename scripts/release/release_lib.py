@@ -670,6 +670,9 @@ class ReleasePublisher:
             github=True,
         )
         if response.status == 404:
+            release = self._find_github_release_in_listing()
+            if release is not None:
+                return release
             if required:
                 raise ReleaseError(f"GitHub release {self.version} does not exist")
             return None
@@ -678,6 +681,38 @@ class ReleasePublisher:
                 f"Unexpected GitHub release lookup status {response.status}"
             )
         return response.json()
+
+    def _find_github_release_in_listing(self) -> dict[str, Any] | None:
+        matches: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            query = urllib.parse.urlencode({"per_page": 100, "page": page})
+            response = self.client.request(
+                "GET",
+                f"{GITHUB_API}/repos/{self.repository}/releases?{query}",
+                token=self.github_token,
+                github=True,
+            )
+            if response.status != 200:
+                raise ReleaseError(
+                    f"Unexpected GitHub release listing status {response.status}"
+                )
+            releases = response.json()
+            if not isinstance(releases, list):
+                raise ReleaseError("GitHub release listing is not an array")
+            matches.extend(
+                release
+                for release in releases
+                if isinstance(release, dict) and release.get("tag_name") == self.version
+            )
+            if len(releases) < 100:
+                break
+            page += 1
+        if len(matches) > 1:
+            raise ReleaseError(
+                f"GitHub contains duplicate releases for tag {self.version}"
+            )
+        return matches[0] if matches else None
 
     def _stage_github(self) -> dict[str, Any]:
         release = self._get_github_release()
