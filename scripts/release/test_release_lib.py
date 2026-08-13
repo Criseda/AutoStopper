@@ -11,12 +11,14 @@ from pathlib import Path
 
 from release_lib import (
     GITHUB_API,
+    MINECRAFT_RELEASE_VERSIONS,
     MODRINTH_API,
     PUBLISH_RELEASE_JOB,
     REQUIRED_RELEASE_JOBS,
     ReleaseError,
     ReleasePublisher,
     Response,
+    expand_minecraft_range,
     load_metadata,
     parse_version,
     pom_version,
@@ -141,7 +143,7 @@ class FakeHttpClient:
                 "version_number": "2.0.0",
                 "changelog": self.modrinth_notes,
                 "dependencies": [],
-                "game_versions": ["1.21.4"],
+                "game_versions": list(expand_minecraft_range("1.7.2", "26.2")),
                 "version_type": "release",
                 "loaders": ["velocity"],
                 "featured": True,
@@ -205,7 +207,7 @@ def candidate(directory: Path) -> dict:
             "modrinth": {
                 "projectId": "PG4gqnzX",
                 "loaders": ["velocity"],
-                "gameVersions": ["1.21.4"],
+                "gameVersions": list(expand_minecraft_range("1.7.2", "26.2")),
                 "environment": "server_only",
             }
         },
@@ -279,6 +281,46 @@ class VersionTest(unittest.TestCase):
         repository, version, _ = repository_release_context()
         with self.assertRaisesRegex(ReleaseError, "previousTag"):
             validate_source(repository, version, "1.1.1")
+
+
+class MinecraftRangeTest(unittest.TestCase):
+    def test_full_range_includes_every_catalogue_release(self) -> None:
+        self.assertEqual(
+            MINECRAFT_RELEASE_VERSIONS, expand_minecraft_range("1.7.2", "26.2")
+        )
+        self.assertEqual(83, len(MINECRAFT_RELEASE_VERSIONS))
+        self.assertEqual("1.7.2", MINECRAFT_RELEASE_VERSIONS[0])
+        self.assertEqual("26.2", MINECRAFT_RELEASE_VERSIONS[-1])
+
+    def test_expands_inclusive_subrange_from_catalogue_order(self) -> None:
+        expanded = expand_minecraft_range("1.21.4", "26.2")
+        self.assertEqual("1.21.4", expanded[0])
+        self.assertEqual("26.2", expanded[-1])
+        self.assertEqual(
+            MINECRAFT_RELEASE_VERSIONS[
+                MINECRAFT_RELEASE_VERSIONS.index("1.21.4") :
+            ],
+            expanded,
+        )
+
+    def test_rejects_endpoint_missing_from_catalogue(self) -> None:
+        with self.assertRaisesRegex(ReleaseError, "not in the known release catalogue"):
+            expand_minecraft_range("1.6.4", "26.2")
+        with self.assertRaisesRegex(ReleaseError, "not in the known release catalogue"):
+            expand_minecraft_range("1.7.2", "26.3")
+
+    def test_rejects_reversed_range(self) -> None:
+        with self.assertRaisesRegex(ReleaseError, "sorts after"):
+            expand_minecraft_range("26.2", "1.7.2")
+
+    def test_repository_metadata_range_expands_to_published_2_0_0_list(self) -> None:
+        repository = Path(__file__).resolve().parents[2]
+        metadata = load_metadata(repository)
+        minecraft_range = metadata["modrinth"]["minecraftVersionRange"]
+        self.assertEqual(["1.7.2", "26.2"], minecraft_range)
+        self.assertEqual(
+            MINECRAFT_RELEASE_VERSIONS, expand_minecraft_range(*minecraft_range)
+        )
 
 
 class PublisherTest(unittest.TestCase):
@@ -577,6 +619,10 @@ class CandidatePreparationTest(unittest.TestCase):
 
             self.assertEqual(prepared, verified)
             self.assertEqual(source.read_bytes(), (output / source.name).read_bytes())
+            self.assertEqual(
+                list(expand_minecraft_range("1.7.2", "26.2")),
+                prepared["compatibility"]["modrinth"]["gameVersions"],
+            )
 
 
 if __name__ == "__main__":
