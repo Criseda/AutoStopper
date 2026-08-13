@@ -37,7 +37,7 @@
         <guice.version>7.0.0</guice.version>
         <junit.version>5.10.1</junit.version>
         <maven.compiler.release>21</maven.compiler.release>
-        <mockito.version>5.17.0</mockito.version>
+        <mockito.version>5.23.0</mockito.version>
         <snakeyaml.version>2.6</snakeyaml.version>
         <velocity.api.version>3.5.1</velocity.api.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
