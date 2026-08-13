@@ -394,5 +394,39 @@
                 </plugins>
             </build>
         </profile>
+        <profile>
+            <id>release-candidate-e2e</id>
+            <properties>
+                <release.candidate.jar>${project.build.directory}/${project.build.finalName}.jar</release.candidate.jar>
+                <release.candidate.output>${project.build.directory}/release-candidate-e2e</release.candidate.output>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>exec-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>verify-release-candidate-e2e</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>java</goal>
+                                </goals>
+                                <configuration>
+                                    <mainClass>me.criseda.autostopper.testing.ReleaseCandidateE2EHarness</mainClass>
+                                    <classpathScope>test</classpathScope>
+                                    <arguments>
+                                        <argument>${release.candidate.jar}</argument>
+                                        <argument>${release.candidate.output}</argument>
+                                        <argument>${project.version}</argument>
+                                        <argument>${project.basedir}</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 </project>

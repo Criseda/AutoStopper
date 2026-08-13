@@ -681,27 +681,44 @@ public final class ServerLifecycleCoordinator {
 
     private void notifyStartupFailure(Player player, String serverName, StartupOutcome outcome,
             ReadinessResult readinessFailure) {
-        switch (outcome) {
-            case STATUS_NO_MAPPING -> safeSend(player, AutoStopperMessages.noContainerMapping(serverName));
-            case STATUS_MISSING, START_MISSING -> safeSend(player, AutoStopperMessages.containerMissing(serverName));
-            case STATUS_INACCESSIBLE -> safeSend(player, AutoStopperMessages.dockerUnavailable("manage", serverName));
-            case START_INACCESSIBLE -> safeSend(player, AutoStopperMessages.dockerUnavailable("start", serverName));
-            case STATUS_TIMED_OUT -> safeSend(player, AutoStopperMessages.statusCheckTimedOut(serverName));
-            case STATUS_FAILED -> safeSend(player, AutoStopperMessages.statusCheckFailed(serverName));
-            case STATUS_ERROR -> safeSend(player, AutoStopperMessages.statusCheckError(serverName));
-            case START_TIMED_OUT -> safeSend(player, AutoStopperMessages.startTimedOut(serverName));
-            case START_FAILED -> safeSend(player, AutoStopperMessages.startFailed(serverName));
-            case START_ERROR -> safeSend(player, AutoStopperMessages.startError(serverName));
-            case NOT_READY, READINESS_ERROR -> {
-                safeSend(player, readinessFailure == null
-                        ? AutoStopperMessages.serverNotReady(serverName)
-                        : AutoStopperMessages.serverNotReady(serverName, readinessFailure.playerDetail()));
-                safeSend(player, AutoStopperMessages.retryServerCommand(serverName));
-            }
-            case CANCELLED -> safeSend(player, AutoStopperMessages.startCancelled(serverName));
-            case OVERLOADED -> safeSend(player, AutoStopperMessages.overloaded());
+        Component message = switch (outcome) {
+            case STATUS_NO_MAPPING -> AutoStopperMessages.noContainerMapping(serverName);
+            case STATUS_MISSING, START_MISSING -> AutoStopperMessages.containerMissing(serverName);
+            case STATUS_INACCESSIBLE -> AutoStopperMessages.dockerUnavailable("manage", serverName);
+            case START_INACCESSIBLE -> AutoStopperMessages.dockerUnavailable("start", serverName);
+            case STATUS_TIMED_OUT -> AutoStopperMessages.statusCheckTimedOut(serverName);
+            case STATUS_FAILED -> AutoStopperMessages.statusCheckFailed(serverName);
+            case STATUS_ERROR -> AutoStopperMessages.statusCheckError(serverName);
+            case START_TIMED_OUT -> AutoStopperMessages.startTimedOut(serverName);
+            case START_FAILED -> AutoStopperMessages.startFailed(serverName);
+            case START_ERROR -> AutoStopperMessages.startError(serverName);
+            case NOT_READY, READINESS_ERROR -> readinessFailure == null
+                    ? AutoStopperMessages.serverNotReady(serverName)
+                    : AutoStopperMessages.serverNotReady(serverName, readinessFailure.playerDetail());
+            case CANCELLED -> AutoStopperMessages.startCancelled(serverName);
+            case OVERLOADED -> AutoStopperMessages.overloaded();
             case READY_RUNNING, READY_AFTER_START -> throw new IllegalArgumentException("ready outcome is not a failure");
+        };
+        boolean disconnected = notifyTerminalFailure(player, message);
+        if ((outcome == StartupOutcome.NOT_READY || outcome == StartupOutcome.READINESS_ERROR) && !disconnected) {
+            safeSend(player, AutoStopperMessages.retryServerCommand(serverName));
         }
+    }
+
+    private boolean notifyTerminalFailure(Player player, Component message) {
+        if (shutdown.get() || !isPlayerActive(player)) {
+            return false;
+        }
+        try {
+            if (player.getCurrentServer().isEmpty()) {
+                player.disconnect(message);
+                return true;
+            }
+        } catch (RuntimeException error) {
+            logger.debug("Could not inspect or disconnect an initial lifecycle waiter", error);
+        }
+        safeSend(player, message);
+        return false;
     }
 
     private void notifyConnectionFailure(Player player, String serverName, ConnectionOutcome outcome) {

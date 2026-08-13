@@ -1,9 +1,7 @@
 package me.criseda.autostopper.testing;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -12,17 +10,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
+
+import me.criseda.autostopper.testing.SystemTestSupport.CommandResult;
+
+import static me.criseda.autostopper.testing.SystemTestSupport.deleteRecursively;
+import static me.criseda.autostopper.testing.SystemTestSupport.requireSuccess;
+import static me.criseda.autostopper.testing.SystemTestSupport.runCommand;
+import static me.criseda.autostopper.testing.SystemTestSupport.sha256;
 
 /**
  * Runs the packaged plugin in pinned real Velocity runtimes inside disposable containers.
@@ -326,85 +325,6 @@ public final class VelocitySystemHarness {
                 + ProcessHandle.current().pid() + "-" + Long.toUnsignedString(System.nanoTime(), 36);
     }
 
-    private static CommandResult runCommand(Duration timeout, String... command) throws Exception {
-        Process process = new ProcessBuilder(command)
-                .redirectErrorStream(true)
-                .start();
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        AtomicReference<IOException> readFailure = new AtomicReference<>();
-        Thread reader = Thread.ofVirtual().start(() -> {
-            try (InputStream input = process.getInputStream()) {
-                input.transferTo(output);
-            } catch (IOException error) {
-                readFailure.set(error);
-            }
-        });
-        boolean finished;
-        try {
-            finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (InterruptedException error) {
-            process.destroyForcibly();
-            Thread.currentThread().interrupt();
-            throw error;
-        }
-        if (!finished) {
-            process.destroy();
-            if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-            }
-        }
-        reader.join();
-        if (readFailure.get() != null) {
-            throw new UncheckedIOException(readFailure.get());
-        }
-        String text = output.toString(StandardCharsets.UTF_8);
-        if (!finished) {
-            throw new IllegalStateException("Command timed out after " + timeout + ": "
-                    + String.join(" ", command) + System.lineSeparator() + text);
-        }
-        return new CommandResult(process.exitValue(), text);
-    }
-
-    private static void requireSuccess(CommandResult result, String message) {
-        if (result.exitCode() != 0) {
-            throw new IllegalStateException(message + " (exit " + result.exitCode() + ")"
-                    + System.lineSeparator() + result.output());
-        }
-    }
-
-    private static String sha256(Path path) throws IOException {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            try (InputStream input = Files.newInputStream(path)) {
-                byte[] buffer = new byte[8192];
-                int read;
-                while ((read = input.read(buffer)) != -1) {
-                    digest.update(buffer, 0, read);
-                }
-            }
-            return HexFormat.of().formatHex(digest.digest());
-        } catch (NoSuchAlgorithmException error) {
-            throw new IllegalStateException("SHA-256 is unavailable", error);
-        }
-    }
-
-    private static void deleteRecursively(Path directory) throws IOException {
-        if (!Files.exists(directory)) {
-            return;
-        }
-        try (var paths = Files.walk(directory)) {
-            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    Files.deleteIfExists(path);
-                } catch (IOException error) {
-                    throw new UncheckedIOException(error);
-                }
-            });
-        } catch (UncheckedIOException error) {
-            throw error.getCause();
-        }
-    }
-
     private record RuntimeProfile(
             String name,
             String javaLabel,
@@ -412,8 +332,5 @@ public final class VelocitySystemHarness {
             String velocityLabel,
             URI downloadUri,
             String sha256) {
-    }
-
-    private record CommandResult(int exitCode, String output) {
     }
 }

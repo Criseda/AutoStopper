@@ -1,0 +1,75 @@
+services:
+  backend:
+    image: itzg/minecraft-server:java21
+    container_name: ${E2E_BACKEND_CONTAINER:?set E2E_BACKEND_CONTAINER}
+    environment:
+      EULA: "TRUE"
+      UID: ${E2E_HOST_UID:-1000}
+      GID: ${E2E_HOST_GID:-1000}
+      TYPE: "PURPUR"
+      VERSION: "1.21.4"
+      PURPUR_BUILD: "2416"
+      ONLINE_MODE: "FALSE"
+      ENFORCE_SECURE_PROFILE: "FALSE"
+      ENABLE_RCON: "TRUE"
+      RCON_PASSWORD: "autostopper-e2e"
+      MEMORY: "768M"
+      MAX_PLAYERS: "10"
+      VIEW_DISTANCE: "2"
+      SIMULATION_DISTANCE: "2"
+      SPAWN_PROTECTION: "0"
+      MOTD: "AutoStopper release-candidate E2E"
+    volumes:
+      - type: bind
+        source: ${E2E_BACKEND_DATA:?set E2E_BACKEND_DATA}
+        target: /data
+    restart: "no"
+    networks:
+      - minecraft
+
+  velocity:
+    image: itzg/mc-proxy:2026.8.0-java25
+    container_name: ${E2E_VELOCITY_CONTAINER:?set E2E_VELOCITY_CONTAINER}
+    environment:
+      TYPE: "VELOCITY"
+      ONLINE_MODE: "false"
+      VELOCITY_VERSION: "4.1.0-SNAPSHOT"
+      VELOCITY_BUILD_ID: "16"
+      REPLACE_ENV_VARIABLES: "true"
+      AUTOSTOPPER_E2E_BACKEND_CONTAINER: ${E2E_BACKEND_CONTAINER}
+      AUTOSTOPPER_E2E_FAIL_STOP_ONCE: ${E2E_FAIL_STOP_ONCE:-false}
+    ports:
+      - "127.0.0.1:${E2E_VELOCITY_PORT:?set E2E_VELOCITY_PORT}:25577"
+    volumes:
+      - type: bind
+        source: ${E2E_VELOCITY_DATA:?set E2E_VELOCITY_DATA}
+        target: /server
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+      - type: bind
+        source: ${E2E_ENTRYPOINT:?set E2E_ENTRYPOINT}
+        target: /e2e/docker-entrypoint.sh
+        read_only: true
+      - type: bind
+        source: ${E2E_DOCKER_WRAPPER:?set E2E_DOCKER_WRAPPER}
+        target: /e2e/docker-cli-wrapper.sh
+        read_only: true
+    entrypoint: ["/bin/bash", "/e2e/docker-entrypoint.sh"]
+    restart: "no"
+    networks:
+      - minecraft
+
+  client:
+    image: ${E2E_CLIENT_IMAGE:?set E2E_CLIENT_IMAGE}
+    profiles: ["clients"]
+    environment:
+      E2E_HOST: velocity
+      E2E_PORT: "25577"
+      E2E_VERSION: "1.21.4"
+    networks:
+      - minecraft
+
+networks:
+  minecraft:
+    driver: bridge
