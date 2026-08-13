@@ -44,6 +44,8 @@ services:
       - type: bind
         source: ${E2E_VELOCITY_DATA:?set E2E_VELOCITY_DATA}
         target: /server
+      # DANGER: This grants the disposable proxy host-root-equivalent Docker control.
+      # Run this fixture only on an isolated development/CI host; see e2e/README.md.
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock

@@ -15,7 +15,9 @@ services:
       - "25565:25577"
     volumes:
       - ./velocity_server:/server
-      - /var/run/docker.sock:/var/run/docker.sock  # Required for AutoStopper
+      # DANGER: This grants the proxy host-root-equivalent Docker control.
+      # Read ../../docs/security.md and use an isolated/trusted host.
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./docker-entrypoint.sh:/docker-entrypoint.sh:ro
     networks:
       - mc-network

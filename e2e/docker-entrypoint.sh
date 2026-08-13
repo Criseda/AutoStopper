@@ -10,6 +10,7 @@ fi
 
 install -m 0755 /e2e/docker-cli-wrapper.sh /usr/local/bin/docker
 
+# SECURITY: this group grants host-root-equivalent Docker control; see e2e/README.md.
 SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)
 if ! getent group "$SOCKET_GID" > /dev/null; then
   groupadd -g "$SOCKET_GID" docker_sock
