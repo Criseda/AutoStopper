@@ -14,8 +14,8 @@ docker compose exec velocity docker inspect purpur-server
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| `Unsupported class file major version 65` or an AutoStopper class-version error | The proxy JVM is older than Java 21. | Use the pinned Java 21 or Java 25 support line. |
-| `Unsupported class file major version 69` while loading Velocity 4.1 | Velocity 4.1 is running on a JVM older than Java 25. | Use `itzg/mc-proxy:2026.8.0-java25` with the pinned Velocity 4.1 snapshot build, or use the complete Java 21 / Velocity 3.5.1 line. |
+| `Unsupported class file major version 65` or an AutoStopper class-version error | The proxy JVM is older than Java 21. | Use the pinned Java 21 legacy line or a Java 25 Velocity 4.x line. |
+| `Unsupported class file major version 69` while loading Velocity 4.x | A Velocity 4.x build is running on a JVM older than Java 25. | Use `itzg/mc-proxy:2026.8.0-java25` with the pinned stable (4.0.0) or preview (4.1 snapshot) build, or use the complete Java 21 / Velocity 3.5.1 legacy line. |
 | AutoStopper JAR is not discovered | The JAR is missing from the active proxy volume or the wrong host directory is mounted. | Confirm the container sees `/server/plugins/AutoStopper.jar` and restart Velocity. |
 | Configuration is not found where expected | The old mixed-case path is being edited. | Use `plugins/autostopper/config.yml`, based on plugin ID `autostopper`. |
 | `unknown Velocity server` | `server_name` is absent from Velocity's `[servers]` table or does not match case/spelling. | Add or correct the Velocity entry, then reload. |

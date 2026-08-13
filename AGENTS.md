@@ -6,13 +6,13 @@ AutoStopper is moving from the 1.1.2 prototype to a supportable 2.0.0. GitHub is
 
 ## Project Structure & Module Organization
 
-Production code is under `src/main/java/me/criseda/autostopper` in responsibility-specific packages. Plugin metadata is in `src/main/resources/velocity-plugin.json`. Tests mirror production packages under `src/test/java`; shared helpers belong in `testing/`. `examples/` holds pinned Compose deployments, while `smoke/` loads the packaged JAR on both Velocity lines. `target/`, IDE files, runtime caches, and `dependency-reduced-pom.xml` are generated.
+Production code is under `src/main/java/me/criseda/autostopper` in responsibility-specific packages. Plugin metadata is in `src/main/resources/velocity-plugin.json`. Tests mirror production packages under `src/test/java`; shared helpers belong in `testing/`. `examples/` holds pinned Compose deployments, while `smoke/` loads the packaged JAR on all pinned Velocity lines. `target/`, IDE files, runtime caches, and `dependency-reduced-pom.xml` are generated.
 
 ## Build, Test, and Development Commands
 
 - `mvn clean verify` is the current complete local verification command.
 - `mvn clean package` creates the shaded plugin JAR under `target/`.
-- `.\smoke\run-smoke.ps1` tests both pinned Velocity profiles; use `-Profile legacy` or `current` to select one.
+- `.\smoke\run-smoke.ps1` tests all pinned Velocity profiles; use `-Profile legacy`, `stable`, or `preview` to select one.
 
 Use JDK 21+. After issue #15 lands, use the pinned Wrapper (`.\mvnw.cmd verify` or `./mvnw verify`) as the canonical entry point.
 

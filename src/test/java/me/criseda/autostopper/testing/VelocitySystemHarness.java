@@ -53,7 +53,16 @@ public final class VelocitySystemHarness {
                             + "velocity-3.5.1-615.jar"),
                     "b4e3164df5377346854dc6cb9e6a78022b1946ff69e89676313f5f6f1c6f0fb3"),
             new RuntimeProfile(
-                    "current",
+                    "stable",
+                    "Java 25",
+                    "eclipse-temurin:25-jre",
+                    "Velocity 4.0.0 build 6",
+                    URI.create("https://fill-data.papermc.io/v1/objects/"
+                            + "4540289f48c83e305fc2f2c495a84d1f4d0b7f360830251e169dd5a208740e70/"
+                            + "velocity-4.0.0-6.jar"),
+                    "4540289f48c83e305fc2f2c495a84d1f4d0b7f360830251e169dd5a208740e70"),
+            new RuntimeProfile(
+                    "preview",
                     "Java 25",
                     "eclipse-temurin:25-jre",
                     "Velocity 4.1.0-SNAPSHOT build 16",

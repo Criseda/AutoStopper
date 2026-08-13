@@ -1,6 +1,6 @@
 config-version = "3.0"
 bind = "0.0.0.0:25577"
-motd = "AutoStopper smoke test (current line)"
+motd = "AutoStopper smoke test (preview line)"
 show-max-players = 500
 online-mode = false
 forwarding-mode = "none"

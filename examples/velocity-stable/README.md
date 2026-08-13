@@ -1,7 +1,8 @@
-# Current example: Java 25 and Velocity 4.1
+# Stable example: Java 25 and Velocity 4.0.0
 
-This pinned example uses `itzg/mc-proxy:2026.8.0-java25`, Velocity 4.1.0-SNAPSHOT build 16, and
-Java 25. Velocity 4.1 is currently a PaperMC snapshot; do not run this build on Java 21.
+This pinned example is the recommended production line. It uses
+`itzg/mc-proxy:2026.8.0-java25`, Velocity 4.0.0 build 6, and Java 25. Velocity 4.x requires at
+least Java 25; do not run this build on Java 21.
 
 > **DANGER — HOST-ROOT-EQUIVALENT ACCESS:** `docker-compose.yml` mounts
 > `/var/run/docker.sock` into Velocity. Socket-group access is not ordinary non-root isolation.

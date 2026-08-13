@@ -476,15 +476,14 @@ public final class ReleaseCandidateE2EHarness {
 
     private String velocityConfig() {
         return """
-                config-version = "3.0"
+                config-version = "2.8"
                 bind = "0.0.0.0:25577"
                 motd = "AutoStopper release-candidate E2E"
                 show-max-players = 10
                 online-mode = false
-                forwarding-mode = "none"
+                force-key-authentication = false
                 player-info-forwarding-mode = "none"
                 ping-passthrough = "disabled"
-                try-last-server = false
 
                 [advanced]
                 login-ratelimit = 0
@@ -726,7 +725,7 @@ public final class ReleaseCandidateE2EHarness {
                   "size": %d,
                   "sha256": "%s",
                   "velocityImage": "%s",
-                  "velocityVersion": "4.1.0-SNAPSHOT-16",
+                  "velocityVersion": "4.0.0-6",
                   "backendImage": "%s",
                   "minecraftVersion": "1.21.4",
                   "purpurBuild": "2416"

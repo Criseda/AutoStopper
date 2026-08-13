@@ -1,6 +1,8 @@
-# AutoStopper example - current support line (Java 25 + Velocity 4.1)
-# Matches the support matrix defined in issue #3. The mc-proxy image Java
-# version and the pinned Velocity build must be upgraded together.
+# AutoStopper example - preview support line (Java 25 + Velocity 4.1 snapshot)
+# Matches the support matrix defined in issues #3 and #61. Velocity 4.1 is a
+# PaperMC snapshot; prefer the stable 4.0.0 example for production. The
+# mc-proxy image Java version and the pinned Velocity build must be upgraded
+# together.
 services:
   velocity:
     image: itzg/mc-proxy:2026.8.0-java25

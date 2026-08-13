@@ -1,15 +1,15 @@
-# AutoStopper example - legacy floor support line (Java 21 + Velocity 3.5.1)
+# AutoStopper example - stable production support line (Java 25 + Velocity 4.0)
 # Matches the support matrix defined in issues #3 and #61. The mc-proxy image
 # Java version and the pinned Velocity build must be upgraded together.
 services:
   velocity:
-    image: itzg/mc-proxy:2026.8.0-java21
+    image: itzg/mc-proxy:2026.8.0-java25
     container_name: velocity-server
     environment:
       TYPE: "VELOCITY"
       ONLINE_MODE: "true"
-      VELOCITY_VERSION: "3.5.1"
-      VELOCITY_BUILD_ID: "615"
+      VELOCITY_VERSION: "4.0.0"
+      VELOCITY_BUILD_ID: "6"
       REPLACE_ENV_VARIABLES: "true"
     ports:
       - "25565:25577"
@@ -24,7 +24,9 @@ services:
     restart: unless-stopped
     entrypoint: ["/bin/bash", "/docker-entrypoint.sh"]
 
-  # Example Minecraft servers that can be managed by AutoStopper
+  # Example Minecraft servers that can be managed by AutoStopper.
+  # Backend server Java is independent of the proxy Java; only the proxy
+  # image tag / Velocity build pair must move together.
   purpur:
     image: itzg/minecraft-server:java21
     container_name: purpur-server

@@ -12,7 +12,7 @@
   <a href="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml"><img alt="Deterministic CI" src="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml/badge.svg?branch=master"></a>
   <a href="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml"><img alt="Release candidate E2E" src="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml/badge.svg?branch=master&amp;event=schedule"></a>
   <a href="#supported-runtimes"><img alt="Java 21 bytecode" src="https://img.shields.io/badge/Java-21%20bytecode-ED8B00?logo=openjdk&amp;logoColor=white"></a>
-  <a href="#supported-runtimes"><img alt="Velocity 3.5.1 and 4.1" src="https://img.shields.io/badge/Velocity-3.5.1%20%7C%204.1-5865F2"></a>
+  <a href="#supported-runtimes"><img alt="Velocity 3.5.1, 4.0, and 4.1" src="https://img.shields.io/badge/Velocity-3.5.1%20%7C%204.0%20%7C%204.1-5865F2"></a>
   <a href="https://modrinth.com/plugin/autostopper"><img alt="Modrinth downloads" src="https://img.shields.io/modrinth/dt/PG4gqnzX?logo=modrinth&amp;label=downloads"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/Criseda/AutoStopper"></a>
 </p>
@@ -65,19 +65,23 @@ installing.
 ## Supported runtimes
 
 AutoStopper is one Java 21 bytecode JAR compiled against Velocity API 3.5.1. The same packaged JAR
-is tested on both runtime lines below; keep each proxy image and Velocity build together.
+is tested on the three runtime lines below; keep each proxy image and Velocity build together.
 
-| Support line | Proxy image | Proxy JVM | Velocity runtime | Example |
-|---|---|---:|---|---|
-| Legacy | `itzg/mc-proxy:2026.8.0-java21` | 21 | `3.5.1`, build `615` | [`examples/velocity-legacy`](examples/velocity-legacy/) |
-| Current | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.1.0-SNAPSHOT`, build `16` | [`examples/velocity-current`](examples/velocity-current/) |
+| Support line | Role | Proxy image | Proxy JVM | Velocity runtime | Example |
+|---|---|---:|---:|---|---|
+| Legacy | Minimum supported | `itzg/mc-proxy:2026.8.0-java21` | 21 | `3.5.1`, build `615` | [`examples/velocity-legacy`](examples/velocity-legacy/) |
+| Stable | Production | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.0.0`, build `6` | [`examples/velocity-stable`](examples/velocity-stable/) |
+| Preview | Snapshot validation | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.1.0-SNAPSHOT`, build `16` | [`examples/velocity-preview`](examples/velocity-preview/) |
 
-Velocity 4.1 is currently supplied by PaperMC as a snapshot. Do not run that build on Java 21.
-The release-candidate stack is tested with Purpur 1.21.4; backend Java is independent of the proxy
-JVM. AutoStopper observes Velocity API events and a generic Minecraft status request rather than
-backend-specific APIs, so it is compatible with Minecraft Java Edition 1.7.2 through 26.2 when used
-through a supported Velocity runtime; only the listed backend is directly exercised. Other
-Velocity, Java, proxy-image, and backend combinations are not part of the tested matrix.
+The legacy line is the tested minimum; the stable line is the recommended production runtime.
+Velocity 4.x requires at least Java 25, so do not run the stable or preview builds on Java 21.
+Velocity 4.1 is currently supplied by PaperMC as a snapshot and is validated only as preview, not
+as a production baseline. The release-candidate stack is tested with Purpur 1.21.4; backend Java
+is independent of the proxy JVM. AutoStopper observes Velocity API events and a generic Minecraft
+status request rather than backend-specific APIs, so it is compatible with Minecraft Java Edition
+1.7.2 through 26.2 when used through a supported Velocity runtime; only the listed backend is
+directly exercised. Other Velocity, Java, proxy-image, and backend combinations are not part of the
+tested matrix.
 
 ## Installation
 
@@ -85,7 +89,8 @@ Prerequisites are Docker Engine with Linux containers and Docker Compose v2, eno
 the backend containers in advance, and acceptance of the security boundary above.
 
 1. Copy one complete support-line directory to the Docker host. Do not combine the Java 21 image
-   from one example with the Velocity 4.1 build from the other.
+   from the legacy example with the Java 25 Velocity 4.x builds from the stable or preview
+   examples.
 2. Download the 2.0.0 JAR from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) or
    [Modrinth](https://modrinth.com/plugin/autostopper) after it is published. Put the unchanged JAR
    at `velocity_server/plugins/AutoStopper.jar` inside the copied example directory.

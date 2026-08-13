@@ -1,9 +1,10 @@
 # Release-candidate Docker/Minecraft E2E
 
 This opt-in gate runs the exact packaged AutoStopper JAR through the pinned
-current Velocity Compose topology, a real Purpur 1.21.4 backend, and pinned
-headless Minecraft protocol clients. It covers first and simultaneous joins,
-readiness, idle stop, restart, never-ready behavior, and failed-stop retry.
+stable Velocity 4.0.0 line in the Compose topology, a real Purpur 1.21.4
+backend, and pinned headless Minecraft protocol clients. It covers first and
+simultaneous joins, readiness, idle stop, restart, never-ready behavior, and
+failed-stop retry.
 
 ## Security
 

@@ -36,7 +36,8 @@ The following GitHub Actions checks are required before a pull request can merge
 - `Java 21 / verify`
 - `Java 25 / verify`
 - `Velocity legacy / packaged runtime`
-- `Velocity current / packaged runtime`
+- `Velocity stable / packaged runtime`
+- `Velocity preview / packaged runtime`
 - `Dependency vulnerability review`
 
 The branch must be up to date with `master`, every required check must succeed, and every review
