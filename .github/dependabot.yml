@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      junit:
+        patterns:
+          - "org.junit:*"
+          - "org.junit.jupiter:*"
+          - "org.junit.platform:*"
+        update-types:
+          - minor
+          - patch
+      mockito:
+        patterns:
+          - "org.mockito:*"
+        update-types:
+          - minor
+          - patch
+      maven-build-plugins:
+        patterns:
+          - "org.apache.maven.plugins:*"
+          - "org.codehaus.mojo:*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Velocity major-line compatibility is validated deliberately against both supported runtimes.
+      - dependency-name: "com.velocitypowered:velocity-api"
+        update-types:
+          - version-update:semver-major
