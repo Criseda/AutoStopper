@@ -100,7 +100,7 @@ jobs:
 
       - name: Attest candidate build provenance
         if: inputs.preserve_release_artifact
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: target/release-artifact/AutoStopper-${{ steps.metadata.outputs.version }}.jar
 
