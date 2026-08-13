@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
-import subprocess
 import tempfile
 import unittest
 import urllib.parse
@@ -16,6 +15,7 @@ from release_lib import (
     ReleaseError,
     ReleasePublisher,
     Response,
+    load_metadata,
     parse_version,
     pom_version,
     prepare_candidate,
@@ -29,14 +29,7 @@ from release_lib import (
 def repository_release_context() -> tuple[Path, str, str]:
     repository = Path(__file__).resolve().parents[2]
     version = pom_version(repository)
-    result = subprocess.run(
-        ["git", "tag", "--list"],
-        cwd=repository,
-        check=True,
-        text=True,
-        capture_output=True,
-    )
-    previous = previous_stable_tag(result.stdout.splitlines(), version)
+    previous = load_metadata(repository)["previousTag"]
     return repository, version, previous
 
 
@@ -267,6 +260,11 @@ class VersionTest(unittest.TestCase):
         notes = validate_source(repository, version, previous)
         self.assertTrue(notes)
         self.assertNotIn(f"## [{previous}]", notes)
+
+    def test_repository_source_rejects_wrong_previous_tag(self) -> None:
+        repository, version, _ = repository_release_context()
+        with self.assertRaisesRegex(ReleaseError, "previousTag"):
+            validate_source(repository, version, "1.1.1")
 
 
 class PublisherTest(unittest.TestCase):

@@ -147,6 +147,11 @@ def validate_source(repository: Path, version: str, previous_tag: str) -> str:
         )
 
     metadata = load_metadata(repository)
+    if metadata.get("previousTag") != previous_tag:
+        raise ReleaseError(
+            f"release metadata previousTag is {metadata.get('previousTag')!r}, "
+            f"expected {previous_tag!r}"
+        )
     expected_name = metadata.get("artifactName")
     if expected_name != "AutoStopper-{version}.jar":
         raise ReleaseError("release metadata must name the versioned final shaded JAR")
