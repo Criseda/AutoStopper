@@ -22,6 +22,7 @@
   <a href="docs/configuration.md">Configuration</a> ·
   <a href="docs/troubleshooting.md">Troubleshooting</a> ·
   <a href="docs/migration-1.1.2-to-2.0.0.md">Migration</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="https://modrinth.com/plugin/autostopper">Modrinth</a>
 </p>
@@ -188,6 +189,14 @@ entry point:
 The verified shaded JAR is written under `target/`. The optional packaged-runtime and live
 release-candidate gates are documented in [`smoke/README.md`](smoke/README.md) and
 [`e2e/README.md`](e2e/README.md).
+
+## Development workflow
+
+`master` is AutoStopper's sole authoritative development and release branch. All changes use
+short-lived branches and pull requests; the former long-lived `dev` flow is retired. Required
+checks, review and merge rules, branch cleanup, hotfixes, version ownership, tag points, and the
+historical `dev`/`master` reconciliation are documented in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License and credits
 
