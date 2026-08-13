@@ -39,6 +39,7 @@
         <maven.compiler.release>21</maven.compiler.release>
         <mockito.version>5.17.0</mockito.version>
         <snakeyaml.version>2.6</snakeyaml.version>
+        <spotbugs.maven.version>4.10.3.0</spotbugs.maven.version>
         <velocity.api.version>3.5.1</velocity.api.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -187,6 +188,27 @@
                 <configuration>
                     <argLine>-javaagent:${org.mockito:mockito-core:jar}</argLine>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <version>${spotbugs.maven.version}</version>
+                <configuration>
+                    <effort>Max</effort>
+                    <threshold>Medium</threshold>
+                    <excludeFilterFile>${project.basedir}/config/spotbugs/exclude.xml</excludeFilterFile>
+                    <failOnError>true</failOnError>
+                    <xmlOutput>true</xmlOutput>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotbugs-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

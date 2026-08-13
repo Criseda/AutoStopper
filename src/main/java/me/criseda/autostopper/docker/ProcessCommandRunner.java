@@ -9,7 +9,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
-public class ProcessCommandRunner implements CommandRunner {
+public final class ProcessCommandRunner implements CommandRunner {
     private static final int MAX_OUTPUT_LENGTH = 4096;
     private static final Duration KILL_GRACE_PERIOD = Duration.ofSeconds(2);
 

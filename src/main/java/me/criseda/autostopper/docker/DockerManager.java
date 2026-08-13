@@ -6,7 +6,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 
-public class DockerManager {
+public final class DockerManager {
     private static final Duration DEFAULT_COMMAND_TIMEOUT = Duration.ofSeconds(10);
     private final Logger logger;
     private final CommandRunner commandRunner;

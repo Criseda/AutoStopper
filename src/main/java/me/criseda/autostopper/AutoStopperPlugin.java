@@ -125,16 +125,8 @@ public class AutoStopperPlugin {
         return logger;
     }
 
-    public AutoStopperConfig getConfig() {
-        return config;
-    }
-
     public ServerManager getServerManager() {
         return serverManager;
-    }
-
-    public ActivityTracker getActivityTracker() {
-        return activityTracker;
     }
 
     protected AutoStopperConfig createConfig() {

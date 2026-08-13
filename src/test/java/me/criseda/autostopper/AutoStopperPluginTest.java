@@ -100,8 +100,6 @@ public class AutoStopperPluginTest {
     private ScheduledTask scheduledTask;
 
     private AutoStopperPlugin plugin;
-    private AutoStopperPlugin spyPlugin;
-
     @BeforeEach
     void setUp() {
         // Mock chain
@@ -124,13 +122,6 @@ public class AutoStopperPluginTest {
         // Create plugin instance with real temp directory
         plugin = new AutoStopperPlugin(server, logger, tempDir, pluginContainer);
 
-        // Create a spy of the plugin to allow partial mocking
-        spyPlugin = spy(plugin);
-
-        // Inject mocked dependencies
-        doReturn(config).when(spyPlugin).getConfig();
-        doReturn(serverManager).when(spyPlugin).getServerManager();
-        doReturn(activityTracker).when(spyPlugin).getActivityTracker();
     }
 
     @Test
@@ -226,16 +217,12 @@ public class AutoStopperPluginTest {
     @Test
     void testGetters() {
         // Inject mocked dependencies for the real plugin
-        setPrivateField(plugin, "config", config);
         setPrivateField(plugin, "serverManager", serverManager);
-        setPrivateField(plugin, "activityTracker", activityTracker);
 
         // Execute & Verify
         assertEquals(server, plugin.getServer());
         assertEquals(logger, plugin.getLogger());
-        assertEquals(config, plugin.getConfig());
         assertEquals(serverManager, plugin.getServerManager());
-        assertEquals(activityTracker, plugin.getActivityTracker());
     }
     
     @Test
