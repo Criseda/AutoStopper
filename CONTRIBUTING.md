@@ -53,10 +53,21 @@ external contributions before merging. When a second active maintainer is availa
 ruleset to require one approval, dismiss stale approvals after new commits, and require approval of
 the most recent reviewable push by someone other than its author.
 
-## Merge and branch cleanup
+## Merge methods and branch cleanup
 
-Use GitHub merge commits so the protected `master` history records both the reviewed branch and its
-pull request. Squash and rebase merges are disabled. Never rewrite published `master` history.
+GitHub merge commits, squash merges, and rebase merges are all available. Choose the method that
+best represents the reviewed change:
+
+- prefer a squash merge for an ordinary focused pull request whose intermediate branch commits do
+  not add lasting value;
+- use a rebase merge when a small, clean series of independently meaningful commits should remain
+  visible in a linear `master` history;
+- use a merge commit when preserving the branch topology or a multi-commit integration as one
+  explicit pull-request event is valuable.
+
+The person merging is responsible for selecting deliberately and leaving a useful final commit or
+merge message. Supporting rebase merges does not permit force-pushing or otherwise rewriting
+published `master` history.
 
 GitHub automatically deletes a pull request's head branch after merge. Delete abandoned remote
 branches when their pull requests close after preserving any work that is still required. Prune
