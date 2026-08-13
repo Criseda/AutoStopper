@@ -1,0 +1,146 @@
+name: Validated release recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable stable tag to recover
+        required: true
+        type: string
+      source_run_id:
+        description: Failed Validated release run that preserved the candidate
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-recovery-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Recovery / validate tag and source run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out protected recovery tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: master
+
+      - name: Confirm protected master and immutable tag
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/master"
+          [[ "$RELEASE_TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          git fetch --force origin \
+            "refs/heads/master:refs/remotes/origin/master" \
+            "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse refs/remotes/origin/master)"
+          commit="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          git merge-base --is-ancestor "$commit" refs/remotes/origin/master
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Read and validate failed source run
+        env:
+          COMMIT: ${{ steps.release.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/release-recovery
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" \
+            > target/release-recovery/run.json
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/jobs?filter=latest&per_page=100" \
+            > target/release-recovery/jobs.json
+          python3 scripts/release/release_tool.py validate-recovery-run \
+            --run-json target/release-recovery/run.json \
+            --jobs-json target/release-recovery/jobs.json \
+            --source-run-id "$SOURCE_RUN_ID" \
+            --version "$RELEASE_VERSION" \
+            --commit "$COMMIT" \
+            --repository-name "$GITHUB_REPOSITORY"
+
+  publish:
+    name: Recovery / publish GitHub and Modrinth
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.preflight.outputs.version }}
+    permissions:
+      actions: read
+      attestations: read
+      contents: write
+    steps:
+      - name: Check out protected recovery tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: master
+
+      - name: Download exact candidate from validated source run
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-candidate-${{ needs.preflight.outputs.commit }}-*
+          path: target/release-artifact-downloads
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          digest-mismatch: error
+
+      - name: Select and re-verify byte-identical artifact handoff
+        env:
+          COMMIT: ${{ needs.preflight.outputs.commit }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: >-
+          python3 scripts/release/release_tool.py select-candidate
+          --downloads target/release-artifact-downloads
+          --output target/release-artifact
+          --artifact-prefix "release-candidate-${COMMIT}"
+          --version "${RELEASE_VERSION}"
+          --commit "${COMMIT}"
+          --repository-name "${GITHUB_REPOSITORY}"
+
+      - name: Verify preserved build attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: >-
+          gh attestation verify
+          "target/release-artifact/AutoStopper-${RELEASE_VERSION}.jar"
+          --repo "${GITHUB_REPOSITORY}"
+
+      - name: Publish or safely resume both destinations
+        env:
+          COMMIT: ${{ needs.preflight.outputs.commit }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: >-
+          python3 scripts/release/release_tool.py publish
+          --candidate target/release-artifact
+          --version "${RELEASE_VERSION}"
+          --commit "${COMMIT}"
+          --repository-name "${GITHUB_REPOSITORY}"

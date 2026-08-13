@@ -12,6 +12,8 @@ from pathlib import Path
 from release_lib import (
     GITHUB_API,
     MODRINTH_API,
+    PUBLISH_RELEASE_JOB,
+    REQUIRED_RELEASE_JOBS,
     ReleaseError,
     ReleasePublisher,
     Response,
@@ -21,6 +23,7 @@ from release_lib import (
     prepare_candidate,
     previous_stable_tag,
     select_candidate,
+    validate_recovery_run,
     validate_source,
     verify_candidate,
 )
@@ -310,6 +313,27 @@ class PublisherTest(unittest.TestCase):
 
 
 class CandidateSelectionTest(unittest.TestCase):
+    def test_selects_single_directly_extracted_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            downloads = root / "downloads"
+            downloads.mkdir()
+            manifest = verified_candidate(downloads)
+            output = root / "selected"
+
+            selected = select_candidate(
+                downloads,
+                output,
+                f"release-candidate-{'a' * 40}",
+                "2.0.0",
+                "a" * 40,
+                "Criseda/AutoStopper",
+            )
+
+            self.assertEqual(
+                manifest["artifact"]["sha256"], selected["artifact"]["sha256"]
+            )
+
     def test_selects_latest_identical_run_attempt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -354,6 +378,109 @@ class CandidateSelectionTest(unittest.TestCase):
                     f"release-candidate-{'a' * 40}",
                     "2.0.0",
                     "a" * 40,
+                    "Criseda/AutoStopper",
+                )
+
+    def test_mixed_direct_and_attempt_layout_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            downloads = root / "downloads"
+            downloads.mkdir()
+            verified_candidate(downloads)
+            attempt = downloads / f"release-candidate-{'a' * 40}-1"
+            attempt.mkdir()
+            verified_candidate(attempt)
+
+            with self.assertRaisesRegex(ReleaseError, "both a direct bundle"):
+                select_candidate(
+                    downloads,
+                    root / "selected",
+                    f"release-candidate-{'a' * 40}",
+                    "2.0.0",
+                    "a" * 40,
+                    "Criseda/AutoStopper",
+                )
+
+
+def recovery_documents(directory: Path) -> tuple[Path, Path]:
+    run_attempt = 1
+    run = {
+        "id": 31719216824,
+        "event": "push",
+        "head_branch": "2.0.0",
+        "head_sha": "a" * 40,
+        "status": "completed",
+        "conclusion": "failure",
+        "path": ".github/workflows/release.yml",
+        "run_attempt": run_attempt,
+        "repository": {"full_name": "Criseda/AutoStopper"},
+    }
+    jobs = [
+        {
+            "name": name,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": run_attempt,
+        }
+        for name in sorted(REQUIRED_RELEASE_JOBS)
+    ]
+    jobs.append(
+        {
+            "name": PUBLISH_RELEASE_JOB,
+            "status": "completed",
+            "conclusion": "failure",
+            "run_attempt": run_attempt,
+        }
+    )
+    run_path = directory / "run.json"
+    jobs_path = directory / "jobs.json"
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    jobs_path.write_text(json.dumps({"jobs": jobs}), encoding="utf-8")
+    return run_path, jobs_path
+
+
+class RecoveryRunTest(unittest.TestCase):
+    def test_accepts_failed_publish_after_all_candidate_gates_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run, jobs = recovery_documents(Path(temporary))
+            run.write_bytes(b"\xef\xbb\xbf" + run.read_bytes())
+            validate_recovery_run(
+                run,
+                jobs,
+                31719216824,
+                "2.0.0",
+                "a" * 40,
+                "Criseda/AutoStopper",
+            )
+
+    def test_rejects_failed_candidate_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run, jobs = recovery_documents(root)
+            document = json.loads(jobs.read_text(encoding="utf-8"))
+            document["jobs"][0]["conclusion"] = "failure"
+            jobs.write_text(json.dumps(document), encoding="utf-8")
+
+            with self.assertRaisesRegex(ReleaseError, "prerequisite job did not pass"):
+                validate_recovery_run(
+                    run,
+                    jobs,
+                    31719216824,
+                    "2.0.0",
+                    "a" * 40,
+                    "Criseda/AutoStopper",
+                )
+
+    def test_rejects_different_source_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run, jobs = recovery_documents(Path(temporary))
+            with self.assertRaisesRegex(ReleaseError, "head_sha"):
+                validate_recovery_run(
+                    run,
+                    jobs,
+                    31719216824,
+                    "2.0.0",
+                    "b" * 40,
                     "Criseda/AutoStopper",
                 )
 

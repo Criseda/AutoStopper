@@ -27,6 +27,16 @@ SECOND_LEVEL_HEADING = re.compile(r"^## ", re.MULTILINE)
 GITHUB_API = "https://api.github.com"
 MODRINTH_API = "https://api.modrinth.com/v2"
 USER_AGENT = "Criseda/AutoStopper-release/2.0 (+https://github.com/Criseda/AutoStopper)"
+REQUIRED_RELEASE_JOBS = {
+    "Release / validate tag and metadata",
+    "Release / dependency review / Dependency vulnerability review",
+    "Release / required deterministic CI / Java 21 / verify",
+    "Release / required deterministic CI / Java 25 / verify",
+    "Release / required deterministic CI / Velocity legacy / packaged runtime",
+    "Release / required deterministic CI / Velocity current / packaged runtime",
+    "Release / exact Docker Minecraft candidate / Release candidate / Docker Minecraft E2E",
+}
+PUBLISH_RELEASE_JOB = "Release / publish GitHub and Modrinth"
 
 
 class ReleaseError(RuntimeError):
@@ -402,6 +412,15 @@ def select_candidate(
         raise ReleaseError(
             f"Candidate download directory does not exist: {downloads_directory}"
         )
+    direct_manifest = downloads_directory / "release-manifest.json"
+    if direct_manifest.is_file():
+        attempts.append(
+            (
+                1,
+                downloads_directory,
+                verify_candidate(downloads_directory, version, commit, repository_name),
+            )
+        )
     for child in downloads_directory.iterdir():
         match = pattern.fullmatch(child.name)
         if child.is_dir() and match:
@@ -412,6 +431,10 @@ def select_candidate(
                     verify_candidate(child, version, commit, repository_name),
                 )
             )
+    if direct_manifest.is_file() and len(attempts) != 1:
+        raise ReleaseError(
+            "Candidate download contains both a direct bundle and run-attempt directories"
+        )
     if not attempts:
         raise ReleaseError(
             f"No candidate artifacts match {artifact_prefix}-<run-attempt>"
@@ -449,6 +472,80 @@ def select_candidate(
         )
     shutil.copytree(selected[1], output_directory)
     return verify_candidate(output_directory, version, commit, repository_name)
+
+
+def _read_json(path: Path, description: str) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ReleaseError(f"Cannot read {description}: {error}") from error
+    if not isinstance(value, dict):
+        raise ReleaseError(f"{description} must contain a JSON object")
+    return value
+
+
+def validate_recovery_run(
+    run_json_path: Path,
+    jobs_json_path: Path,
+    source_run_id: int,
+    version: str,
+    commit: str,
+    repository_name: str,
+) -> None:
+    """Require a failed publish run whose immutable candidate gates all passed."""
+    parse_version(version)
+    run = _read_json(run_json_path, "source release run JSON")
+    expected_run = {
+        "id": source_run_id,
+        "event": "push",
+        "head_branch": version,
+        "head_sha": commit,
+        "status": "completed",
+        "conclusion": "failure",
+        "path": ".github/workflows/release.yml",
+    }
+    for key, expected in expected_run.items():
+        if run.get(key) != expected:
+            raise ReleaseError(
+                f"Source release run {key} is {run.get(key)!r}, expected {expected!r}"
+            )
+    if run.get("repository", {}).get("full_name") != repository_name:
+        raise ReleaseError("Source release run belongs to a different repository")
+    run_attempt = run.get("run_attempt")
+    if not isinstance(run_attempt, int) or run_attempt < 1:
+        raise ReleaseError("Source release run has an invalid run_attempt")
+
+    jobs_document = _read_json(jobs_json_path, "source release jobs JSON")
+    jobs = jobs_document.get("jobs")
+    if not isinstance(jobs, list):
+        raise ReleaseError("Source release jobs JSON has no jobs list")
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    for job in jobs:
+        if isinstance(job, dict) and isinstance(job.get("name"), str):
+            by_name.setdefault(job["name"], []).append(job)
+    for name in REQUIRED_RELEASE_JOBS:
+        matches = by_name.get(name, [])
+        if len(matches) != 1:
+            raise ReleaseError(
+                f"Source release run must contain exactly one {name!r} job"
+            )
+        job = matches[0]
+        if job.get("status") != "completed" or job.get("conclusion") != "success":
+            raise ReleaseError(f"Source release prerequisite job did not pass: {name}")
+        if job.get("run_attempt") != run_attempt:
+            raise ReleaseError(
+                f"Source release prerequisite job has wrong attempt: {name}"
+            )
+    publish_matches = by_name.get(PUBLISH_RELEASE_JOB, [])
+    if len(publish_matches) != 1:
+        raise ReleaseError(
+            "Source release run must contain exactly one failed publish job"
+        )
+    publish = publish_matches[0]
+    if publish.get("status") != "completed" or publish.get("conclusion") != "failure":
+        raise ReleaseError("Source release publish job is not a completed failure")
+    if publish.get("run_attempt") != run_attempt:
+        raise ReleaseError("Source release publish job has the wrong attempt")
 
 
 @dataclass(frozen=True)
