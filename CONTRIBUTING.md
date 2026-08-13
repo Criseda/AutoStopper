@@ -5,6 +5,25 @@ and release branch. Long-lived `dev`, `develop`, `release`, and `hotfix` branche
 must not be recreated. Protected publication and recovery are documented in
 [`docs/releasing.md`](docs/releasing.md).
 
+## Development setup
+
+A clean checkout needs only JDK 21 through 25 and network access to Maven Central on the first
+build. The committed Maven Wrapper pins Maven 3.9.16 and is the canonical entry point; there is no
+assumption that a system Maven installation is present or up to date.
+
+```sh
+./mvnw --batch-mode --no-transfer-progress clean verify
+```
+
+```powershell
+.\mvnw.cmd --batch-mode --no-transfer-progress clean verify
+```
+
+The verified shaded JAR is written under `target/`. Generated build output, IDE files, runtime
+caches, and `dependency-reduced-pom.xml` are not committed. The packaged-runtime and live
+release-candidate gates are documented in [`smoke/README.md`](smoke/README.md) and
+[`e2e/README.md`](e2e/README.md).
+
 ## Branch workflow
 
 Create every change from the current `master` on a short-lived branch. Use a prefix that describes
@@ -79,6 +98,60 @@ git fetch --prune
 ```
 
 Tags are release records, not stale branches, and are not removed by branch cleanup.
+
+## Coding style and safety invariants
+
+Use four spaces for indentation, UTF-8 for source files, lowercase package names, `PascalCase`
+types, `camelCase` members, and `UPPER_SNAKE_CASE` constants. Match the style of nearby code; no
+formatter is configured.
+
+AutoStopper runs inside a live Velocity proxy, so runtime behavior has hard safety invariants:
+
+- Never block Velocity event or command workers. Docker work and other I/O run off-thread within
+  bounded deadlines.
+- Preserve bounded deadlines, cancellation, legal lifecycle transitions, mapping isolation, and
+  exactly-once future completion.
+- Keep configuration changes atomic: a malformed or invalid reload is rejected in full and the
+  previous snapshot remains active.
+- Sanitize player-facing diagnostics. Raw Docker stderr belongs only in operator logs, never in
+  messages sent to players.
+
+See [`docs/security.md`](docs/security.md) for the Docker socket trust boundary that applies to
+any code that touches the daemon.
+
+## Test layers and verification
+
+Tests use JUnit 5 and Mockito. Name test classes `<ProductionClass>Test`, mirror the production
+package layout under `src/test/java`, and keep shared helpers in `testing/`.
+
+- **Unit and behavior tests** run in the normal `clean verify` lifecycle. Cover production and
+  failure behavior at the owning layer, including deterministic tests for concurrency, timeouts,
+  cancellation, reload, and shutdown races.
+- **Static and packaging gates** run in the same lifecycle: JaCoCo coverage, SpotBugs with the
+  baseline in `config/spotbugs/exclude.xml` (see [`docs/spotbugs-baseline.md`](docs/spotbugs-baseline.md)),
+  and shaded-JAR inspection for Java 21 class files, manifest and descriptor correctness, unique
+  entries, relocated SnakeYAML, and absent Velocity-provided libraries.
+- **Packaged-runtime system tests** load the exact shaded JAR on every pinned Velocity line in
+  disposable Docker containers. They require Docker Engine and network access to PaperMC on the
+  first run:
+
+  ```powershell
+  .\mvnw.cmd verify -Psystem-tests
+  .\mvnw.cmd verify -Psystem-tests -Dvelocity.system.profiles=legacy
+  .\smoke\run-smoke.ps1 -Profile stable
+  ```
+
+  ```sh
+  ./mvnw verify -Psystem-tests -Dvelocity.system.profiles=preview
+  ```
+
+- **Release-candidate E2E** is a protected release gate, not an ordinary pull-request check. It
+  exercises the exact published JAR against a live Minecraft backend on the stable line; see
+  [`e2e/README.md`](e2e/README.md).
+
+Before opening a pull request, run the complete local verification (`clean verify`, plus the
+`system-tests` profile when Docker is available) and update the README, examples, migration notes,
+smoke pins, or changelog when their contracts change.
 
 ## Releases, version ownership, and tags
 

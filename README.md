@@ -24,6 +24,8 @@
   <a href="docs/migration-1.1.2-to-2.0.0.md">Migration</a> ·
   <a href="docs/releasing.md">Releasing</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
+  <a href="SUPPORT.md">Support</a> ·
+  <a href="SECURITY.md">Security</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="https://modrinth.com/plugin/autostopper">Modrinth</a>
 </p>
@@ -60,7 +62,7 @@ Use a dedicated host or VM where practical, install only trusted proxy plugins, 
 Compose-file access, do not expose the Docker API over TCP, and grant the proxy access only on a
 host whose containers it is allowed to control. A read-only socket mount is not sufficient because
 AutoStopper must start and stop containers. See [Docker socket security](docs/security.md) before
-installing.
+installing. To report a suspected vulnerability privately, see [SECURITY.md](SECURITY.md).
 
 ## Supported runtimes
 
