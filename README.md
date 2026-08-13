@@ -28,7 +28,7 @@ AutoStopper is a Velocity proxy plugin that automatically stops and starts Minec
 ## Support matrix
 
 AutoStopper is compiled as **one Java 21 bytecode artifact** against the latest
-stable 3.x Velocity API (3.5.1). The same JAR is smoke-tested on both supported
+stable 3.x Velocity API (3.5.1). The same packaged JAR is system-tested on both supported
 runtime lines:
 
 | Runtime line | Java | Velocity runtime (pinned)          | Status |
@@ -41,11 +41,10 @@ The `4.1.0` line is currently distributed as PaperMC snapshot builds; a stable
 version must always match the velocity bytecode line (see the Docker setup
 notes below).
 
-The smoke-test harness lives in [`smoke/`](smoke/README.md) and is run with:
+The packaged-runtime harness lives in [`smoke/`](smoke/README.md) and is run with:
 
 ```powershell
-.\mvnw.cmd clean package
-.\smoke\run-smoke.ps1
+.\mvnw.cmd verify -Psystem-tests
 ```
 
 ## Installation
