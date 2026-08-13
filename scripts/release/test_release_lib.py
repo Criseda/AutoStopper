@@ -36,6 +36,9 @@ def repository_release_context() -> tuple[Path, str, str]:
     return repository, version, previous
 
 
+SYNTHETIC_SOURCE_RUN_ID = 987654321
+
+
 class FakeHttpClient:
     def __init__(self, directory: Path, manifest: dict) -> None:
         self.directory = directory
@@ -443,7 +446,7 @@ class CandidateSelectionTest(unittest.TestCase):
 def recovery_documents(directory: Path) -> tuple[Path, Path]:
     run_attempt = 1
     run = {
-        "id": 31719216824,
+        "id": SYNTHETIC_SOURCE_RUN_ID,
         "event": "push",
         "head_branch": "2.0.0",
         "head_sha": "a" * 40,
@@ -485,7 +488,7 @@ class RecoveryRunTest(unittest.TestCase):
             validate_recovery_run(
                 run,
                 jobs,
-                31719216824,
+                SYNTHETIC_SOURCE_RUN_ID,
                 "2.0.0",
                 "a" * 40,
                 "Criseda/AutoStopper",
@@ -503,7 +506,7 @@ class RecoveryRunTest(unittest.TestCase):
                 validate_recovery_run(
                     run,
                     jobs,
-                    31719216824,
+                    SYNTHETIC_SOURCE_RUN_ID,
                     "2.0.0",
                     "a" * 40,
                     "Criseda/AutoStopper",
@@ -516,7 +519,7 @@ class RecoveryRunTest(unittest.TestCase):
                 validate_recovery_run(
                     run,
                     jobs,
-                    31719216824,
+                    SYNTHETIC_SOURCE_RUN_ID,
                     "2.0.0",
                     "b" * 40,
                     "Criseda/AutoStopper",
