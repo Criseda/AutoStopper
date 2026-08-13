@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("legacy", "current", "all")]
+    [ValidateSet("legacy", "stable", "preview", "all")]
     [string]$Profile = "all"
 )
 

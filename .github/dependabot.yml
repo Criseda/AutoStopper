@@ -41,7 +41,7 @@ updates:
           - minor
           - patch
     ignore:
-      # Velocity major-line compatibility is validated deliberately against both supported runtimes.
+      # Velocity major-line compatibility is validated deliberately against all supported runtimes.
       - dependency-name: "com.velocitypowered:velocity-api"
         update-types:
           - version-update:semver-major

@@ -1,0 +1,15 @@
+config-version = "2.8"
+bind = "0.0.0.0:25577"
+motd = "AutoStopper smoke test (stable line)"
+show-max-players = 500
+online-mode = false
+force-key-authentication = false
+player-info-forwarding-mode = "none"
+ping-passthrough = "disabled"
+
+[servers]
+try = []
+# no registered servers in the smoke test
+
+[forced-hosts]
+# no forced hosts configured

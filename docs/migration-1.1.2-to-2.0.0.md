@@ -7,7 +7,7 @@ deployment and configuration until the new mapping preflight and a real player c
 
 | 1.1.2 | 2.0.0 | Required action |
 |---|---|---|
-| Documentation described Velocity 3.3+ and Java 21+ generically. | The tested lines are exactly Velocity 3.5.1 build 615 on Java 21 and Velocity 4.1.0-SNAPSHOT build 16 on Java 25. The plugin JAR itself is Java 21 bytecode. | Choose one complete pinned example. Do not mix its proxy image/JVM and Velocity build. |
+| Documentation described Velocity 3.3+ and Java 21+ generically. | The tested lines are exactly Velocity 3.5.1 build 615 on Java 21, Velocity 4.0.0 build 6 on Java 25 (stable production), and Velocity 4.1.0-SNAPSHOT build 16 on Java 25 (preview). The plugin JAR itself is Java 21 bytecode. | Choose one complete pinned example. Do not mix its proxy image/JVM and Velocity build. |
 | README used `plugins/AutoStopper`. | Velocity's data directory follows plugin ID `autostopper`: `plugins/autostopper/config.yml`. | Move or merge any manually created mixed-case configuration into the lowercase directory. |
 | Generated defaults included example `purpur` and `fabric` mappings. | New installs generate `monitored_servers: []`. | Add only real Velocity server names and existing Docker containers. |
 | Configuration accepted loose values and could fall back silently. | YAML is strictly typed and validated; duplicate/unknown Velocity mappings, duplicate containers, invalid ranges, and partial readiness targets reject the whole candidate. Failed reloads retain the previous snapshot. | Correct all validation errors before expecting a reload to apply. |
@@ -23,8 +23,8 @@ deployment and configuration until the new mapping preflight and a real player c
 1. **Back up the 1.1.2 deployment.** Preserve the plugin JAR, Velocity configuration, AutoStopper
    configuration, Compose files, backend data, and the exact container names returned by
    `docker ps -a`.
-2. **Choose the support line.** Copy either `examples/velocity-legacy` or
-   `examples/velocity-current` as a complete unit. Keep the image tag and Velocity version/build
+2. **Choose the support line.** Copy `examples/velocity-legacy`, `examples/velocity-stable`, or
+   `examples/velocity-preview` as a complete unit. Keep the image tag and Velocity version/build
    unchanged for the initial cutover.
 3. **Review Docker security.** Read [Docker socket security](security.md). The entrypoint's socket
    group setup enables host-root-equivalent daemon control even though Velocity runs as

@@ -592,7 +592,7 @@ class CandidatePreparationTest(unittest.TestCase):
                         "size": source.stat().st_size,
                         "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                         "velocityImage": "itzg/mc-proxy:2026.8.0-java25",
-                        "velocityVersion": "4.1.0-SNAPSHOT-16",
+                        "velocityVersion": "4.0.0-6",
                         "backendImage": "itzg/minecraft-server:java21",
                         "minecraftVersion": "1.21.4",
                         "purpurBuild": "2416",

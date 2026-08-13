@@ -2,6 +2,15 @@
 
 All notable AutoStopper changes are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Pinned stable Velocity 4.0.0 build 6 as the production support line on Java 25, tested by the
+  packaged-runtime system tests and the release-candidate Docker/Minecraft gate. Velocity 3.5.1 on
+  Java 21 remains the tested minimum/floor, and Velocity 4.1.0-SNAPSHOT on Java 25 remains clearly
+  labelled preview validation.
+
 ## [2.0.0] - 2026-08-13
 
 ### Added
