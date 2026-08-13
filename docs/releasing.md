@@ -38,8 +38,8 @@ been exposed.
    ```sh
    git switch master
    git pull --ff-only origin master
-   git tag 2.0.0
-   git push origin 2.0.0
+   git tag X.Y.Z
+   git push origin X.Y.Z
    ```
 
 4. In GitHub Actions, inspect the `Validated release` run and approve its `release` environment
@@ -48,8 +48,8 @@ been exposed.
    the checksum attached to the GitHub release. Verify the GitHub build attestation as well:
 
    ```sh
-   sha256sum -c AutoStopper-2.0.0.jar.sha256
-   gh attestation verify AutoStopper-2.0.0.jar --repo Criseda/AutoStopper
+   sha256sum -c AutoStopper-X.Y.Z.jar.sha256
+   gh attestation verify AutoStopper-X.Y.Z.jar --repo Criseda/AutoStopper
    ```
 
 The tag, POM, packaged Velocity descriptor, manifest, changelog, candidate evidence, filename, and
@@ -74,6 +74,26 @@ Publication is deliberately non-replacing:
 
 Modrinth is listed immediately before the GitHub draft is made public. The final step re-fetches
 both destinations and verifies the public state.
+
+## Release notes
+
+Both public note texts are derived from exactly one dated `## [X.Y.Z]` section in `CHANGELOG.md`:
+
+1. The file must contain exactly one `## [X.Y.Z]` heading for the tagged version, and the section
+   must not be empty. Its comparison link
+   `[X.Y.Z]: https://github.com/Criseda/AutoStopper/compare/PREVIOUS...X.Y.Z` must appear exactly
+   once.
+2. The note text is the section content up to the next level-two heading. Relative documentation
+   links of the form `](docs/...` are rewritten to
+   `](https://github.com/Criseda/AutoStopper/blob/X.Y.Z/docs/...` so they resolve against the
+   tagged commit.
+3. That rewritten text is stored as `modrinth-changelog.md` and becomes the Modrinth changelog.
+4. The GitHub release body is stored as `release-notes.md` and appends a `### Verification` block
+   containing the candidate SHA-256, the build and release-candidate run URL, and the
+   `gh attestation verify AutoStopper-X.Y.Z.jar --repo Criseda/AutoStopper` instruction.
+5. Both generated note files travel inside the candidate bundle, and their digests are recorded in
+   the release manifest. Publication refuses any bundle whose note files do not match those
+   digests.
 
 ## Hotfix
 
