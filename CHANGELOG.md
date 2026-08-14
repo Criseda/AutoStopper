@@ -13,6 +13,9 @@ All notable AutoStopper changes are documented here.
 - Added the `RUNNING_UNVERIFIED` operational state so a Docker-running container is not reported as
   ready until AutoStopper has completed the configured readiness contract for the current mapping
   lifecycle.
+- Connecting players now receive authoritative inspection, startup, readiness, connection, and
+  terminal lifecycle messages. Late arrivals see the current shared stage and unique waiter count,
+  while terminal feedback includes each player's monotonic elapsed wait time.
 
 ### Changed
 
