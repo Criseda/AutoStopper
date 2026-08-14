@@ -8,6 +8,8 @@ import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
 
+import java.time.Duration;
+
 public final class AutoStopperMessages {
     static final NamedTextColor BRAND_COLOR = NamedTextColor.GOLD;
     static final NamedTextColor COMMAND_COLOR = NamedTextColor.AQUA;
@@ -155,6 +157,41 @@ public final class AutoStopperMessages {
         return progress("Server is already being started, please wait...");
     }
 
+    public static Component lifecycleInspecting(String serverName) {
+        return serverMessage(WARNING_COLOR, "Checking server ", serverName, "...");
+    }
+
+    public static Component lifecycleStarting(String serverName) {
+        return serverMessage(WARNING_COLOR, "Starting server ", serverName, "...");
+    }
+
+    public static Component lifecycleWaitingForReadiness(String serverName) {
+        return serverMessage(WARNING_COLOR, "Waiting for server ", serverName, " to become ready...");
+    }
+
+    public static Component lifecycleConnecting(String serverName) {
+        return serverMessage(WARNING_COLOR, "Connecting you to server ", serverName, "...");
+    }
+
+    public static Component playersWaiting(int count) {
+        return prefixed()
+                .append(Component.text("Players waiting: ", WARNING_COLOR))
+                .append(argument(Integer.toString(count)))
+                .build();
+    }
+
+    public static Component lifecycleSucceeded(String serverName, Duration elapsed) {
+        return prefixed()
+                .append(Component.text("Connected to server ", SUCCESS_COLOR))
+                .append(argument(serverName))
+                .append(Component.text(" after " + formatElapsed(elapsed) + ".", SUCCESS_COLOR))
+                .build();
+    }
+
+    public static Component lifecycleFailed(Component reason, Duration elapsed) {
+        return reason.append(Component.text(" Waited " + formatElapsed(elapsed) + ".", ERROR_COLOR));
+    }
+
     public static Component serverStopping(String serverName) {
         return serverMessage(WARNING_COLOR, "Server ", serverName,
                 " is currently stopping. Please try again shortly.");
@@ -269,6 +306,19 @@ public final class AutoStopperMessages {
             message.append(Component.text(" - " + detail, NEUTRAL_COLOR));
         }
         return message.build();
+    }
+
+    private static String formatElapsed(Duration elapsed) {
+        long millis = Math.max(0, elapsed.toMillis());
+        if (millis < 1_000) {
+            return millis + " ms";
+        }
+        long seconds = millis / 1_000;
+        long tenths = (millis % 1_000) / 100;
+        if (tenths != 0) {
+            return seconds + "." + tenths + " seconds";
+        }
+        return seconds == 1 ? "1 second" : seconds + " seconds";
     }
 
     private static String failureDetail(OperationalFailure failure) {

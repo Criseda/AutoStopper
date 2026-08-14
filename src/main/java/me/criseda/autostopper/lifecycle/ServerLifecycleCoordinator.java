@@ -14,6 +14,9 @@ import me.criseda.autostopper.server.ServerManager;
 import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.EnumSet;
@@ -32,7 +35,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.time.Instant;
+import java.util.function.LongSupplier;
 
 /**
  * Owns lifecycle state, the single in-flight startup operation, and connection waiters for every
@@ -45,6 +48,7 @@ public final class ServerLifecycleCoordinator {
 
     private final Logger logger;
     private final ServerManager serverManager;
+    private final LongSupplier nanoTime;
     private final Map<String, LifecycleEntry> lifecycles = new ConcurrentHashMap<>();
     private final Set<ReconnectPermit> reconnectPermits = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
@@ -52,8 +56,13 @@ public final class ServerLifecycleCoordinator {
     private final Object shutdownLock = new Object();
 
     public ServerLifecycleCoordinator(Logger logger, ServerManager serverManager) {
+        this(logger, serverManager, System::nanoTime);
+    }
+
+    ServerLifecycleCoordinator(Logger logger, ServerManager serverManager, LongSupplier nanoTime) {
         this.logger = Objects.requireNonNull(logger, "logger");
         this.serverManager = Objects.requireNonNull(serverManager, "serverManager");
+        this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime");
     }
 
     public boolean consumeReconnectPermit(Player player, String serverName) {
@@ -98,6 +107,9 @@ public final class ServerLifecycleCoordinator {
                     UUID playerId = player.getUniqueId();
                     ConnectionWaiter existing = entry.waiters.get(playerId);
                     if (existing != null) {
+                        if (entry.state == ServerLifecycleState.STARTING) {
+                            queueWaitingCount(existing, entry.waiters.size());
+                        }
                         admitted.set(Admission.queued(entry, existing));
                         return entry;
                     }
@@ -111,19 +123,28 @@ public final class ServerLifecycleCoordinator {
                         return entry;
                     }
 
-                    ConnectionWaiter waiter = new ConnectionWaiter(playerId, player, targetServer);
+                    ConnectionWaiter waiter = new ConnectionWaiter(
+                            playerId, player, targetServer, nanoTime.getAsLong());
                     entry.waiters.put(playerId, waiter);
                     touch(entry);
                     if (entry.state == ServerLifecycleState.STARTING) {
+                        queueStage(waiter, entry.progressStage,
+                                stageMessage(entry.progressStage, mapping.serverName()), false);
+                        queueWaitingCount(waiter, entry.waiters.size());
                         admitted.set(Admission.queued(entry, waiter));
                         return entry;
                     }
                     if (entry.state == ServerLifecycleState.READY) {
+                        queueStage(waiter, ConnectionLifecycleStage.CONNECTING,
+                                stageMessage(ConnectionLifecycleStage.CONNECTING, mapping.serverName()), false);
                         admitted.set(Admission.connect(entry, waiter));
                         return entry;
                     }
 
                     transition(entry, ServerLifecycleState.STARTING);
+                    entry.progressStage = ConnectionLifecycleStage.INSPECTING;
+                    queueStage(waiter, entry.progressStage,
+                            stageMessage(entry.progressStage, mapping.serverName()), false);
                     CompletableFuture<StartupOutcome> operation = new CompletableFuture<>();
                     entry.startupFuture = operation;
                     admitted.set(Admission.start(entry, waiter, operation));
@@ -142,14 +163,12 @@ public final class ServerLifecycleCoordinator {
             }
             return CompletableFuture.completedFuture(admission.rejectedOutcome);
         }
-        if (admission.queued) {
-            safeSend(player, AutoStopperMessages.serverAlreadyStarting());
-        }
         if (admission.connectNow) {
             connectWaiter(admission.entry, admission.waiter);
         } else if (admission.launchStartup) {
             launchStatusCheck(admission.entry, mapping, admission.startupFuture);
         }
+        drainNotifications(admission.waiter);
         return admission.waiter.future;
     }
 
@@ -312,6 +331,9 @@ public final class ServerLifecycleCoordinator {
                     }
                     if (entry.isBusy()) {
                         entry.retired = true;
+                        for (ConnectionWaiter waiter : entry.waiters.values()) {
+                            suppressNotifications(waiter);
+                        }
                         touch(entry);
                         return entry;
                     }
@@ -480,7 +502,11 @@ public final class ServerLifecycleCoordinator {
 
     private void launchStart(LifecycleEntry entry, ServerMapping mapping,
             CompletableFuture<StartupOutcome> operation) {
-        notifyStarting(entry);
+        List<ConnectionWaiter> stageWaiters = recordSharedStage(
+                entry, operation, ConnectionLifecycleStage.STARTING);
+        if (stageWaiters == null) {
+            return;
+        }
         CompletableFuture<ContainerStatus> startFuture;
         try {
             startFuture = serverManager.startServerAsync(mapping);
@@ -517,10 +543,16 @@ public final class ServerLifecycleCoordinator {
                 case STOPPED, FAILED -> completeStartup(entry, mapping, operation, StartupOutcome.START_FAILED);
             }
         });
+        drainNotifications(stageWaiters);
     }
 
     private void launchReadiness(LifecycleEntry entry, ServerMapping mapping,
             CompletableFuture<StartupOutcome> operation, boolean startedContainer) {
+        List<ConnectionWaiter> stageWaiters = recordSharedStage(
+                entry, operation, ConnectionLifecycleStage.WAITING_FOR_READINESS);
+        if (stageWaiters == null) {
+            return;
+        }
         CompletableFuture<ReadinessResult> readinessFuture;
         try {
             readinessFuture = serverManager.waitForServerReadyAsync(mapping);
@@ -550,6 +582,7 @@ public final class ServerLifecycleCoordinator {
                 completeStartup(entry, mapping, operation, StartupOutcome.NOT_READY, ready);
             }
         });
+        drainNotifications(stageWaiters);
     }
 
     private void completeStartup(LifecycleEntry entry, ServerMapping mapping,
@@ -574,6 +607,7 @@ public final class ServerLifecycleCoordinator {
             entry.activeOperation = null;
             transition(entry, outcome.ready ? ServerLifecycleState.READY : ServerLifecycleState.FAILED);
             if (outcome.ready) {
+                entry.progressStage = ConnectionLifecycleStage.CONNECTING;
                 entry.readyConnectionSucceeded = false;
                 entry.lastFailure = null;
             } else {
@@ -584,6 +618,12 @@ public final class ServerLifecycleCoordinator {
                         startupRemediation(outcome));
             }
             waiters = new ArrayList<>(entry.waiters.values());
+            if (outcome.ready) {
+                for (ConnectionWaiter waiter : waiters) {
+                    queueStage(waiter, ConnectionLifecycleStage.CONNECTING,
+                            stageMessage(ConnectionLifecycleStage.CONNECTING, mapping.serverName()), false);
+                }
+            }
             if (!outcome.ready) {
                 entry.waiters.clear();
                 entry.lastConnectionOutcome = outcome.connectionOutcome;
@@ -593,20 +633,27 @@ public final class ServerLifecycleCoordinator {
         operation.complete(outcome);
         if (outcome.ready) {
             for (ConnectionWaiter waiter : waiters) {
-                if (outcome == StartupOutcome.READY_AFTER_START) {
-                    safeSend(waiter.player, AutoStopperMessages.serverReady(mapping.serverName()));
-                }
                 connectWaiter(entry, waiter);
+                drainNotifications(waiter);
             }
         } else {
             for (ConnectionWaiter waiter : waiters) {
                 boolean active = isPlayerActive(waiter.player);
+                boolean initialConnection = active && isInitialConnection(waiter.player);
                 if (active) {
-                    notifyStartupFailure(waiter.player, mapping.serverName(), outcome, readinessFailure);
+                    Component failureMessage = AutoStopperMessages.lifecycleFailed(
+                            startupFailureMessage(mapping.serverName(), outcome, readinessFailure),
+                            elapsed(waiter));
+                    queueStage(waiter, ConnectionLifecycleStage.FAILED, failureMessage, initialConnection);
                 }
                 waiter.future.complete(active
                         ? outcome.connectionOutcome
                         : ConnectionOutcome.PLAYER_DISCONNECTED);
+                drainNotifications(waiter);
+                if (active && !initialConnection && (outcome == StartupOutcome.NOT_READY
+                        || outcome == StartupOutcome.READINESS_ERROR)) {
+                    safeSend(waiter.player, AutoStopperMessages.retryServerCommand(mapping.serverName()));
+                }
             }
             cleanupRetired(mapping.serverName(), entry);
         }
@@ -630,7 +677,6 @@ public final class ServerLifecycleCoordinator {
         } catch (RuntimeException error) {
             reconnectPermits.remove(permit);
             logger.error("Error creating connection request for server {}", serverName, error);
-            notifyConnectionFailure(waiter.player, serverName, ConnectionOutcome.CONNECTION_FAILED);
             finishWaiter(entry, waiter, ConnectionOutcome.CONNECTION_FAILED);
             return;
         }
@@ -638,7 +684,6 @@ public final class ServerLifecycleCoordinator {
         if (connection == null) {
             reconnectPermits.remove(permit);
             logger.error("Connection request for server {} returned no future", serverName);
-            notifyConnectionFailure(waiter.player, serverName, ConnectionOutcome.CONNECTION_FAILED);
             finishWaiter(entry, waiter, ConnectionOutcome.CONNECTION_FAILED);
             return;
         }
@@ -682,9 +727,6 @@ public final class ServerLifecycleCoordinator {
                         serverName, classificationError);
                 outcome = ConnectionOutcome.CONNECTION_FAILED;
             }
-            if (!outcome.isSuccessful() && isPlayerActive(waiter.player)) {
-                notifyConnectionFailure(waiter.player, serverName, outcome);
-            }
             finishWaiter(entry, waiter, outcome);
         });
     }
@@ -716,7 +758,17 @@ public final class ServerLifecycleCoordinator {
                         "Check the backend listener and Velocity server address, then retry.");
             }
         }
+        if (outcome.isSuccessful()) {
+            queueStage(waiter, ConnectionLifecycleStage.SUCCEEDED,
+                    AutoStopperMessages.lifecycleSucceeded(entry.mapping.serverName(), elapsed(waiter)), false);
+        } else if (outcome != ConnectionOutcome.PLAYER_DISCONNECTED
+                && outcome != ConnectionOutcome.PROXY_SHUTDOWN) {
+            queueStage(waiter, ConnectionLifecycleStage.FAILED,
+                    AutoStopperMessages.lifecycleFailed(
+                            connectionFailureMessage(entry.mapping.serverName(), outcome), elapsed(waiter)), false);
+        }
         waiter.future.complete(outcome);
+        drainNotifications(waiter);
         cleanupRetired(entry.mapping.serverName(), entry);
     }
 
@@ -731,16 +783,6 @@ public final class ServerLifecycleCoordinator {
         });
     }
 
-    private void notifyStarting(LifecycleEntry entry) {
-        List<ConnectionWaiter> waiters;
-        synchronized (entry) {
-            waiters = new ArrayList<>(entry.waiters.values());
-        }
-        for (ConnectionWaiter waiter : waiters) {
-            safeSend(waiter.player, AutoStopperMessages.serverOfflineStarting());
-        }
-    }
-
     private void notifyRejected(Player player, String serverName, ConnectionOutcome outcome) {
         if (outcome == ConnectionOutcome.SERVER_STOPPING) {
             safeSend(player, AutoStopperMessages.serverStopping(serverName));
@@ -749,9 +791,9 @@ public final class ServerLifecycleCoordinator {
         }
     }
 
-    private void notifyStartupFailure(Player player, String serverName, StartupOutcome outcome,
+    private Component startupFailureMessage(String serverName, StartupOutcome outcome,
             ReadinessResult readinessFailure) {
-        Component message = switch (outcome) {
+        return switch (outcome) {
             case STATUS_NO_MAPPING -> AutoStopperMessages.noContainerMapping(serverName);
             case STATUS_MISSING, START_MISSING -> AutoStopperMessages.containerMissing(serverName);
             case STATUS_INACCESSIBLE -> AutoStopperMessages.dockerUnavailable("manage", serverName);
@@ -769,35 +811,137 @@ public final class ServerLifecycleCoordinator {
             case OVERLOADED -> AutoStopperMessages.overloaded();
             case READY_RUNNING, READY_AFTER_START -> throw new IllegalArgumentException("ready outcome is not a failure");
         };
-        boolean disconnected = notifyTerminalFailure(player, message);
-        if ((outcome == StartupOutcome.NOT_READY || outcome == StartupOutcome.READINESS_ERROR) && !disconnected) {
-            safeSend(player, AutoStopperMessages.retryServerCommand(serverName));
+    }
+
+    private Component connectionFailureMessage(String serverName, ConnectionOutcome outcome) {
+        return switch (outcome) {
+            case CONNECTION_IN_PROGRESS -> AutoStopperMessages.connectionInProgress(serverName);
+            case CONNECTION_CANCELLED -> AutoStopperMessages.connectionCancelled(serverName);
+            case SERVER_DISCONNECTED -> AutoStopperMessages.connectionRefused(serverName);
+            default -> AutoStopperMessages.connectionFailed(serverName);
+        };
+    }
+
+    private List<ConnectionWaiter> recordSharedStage(LifecycleEntry entry,
+            CompletableFuture<StartupOutcome> operation, ConnectionLifecycleStage stage) {
+        synchronized (entry) {
+            if (shutdown.get() || entry.startupFuture != operation
+                    || entry.state != ServerLifecycleState.STARTING) {
+                return null;
+            }
+            entry.progressStage = stage;
+            List<ConnectionWaiter> waiters = new ArrayList<>(entry.waiters.values());
+            Component message = stageMessage(stage, entry.mapping.serverName());
+            for (ConnectionWaiter waiter : waiters) {
+                queueStage(waiter, stage, message, false);
+            }
+            return waiters;
         }
     }
 
-    private boolean notifyTerminalFailure(Player player, Component message) {
-        if (shutdown.get() || !isPlayerActive(player)) {
+    private Component stageMessage(ConnectionLifecycleStage stage, String serverName) {
+        return switch (stage) {
+            case INSPECTING -> AutoStopperMessages.lifecycleInspecting(serverName);
+            case STARTING -> AutoStopperMessages.lifecycleStarting(serverName);
+            case WAITING_FOR_READINESS -> AutoStopperMessages.lifecycleWaitingForReadiness(serverName);
+            case CONNECTING -> AutoStopperMessages.lifecycleConnecting(serverName);
+            case SUCCEEDED, FAILED -> throw new IllegalArgumentException("Terminal stage requires an outcome message");
+        };
+    }
+
+    private void queueStage(ConnectionWaiter waiter, ConnectionLifecycleStage stage,
+            Component message, boolean disconnectInitial) {
+        synchronized (waiter) {
+            if (waiter.discarded || waiter.notificationsSuppressed || waiter.queuedStages.contains(stage)
+                    || waiter.deliveredStages.contains(stage)) {
+                return;
+            }
+            waiter.queuedStages.add(stage);
+            waiter.notifications.addLast(new WaiterNotification(
+                    Optional.of(stage), message, disconnectInitial));
+        }
+    }
+
+    private void queueWaitingCount(ConnectionWaiter waiter, int count) {
+        synchronized (waiter) {
+            if (count <= 1 || waiter.discarded || waiter.notificationsSuppressed
+                    || waiter.lastWaitingCountReported == count) {
+                return;
+            }
+            waiter.lastWaitingCountReported = count;
+            waiter.notifications.addLast(new WaiterNotification(
+                    Optional.empty(), AutoStopperMessages.playersWaiting(count), false));
+        }
+    }
+
+    private void suppressNotifications(ConnectionWaiter waiter) {
+        synchronized (waiter) {
+            waiter.notificationsSuppressed = true;
+            waiter.notifications.clear();
+            waiter.queuedStages.clear();
+        }
+    }
+
+    private void drainNotifications(List<ConnectionWaiter> waiters) {
+        for (ConnectionWaiter waiter : waiters) {
+            drainNotifications(waiter);
+        }
+    }
+
+    private void drainNotifications(ConnectionWaiter waiter) {
+        synchronized (waiter) {
+            if (waiter.deliveringNotifications) {
+                return;
+            }
+            waiter.deliveringNotifications = true;
+        }
+        while (true) {
+            WaiterNotification notification;
+            synchronized (waiter) {
+                notification = waiter.notifications.pollFirst();
+                if (notification == null) {
+                    waiter.deliveringNotifications = false;
+                    return;
+                }
+                notification.stage().ifPresent(waiter.queuedStages::remove);
+                if (waiter.discarded || waiter.notificationsSuppressed
+                        || notification.stage().map(waiter.deliveredStages::contains).orElse(false)) {
+                    continue;
+                }
+                notification.stage().ifPresent(waiter.deliveredStages::add);
+            }
+            deliverNotification(waiter, notification);
+        }
+    }
+
+    private void deliverNotification(ConnectionWaiter waiter, WaiterNotification notification) {
+        if (shutdown.get() || waiter.discarded || !isPlayerActive(waiter.player)) {
+            return;
+        }
+        if (notification.disconnectInitial()) {
+            try {
+                if (waiter.player.getCurrentServer().isEmpty()) {
+                    waiter.player.disconnect(notification.message());
+                    return;
+                }
+            } catch (RuntimeException error) {
+                logger.debug("Could not inspect or disconnect an initial lifecycle waiter", error);
+            }
+        }
+        safeSend(waiter.player, notification.message());
+    }
+
+    private boolean isInitialConnection(Player player) {
+        try {
+            return player.getCurrentServer().isEmpty();
+        } catch (RuntimeException error) {
+            logger.debug("Could not inspect whether a lifecycle waiter has a current server", error);
             return false;
         }
-        try {
-            if (player.getCurrentServer().isEmpty()) {
-                player.disconnect(message);
-                return true;
-            }
-        } catch (RuntimeException error) {
-            logger.debug("Could not inspect or disconnect an initial lifecycle waiter", error);
-        }
-        safeSend(player, message);
-        return false;
     }
 
-    private void notifyConnectionFailure(Player player, String serverName, ConnectionOutcome outcome) {
-        switch (outcome) {
-            case CONNECTION_IN_PROGRESS -> safeSend(player, AutoStopperMessages.connectionInProgress(serverName));
-            case CONNECTION_CANCELLED -> safeSend(player, AutoStopperMessages.connectionCancelled(serverName));
-            case SERVER_DISCONNECTED -> safeSend(player, AutoStopperMessages.connectionRefused(serverName));
-            default -> safeSend(player, AutoStopperMessages.connectionFailed(serverName));
-        }
+    private Duration elapsed(ConnectionWaiter waiter) {
+        return Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - waiter.startNanos));
     }
 
     private void safeSend(Player player, Component message) {
@@ -942,6 +1086,7 @@ public final class ServerLifecycleCoordinator {
         private final ServerMapping mapping;
         private final Map<UUID, ConnectionWaiter> waiters = new LinkedHashMap<>();
         private ServerLifecycleState state = ServerLifecycleState.STOPPED;
+        private ConnectionLifecycleStage progressStage;
         private CompletableFuture<StartupOutcome> startupFuture;
         private CompletableFuture<?> activeOperation;
         private ConnectionOutcome lastConnectionOutcome;
@@ -967,14 +1112,29 @@ public final class ServerLifecycleCoordinator {
         private final Player player;
         private final RegisteredServer targetServer;
         private final CompletableFuture<ConnectionOutcome> future = new CompletableFuture<>();
+        private final long startNanos;
+        private final ArrayDeque<WaiterNotification> notifications = new ArrayDeque<>();
+        private final Set<ConnectionLifecycleStage> queuedStages =
+                EnumSet.noneOf(ConnectionLifecycleStage.class);
+        private final Set<ConnectionLifecycleStage> deliveredStages =
+                EnumSet.noneOf(ConnectionLifecycleStage.class);
         private volatile boolean discarded;
+        private boolean notificationsSuppressed;
+        private boolean deliveringNotifications;
+        private int lastWaitingCountReported;
         private CompletableFuture<ConnectionRequestBuilder.Result> connectionFuture;
 
-        private ConnectionWaiter(UUID playerId, Player player, RegisteredServer targetServer) {
+        private ConnectionWaiter(UUID playerId, Player player, RegisteredServer targetServer,
+                long startNanos) {
             this.playerId = playerId;
             this.player = player;
             this.targetServer = targetServer;
+            this.startNanos = startNanos;
         }
+    }
+
+    private record WaiterNotification(Optional<ConnectionLifecycleStage> stage, Component message,
+            boolean disconnectInitial) {
     }
 
     private static final class Admission {
