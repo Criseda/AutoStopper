@@ -80,6 +80,13 @@ container: Docker would restart it after AutoStopper successfully stops it.
 - AutoStopper intercepts only destinations present in `monitored_servers`. If a hub should remain
   always on, omit it from that list.
 - Multiple players connecting to one stopped server share one bounded startup/readiness operation.
+- Player messages follow the authoritative flow: checking the server, starting it when stopped,
+  waiting for readiness, and connecting through Velocity. Already-running unverified backends skip
+  the start stage but still report inspection and readiness. Late arrivals immediately see the
+  current shared stage, and terminal feedback reports their own elapsed wait time.
+- Stage messages are transition-driven rather than periodic. A long gap after the waiting-for-
+  readiness message means the configured readiness deadline is still running; use the proxy
+  log and `/autostopper status` for operator diagnostics rather than expecting a percentage update.
 - `SERVER_STOPPING`, overload, cancellation, or a mapping change asks the player to retry; it does
   not launch a second conflicting operation.
 - AutoStopper does not implement a custom `/server` command. Players use Velocity's command and

@@ -8,6 +8,7 @@ import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -72,6 +73,27 @@ class AutoStopperMessagesTest {
         assertColor(timeout, "Timed out starting server ", NamedTextColor.YELLOW);
         assertColor(denied, "You do not have permission to ", NamedTextColor.RED);
         assertColor(failure, "Failed to start server ", NamedTextColor.RED);
+    }
+
+    @Test
+    void lifecycleMessagesUseBackendLanguageAndMonotonicElapsedValue() {
+        List<Component> stages = List.of(
+                AutoStopperMessages.lifecycleInspecting("survival"),
+                AutoStopperMessages.lifecycleStarting("survival"),
+                AutoStopperMessages.lifecycleWaitingForReadiness("survival"),
+                AutoStopperMessages.lifecycleConnecting("survival"),
+                AutoStopperMessages.lifecycleSucceeded("survival", Duration.ofMillis(2_550)));
+        Component failure = AutoStopperMessages.lifecycleFailed(
+                AutoStopperMessages.serverNotReady("survival"), Duration.ofMillis(850));
+
+        assertEquals(List.of(
+                "[AutoStopper] Checking server survival...",
+                "[AutoStopper] Starting server survival...",
+                "[AutoStopper] Waiting for server survival to become ready...",
+                "[AutoStopper] Connecting you to server survival...",
+                "[AutoStopper] Connected to server survival after 2.5 seconds."),
+                stages.stream().map(AutoStopperMessagesTest::plainText).toList());
+        assertEquals("[AutoStopper] Server survival is not ready. Waited 850 ms.", plainText(failure));
     }
 
     @Test

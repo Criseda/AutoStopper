@@ -28,6 +28,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static me.criseda.autostopper.testing.ComponentTestUtils.plainText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -76,6 +77,13 @@ class ServerLifecycleCoordinatorTest {
         verify(player.player).createConnectionRequest(targetServer);
         player.complete(ConnectionRequestBuilder.Status.SUCCESS);
         assertEquals(ConnectionOutcome.CONNECTED, outcome.join());
+        List<String> messages = sentMessages(player.player);
+        assertEquals(List.of(
+                        "[AutoStopper] Checking server survival...",
+                        "[AutoStopper] Waiting for server survival to become ready...",
+                        "[AutoStopper] Connecting you to server survival..."),
+                messages.subList(0, 3));
+        assertTrue(messages.stream().noneMatch(message -> message.contains("Starting server")));
     }
 
     @Test
@@ -121,9 +129,91 @@ class ServerLifecycleCoordinatorTest {
 
         assertEquals(ConnectionOutcome.SERVER_NOT_READY, outcome.join());
         verify(player.player).disconnect(argThat(message ->
-                plainText(message).toLowerCase().contains("remained unreachable")));
-        verify(player.player, never()).sendMessage(any(Component.class));
+                plainText(message).toLowerCase().contains("remained unreachable")
+                        && plainText(message).contains("Waited ")));
+        verify(player.player, atLeastOnce()).sendMessage(any(Component.class));
         verify(player.player, never()).createConnectionRequest(any(RegisteredServer.class));
+    }
+
+    @Test
+    void lateWaiterSeesCurrentStageThenSharedFutureTransitionsExactlyOnce() {
+        AtomicLong clock = new AtomicLong(1_000_000_000L);
+        coordinator = new ServerLifecycleCoordinator(logger, serverManager, clock::get);
+        CompletableFuture<Optional<ContainerStatus>> status = new CompletableFuture<>();
+        CompletableFuture<ContainerStatus> start = new CompletableFuture<>();
+        CompletableFuture<ReadinessResult> readiness = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(status);
+        when(serverManager.startServerAsync(mapping)).thenReturn(start);
+        when(serverManager.waitForServerReadyAsync(mapping)).thenReturn(readiness);
+        PlayerHarness first = player("stage-first");
+        PlayerHarness late = player("stage-late");
+
+        CompletableFuture<ConnectionOutcome> firstOutcome =
+                coordinator.requestConnection(first.player, targetServer, mapping);
+        status.complete(Optional.of(ContainerStatus.STOPPED));
+        CompletableFuture<ConnectionOutcome> lateOutcome =
+                coordinator.requestConnection(late.player, targetServer, mapping);
+        start.complete(ContainerStatus.RUNNING);
+        readiness.complete(ReadinessResult.ready(2));
+        clock.set(3_500_000_000L);
+        first.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        late.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        assertEquals(ConnectionOutcome.CONNECTED, firstOutcome.join());
+        assertEquals(ConnectionOutcome.CONNECTED, lateOutcome.join());
+        assertEquals(List.of(
+                        "[AutoStopper] Checking server survival...",
+                        "[AutoStopper] Starting server survival...",
+                        "[AutoStopper] Waiting for server survival to become ready...",
+                        "[AutoStopper] Connecting you to server survival...",
+                        "[AutoStopper] Connected to server survival after 2.5 seconds."),
+                sentMessages(first.player));
+        assertEquals(List.of(
+                        "[AutoStopper] Starting server survival...",
+                        "[AutoStopper] Waiting for server survival to become ready...",
+                        "[AutoStopper] Connecting you to server survival...",
+                        "[AutoStopper] Connected to server survival after 2.5 seconds."),
+                sentMessages(late.player));
+        verify(serverManager).getServerStatusAsync(mapping);
+        verify(serverManager).startServerAsync(mapping);
+        verify(serverManager).waitForServerReadyAsync(mapping);
+    }
+
+    @Test
+    void messageFailureIsolatedFromSharedLifecycleAndOtherWaiter() {
+        CompletableFuture<Optional<ContainerStatus>> status = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(status);
+        PlayerHarness failingMessages = player("message-failure");
+        PlayerHarness unaffected = player("message-unaffected");
+        doThrow(new IllegalStateException("audience unavailable"))
+                .when(failingMessages.player).sendMessage(any(Component.class));
+
+        CompletableFuture<ConnectionOutcome> failedMessageOutcome =
+                coordinator.requestConnection(failingMessages.player, targetServer, mapping);
+        CompletableFuture<ConnectionOutcome> unaffectedOutcome =
+                coordinator.requestConnection(unaffected.player, targetServer, mapping);
+        status.complete(Optional.of(ContainerStatus.RUNNING));
+        failingMessages.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        unaffected.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        assertEquals(ConnectionOutcome.CONNECTED, failedMessageOutcome.join());
+        assertEquals(ConnectionOutcome.CONNECTED, unaffectedOutcome.join());
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state(mapping));
+        assertTrue(sentMessages(unaffected.player).stream()
+                .anyMatch(message -> message.contains("Connected to server survival after")));
+    }
+
+    @Test
+    void disconnectedWaiterReceivesNoStagesAfterDiscard() {
+        CompletableFuture<Optional<ContainerStatus>> status = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(status);
+        PlayerHarness player = player("discarded-progress");
+
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        coordinator.discardPlayer(player.player);
+        status.complete(Optional.of(ContainerStatus.STOPPED));
+
+        assertEquals(List.of("[AutoStopper] Checking server survival..."), sentMessages(player.player));
     }
 
     @Test
@@ -380,6 +470,8 @@ class ServerLifecycleCoordinatorTest {
         oldStatus.complete(Optional.of(ContainerStatus.RUNNING));
         original.complete(ConnectionRequestBuilder.Status.SUCCESS);
         assertEquals(ConnectionOutcome.CONNECTED, originalOutcome.join());
+        assertEquals(List.of("[AutoStopper] Checking server survival..."),
+                sentMessages(original.player));
         assertEquals(Optional.empty(), coordinator.state("survival"));
 
         PlayerHarness retry = player("replacement-retry");
@@ -609,6 +701,13 @@ class ServerLifecycleCoordinatorTest {
 
     private boolean containsContainerStopped(Component message) {
         return plainText(message).toLowerCase().contains("container stopped");
+    }
+
+    private List<String> sentMessages(Player player) {
+        return mockingDetails(player).getInvocations().stream()
+                .filter(invocation -> invocation.getMethod().getName().equals("sendMessage"))
+                .map(invocation -> plainText((Component) invocation.getArgument(0)))
+                .toList();
     }
 
     private record PlayerHarness(Player player,

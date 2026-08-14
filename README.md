@@ -159,6 +159,10 @@ may retain `restart: unless-stopped`.
 
 - A connection to a monitored server is held while AutoStopper inspects or starts its mapped
   container and completes the configured readiness check. Simultaneous players share that work.
+- Waiting players receive one message when the shared lifecycle moves through inspection, backend
+  startup (when needed), readiness, and connection. A player joining an existing operation sees its
+  current stage; terminal success or failure includes that player's elapsed wait time. AutoStopper
+  does not send periodic updates or estimate a completion percentage.
 - Operational status distinguishes a merely running container (`RUNNING_UNVERIFIED`) from a
   backend whose readiness has succeeded in the current lifecycle generation (`READY`). Active
   `STARTING` and `STOPPING` transitions remain authoritative; otherwise current Docker observation
