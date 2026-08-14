@@ -2,7 +2,10 @@ package me.criseda.autostopper.testing;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URI;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -151,10 +154,42 @@ public final class VelocitySystemHarness {
 
     private void runProfile(RuntimeProfile profile) throws Exception {
         System.out.println("Preparing " + profile.javaLabel() + " / " + profile.velocityLabel() + "...");
-        ensureImage(profile.image());
         Path velocityJar = downloadVelocity(profile);
+        verifyMessageCompatibility(profile, velocityJar);
+        ensureImage(profile.image());
         runScenario(profile, velocityJar, "success", VALID_CONFIG, true);
         runScenario(profile, velocityJar, "invalid-config", INVALID_CONFIG, false);
+    }
+
+    private void verifyMessageCompatibility(RuntimeProfile profile, Path velocityJar) throws Exception {
+        Path testClasses = Path.of(VelocitySystemHarness.class.getProtectionDomain()
+                .getCodeSource().getLocation().toURI()).toAbsolutePath().normalize();
+        if (!Files.isDirectory(testClasses)) {
+            throw new IllegalStateException("System-test classes directory does not exist: " + testClasses);
+        }
+        URL[] runtimeClasspath = {
+                testClasses.toUri().toURL(),
+                pluginArtifact.toUri().toURL(),
+                velocityJar.toUri().toURL()
+        };
+        try (URLClassLoader runtime = new URLClassLoader(
+                "autostopper-" + profile.name() + "-message-compatibility",
+                runtimeClasspath,
+                ClassLoader.getPlatformClassLoader())) {
+            Class<?> probe = Class.forName(
+                    "me.criseda.autostopper.testing.MessageCompatibilityProbe", true, runtime);
+            try {
+                Object result = probe.getMethod("verifyAll").invoke(null);
+                if (!(result instanceof Integer factoryCount) || factoryCount < 1) {
+                    throw new IllegalStateException("Message compatibility probe returned " + result);
+                }
+                System.out.println("PASS " + profile.name() + "/messages (" + factoryCount
+                        + " factories, runtime " + profile.velocityLabel() + ")");
+            } catch (InvocationTargetException error) {
+                throw new IllegalStateException("Packaged messages are incompatible with "
+                        + profile.velocityLabel(), error.getCause());
+            }
+        }
     }
 
     private void ensureImage(String image) throws Exception {
