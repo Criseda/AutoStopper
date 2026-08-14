@@ -84,6 +84,9 @@ container: Docker would restart it after AutoStopper successfully stops it.
   waiting for readiness, and connecting through Velocity. Already-running unverified backends skip
   the start stage but still report inspection and readiness. Late arrivals immediately see the
   current shared stage, and terminal feedback reports their own elapsed wait time.
+- `Players waiting: X` counts unique players in the shared operation, including the viewer. It is
+  omitted for the first waiter and shown to later arrivals, or to an earlier waiter who retries after
+  the count changes; repeating the same attempt does not create another lifecycle operation.
 - Stage messages are transition-driven rather than periodic. A long gap after the waiting-for-
   readiness message means the configured readiness deadline is still running; use the proxy
   log and `/autostopper status` for operator diagnostics rather than expecting a percentage update.

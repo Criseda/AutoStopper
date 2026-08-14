@@ -107,6 +107,9 @@ public final class ServerLifecycleCoordinator {
                     UUID playerId = player.getUniqueId();
                     ConnectionWaiter existing = entry.waiters.get(playerId);
                     if (existing != null) {
+                        if (entry.state == ServerLifecycleState.STARTING) {
+                            queueWaitingCount(existing, entry.waiters.size());
+                        }
                         admitted.set(Admission.queued(entry, existing));
                         return entry;
                     }
@@ -127,6 +130,7 @@ public final class ServerLifecycleCoordinator {
                     if (entry.state == ServerLifecycleState.STARTING) {
                         queueStage(waiter, entry.progressStage,
                                 stageMessage(entry.progressStage, mapping.serverName()), false);
+                        queueWaitingCount(waiter, entry.waiters.size());
                         admitted.set(Admission.queued(entry, waiter));
                         return entry;
                     }
@@ -853,7 +857,20 @@ public final class ServerLifecycleCoordinator {
                 return;
             }
             waiter.queuedStages.add(stage);
-            waiter.notifications.addLast(new StageNotification(stage, message, disconnectInitial));
+            waiter.notifications.addLast(new WaiterNotification(
+                    Optional.of(stage), message, disconnectInitial));
+        }
+    }
+
+    private void queueWaitingCount(ConnectionWaiter waiter, int count) {
+        synchronized (waiter) {
+            if (count <= 1 || waiter.discarded || waiter.notificationsSuppressed
+                    || waiter.lastWaitingCountReported == count) {
+                return;
+            }
+            waiter.lastWaitingCountReported = count;
+            waiter.notifications.addLast(new WaiterNotification(
+                    Optional.empty(), AutoStopperMessages.playersWaiting(count), false));
         }
     }
 
@@ -879,25 +896,25 @@ public final class ServerLifecycleCoordinator {
             waiter.deliveringNotifications = true;
         }
         while (true) {
-            StageNotification notification;
+            WaiterNotification notification;
             synchronized (waiter) {
                 notification = waiter.notifications.pollFirst();
                 if (notification == null) {
                     waiter.deliveringNotifications = false;
                     return;
                 }
-                waiter.queuedStages.remove(notification.stage());
+                notification.stage().ifPresent(waiter.queuedStages::remove);
                 if (waiter.discarded || waiter.notificationsSuppressed
-                        || waiter.deliveredStages.contains(notification.stage())) {
+                        || notification.stage().map(waiter.deliveredStages::contains).orElse(false)) {
                     continue;
                 }
-                waiter.deliveredStages.add(notification.stage());
+                notification.stage().ifPresent(waiter.deliveredStages::add);
             }
             deliverNotification(waiter, notification);
         }
     }
 
-    private void deliverNotification(ConnectionWaiter waiter, StageNotification notification) {
+    private void deliverNotification(ConnectionWaiter waiter, WaiterNotification notification) {
         if (shutdown.get() || waiter.discarded || !isPlayerActive(waiter.player)) {
             return;
         }
@@ -1096,7 +1113,7 @@ public final class ServerLifecycleCoordinator {
         private final RegisteredServer targetServer;
         private final CompletableFuture<ConnectionOutcome> future = new CompletableFuture<>();
         private final long startNanos;
-        private final ArrayDeque<StageNotification> notifications = new ArrayDeque<>();
+        private final ArrayDeque<WaiterNotification> notifications = new ArrayDeque<>();
         private final Set<ConnectionLifecycleStage> queuedStages =
                 EnumSet.noneOf(ConnectionLifecycleStage.class);
         private final Set<ConnectionLifecycleStage> deliveredStages =
@@ -1104,6 +1121,7 @@ public final class ServerLifecycleCoordinator {
         private volatile boolean discarded;
         private boolean notificationsSuppressed;
         private boolean deliveringNotifications;
+        private int lastWaitingCountReported;
         private CompletableFuture<ConnectionRequestBuilder.Result> connectionFuture;
 
         private ConnectionWaiter(UUID playerId, Player player, RegisteredServer targetServer,
@@ -1115,7 +1133,7 @@ public final class ServerLifecycleCoordinator {
         }
     }
 
-    private record StageNotification(ConnectionLifecycleStage stage, Component message,
+    private record WaiterNotification(Optional<ConnectionLifecycleStage> stage, Component message,
             boolean disconnectInitial) {
     }
 

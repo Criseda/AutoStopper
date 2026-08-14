@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static me.criseda.autostopper.testing.ComponentTestUtils.plainText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -153,6 +154,10 @@ class ServerLifecycleCoordinatorTest {
         status.complete(Optional.of(ContainerStatus.STOPPED));
         CompletableFuture<ConnectionOutcome> lateOutcome =
                 coordinator.requestConnection(late.player, targetServer, mapping);
+        assertTrue(sentMessages(first.player).stream()
+                .noneMatch(message -> message.contains("Players waiting")));
+        assertSame(firstOutcome, coordinator.requestConnection(first.player, targetServer, mapping));
+        assertSame(firstOutcome, coordinator.requestConnection(first.player, targetServer, mapping));
         start.complete(ContainerStatus.RUNNING);
         readiness.complete(ReadinessResult.ready(2));
         clock.set(3_500_000_000L);
@@ -164,12 +169,14 @@ class ServerLifecycleCoordinatorTest {
         assertEquals(List.of(
                         "[AutoStopper] Checking server survival...",
                         "[AutoStopper] Starting server survival...",
+                        "[AutoStopper] Players waiting: 2",
                         "[AutoStopper] Waiting for server survival to become ready...",
                         "[AutoStopper] Connecting you to server survival...",
                         "[AutoStopper] Connected to server survival after 2.5 seconds."),
                 sentMessages(first.player));
         assertEquals(List.of(
                         "[AutoStopper] Starting server survival...",
+                        "[AutoStopper] Players waiting: 2",
                         "[AutoStopper] Waiting for server survival to become ready...",
                         "[AutoStopper] Connecting you to server survival...",
                         "[AutoStopper] Connected to server survival after 2.5 seconds."),

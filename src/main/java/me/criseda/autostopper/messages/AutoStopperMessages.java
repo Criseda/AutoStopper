@@ -173,6 +173,13 @@ public final class AutoStopperMessages {
         return serverMessage(WARNING_COLOR, "Connecting you to server ", serverName, "...");
     }
 
+    public static Component playersWaiting(int count) {
+        return prefixed()
+                .append(Component.text("Players waiting: ", WARNING_COLOR))
+                .append(argument(Integer.toString(count)))
+                .build();
+    }
+
     public static Component lifecycleSucceeded(String serverName, Duration elapsed) {
         return prefixed()
                 .append(Component.text("Connected to server ", SUCCESS_COLOR))

@@ -82,6 +82,7 @@ class AutoStopperMessagesTest {
                 AutoStopperMessages.lifecycleStarting("survival"),
                 AutoStopperMessages.lifecycleWaitingForReadiness("survival"),
                 AutoStopperMessages.lifecycleConnecting("survival"),
+                AutoStopperMessages.playersWaiting(3),
                 AutoStopperMessages.lifecycleSucceeded("survival", Duration.ofMillis(2_550)));
         Component failure = AutoStopperMessages.lifecycleFailed(
                 AutoStopperMessages.serverNotReady("survival"), Duration.ofMillis(850));
@@ -91,6 +92,7 @@ class AutoStopperMessagesTest {
                 "[AutoStopper] Starting server survival...",
                 "[AutoStopper] Waiting for server survival to become ready...",
                 "[AutoStopper] Connecting you to server survival...",
+                "[AutoStopper] Players waiting: 3",
                 "[AutoStopper] Connected to server survival after 2.5 seconds."),
                 stages.stream().map(AutoStopperMessagesTest::plainText).toList());
         assertEquals("[AutoStopper] Server survival is not ready. Waited 850 ms.", plainText(failure));
