@@ -10,6 +10,13 @@ docker compose exec velocity docker version
 docker compose exec velocity docker inspect purpur-server
 ```
 
+`RUNNING_UNVERIFIED` is expected when Docker reports a mapped container running but AutoStopper has
+not completed the configured readiness check for that mapping in the current proxy process. This
+commonly appears after a proxy restart while a backend remains running. It is not a failure and it
+does not bypass readiness: the next player or manual start request performs the configured bounded
+readiness check before connection. If the state persists after a connection attempt, inspect the
+readiness failure detail and follow the actions under [Readiness failures](#readiness-failures).
+
 ## Load and configuration failures
 
 | Symptom | Likely cause | Action |
@@ -31,6 +38,10 @@ docker compose exec velocity docker inspect purpur-server
 | `configured container does not exist` / `MISSING` | `CONTAINER_MISSING` | Run `docker ps -a`, create the backend with `docker compose create` or `up`, or correct `container_name`. AutoStopper never creates containers. |
 | `Docker status check timed out` / `Timed out` | `TIMED_OUT` | Check daemon responsiveness, disk pressure, host load, and stuck Docker operations. The built-in Docker command deadline is bounded; retry after the daemon recovers. |
 | `Docker status check failed` / `FAILED` | `INDETERMINATE` | Run the equivalent `docker inspect` inside the proxy container and review raw proxy logs. Correct the Docker/container error before retrying. |
+
+If status races a successful reload or a newer lifecycle operation, AutoStopper discards the older
+Docker result rather than applying it to the replacement mapping or newer state. Retry
+`/autostopper status` to collect a current observation.
 
 The example entrypoint adds `bungeecord` to the socket group. Seeing a non-root UID after that is
 expected but is not evidence of reduced host authority; see [Docker socket security](security.md).

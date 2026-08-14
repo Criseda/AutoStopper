@@ -30,6 +30,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.time.Instant;
 
@@ -47,6 +48,7 @@ public final class ServerLifecycleCoordinator {
     private final Map<String, LifecycleEntry> lifecycles = new ConcurrentHashMap<>();
     private final Set<ReconnectPermit> reconnectPermits = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
+    private final AtomicLong lifecycleRevision = new AtomicLong();
     private final Object shutdownLock = new Object();
 
     public ServerLifecycleCoordinator(Logger logger, ServerManager serverManager) {
@@ -79,7 +81,7 @@ public final class ServerLifecycleCoordinator {
                 }
                 LifecycleEntry entry = current;
                 if (entry == null) {
-                    entry = new LifecycleEntry(mapping);
+                    entry = new LifecycleEntry(mapping, nextRevision());
                 }
 
                 synchronized (entry) {
@@ -88,7 +90,7 @@ public final class ServerLifecycleCoordinator {
                             admitted.set(Admission.rejected(ConnectionOutcome.MAPPING_CHANGED));
                             return entry;
                         }
-                        entry = new LifecycleEntry(mapping);
+                        entry = new LifecycleEntry(mapping, nextRevision());
                     } else if (entry.retired && !entry.isBusy()) {
                         entry.retired = false;
                     }
@@ -111,6 +113,7 @@ public final class ServerLifecycleCoordinator {
 
                     ConnectionWaiter waiter = new ConnectionWaiter(playerId, player, targetServer);
                     entry.waiters.put(playerId, waiter);
+                    touch(entry);
                     if (entry.state == ServerLifecycleState.STARTING) {
                         admitted.set(Admission.queued(entry, waiter));
                         return entry;
@@ -160,6 +163,7 @@ public final class ServerLifecycleCoordinator {
                     if (waiter != null) {
                         waiter.discarded = true;
                         discarded.add(waiter);
+                        touch(entry);
                     }
                     return entry.retired && !entry.isBusy() ? null : entry;
                 }
@@ -183,14 +187,14 @@ public final class ServerLifecycleCoordinator {
                 }
                 LifecycleEntry entry = current;
                 if (entry == null) {
-                    entry = new LifecycleEntry(mapping);
+                    entry = new LifecycleEntry(mapping, nextRevision());
                 }
                 synchronized (entry) {
                     if (!entry.mapping.equals(mapping)) {
                         if (entry.isBusy()) {
                             return entry;
                         }
-                        entry = new LifecycleEntry(mapping);
+                        entry = new LifecycleEntry(mapping, nextRevision());
                     }
                     if (entry.state == ServerLifecycleState.STARTING
                             || entry.state == ServerLifecycleState.STOPPING
@@ -256,9 +260,42 @@ public final class ServerLifecycleCoordinator {
                 }
                 entry.lastFailure = null;
                 entry.readyConnectionSucceeded = true;
+                touch(entry);
                 return entry;
             }
         });
+    }
+
+    public Optional<LifecycleStatusSnapshot> markStoppedIfUnchanged(
+            ServerMapping mapping, long expectedRevision) {
+        Objects.requireNonNull(mapping, "mapping");
+        if (shutdown.get()) {
+            return Optional.empty();
+        }
+        AtomicReference<LifecycleStatusSnapshot> accepted = new AtomicReference<>();
+        lifecycles.compute(mapping.serverName(), (ignored, entry) -> {
+            if (entry == null) {
+                if (expectedRevision == 0) {
+                    accepted.set(LifecycleStatusSnapshot.absent());
+                }
+                return null;
+            }
+            synchronized (entry) {
+                if (entry.retired || !entry.mapping.equals(mapping)
+                        || entry.revision != expectedRevision || entry.isBusy()) {
+                    return entry;
+                }
+                if (entry.state == ServerLifecycleState.READY
+                        || entry.state == ServerLifecycleState.FAILED) {
+                    transition(entry, ServerLifecycleState.STOPPED);
+                    entry.lastFailure = null;
+                    entry.readyConnectionSucceeded = false;
+                }
+                accepted.set(snapshot(entry));
+                return entry;
+            }
+        });
+        return Optional.ofNullable(accepted.get());
     }
 
     public void reconcileConfig(ConfigSnapshot previous, ConfigSnapshot current) {
@@ -275,6 +312,7 @@ public final class ServerLifecycleCoordinator {
                     }
                     if (entry.isBusy()) {
                         entry.retired = true;
+                        touch(entry);
                         return entry;
                     }
                     return null;
@@ -289,7 +327,38 @@ public final class ServerLifecycleCoordinator {
             return Optional.empty();
         }
         synchronized (entry) {
+            if (entry.retired) {
+                return Optional.empty();
+            }
             return Optional.of(entry.state);
+        }
+    }
+
+    public Optional<ServerLifecycleState> state(ServerMapping mapping) {
+        Objects.requireNonNull(mapping, "mapping");
+        LifecycleEntry entry = lifecycles.get(mapping.serverName());
+        if (entry == null) {
+            return Optional.empty();
+        }
+        synchronized (entry) {
+            if (entry.retired || !entry.mapping.equals(mapping)) {
+                return Optional.empty();
+            }
+            return Optional.of(entry.state);
+        }
+    }
+
+    public LifecycleStatusSnapshot statusSnapshot(ServerMapping mapping) {
+        Objects.requireNonNull(mapping, "mapping");
+        LifecycleEntry entry = lifecycles.get(mapping.serverName());
+        if (entry == null) {
+            return LifecycleStatusSnapshot.absent();
+        }
+        synchronized (entry) {
+            if (entry.retired || !entry.mapping.equals(mapping)) {
+                return LifecycleStatusSnapshot.absent();
+            }
+            return snapshot(entry);
         }
     }
 
@@ -627,6 +696,7 @@ public final class ServerLifecycleCoordinator {
             if (!owned) {
                 return;
             }
+            touch(entry);
             entry.lastConnectionOutcome = outcome;
             waiter.connectionFuture = null;
             if (outcome.isSuccessful()) {
@@ -819,6 +889,20 @@ public final class ServerLifecycleCoordinator {
         logger.debug("Server {} lifecycle transitioned from {} to {}",
                 entry.mapping.serverName(), entry.state, next);
         entry.state = next;
+        touch(entry);
+    }
+
+    private long nextRevision() {
+        return lifecycleRevision.incrementAndGet();
+    }
+
+    private void touch(LifecycleEntry entry) {
+        entry.revision = nextRevision();
+    }
+
+    private LifecycleStatusSnapshot snapshot(LifecycleEntry entry) {
+        return new LifecycleStatusSnapshot(Optional.of(entry.state), entry.waiters.size(),
+                Optional.ofNullable(entry.lastFailure), entry.revision);
     }
 
     private boolean ownOperation(LifecycleEntry entry, CompletableFuture<StartupOutcome> startup,
@@ -864,9 +948,11 @@ public final class ServerLifecycleCoordinator {
         private OperationalFailure lastFailure;
         private boolean readyConnectionSucceeded;
         private boolean retired;
+        private long revision;
 
-        private LifecycleEntry(ServerMapping mapping) {
+        private LifecycleEntry(ServerMapping mapping, long revision) {
             this.mapping = mapping;
+            this.revision = revision;
         }
 
         private boolean isBusy() {

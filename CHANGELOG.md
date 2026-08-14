@@ -10,6 +10,16 @@ All notable AutoStopper changes are documented here.
   packaged-runtime system tests and the release-candidate Docker/Minecraft gate. Velocity 3.5.1 on
   Java 21 remains the tested minimum/floor, and Velocity 4.1.0-SNAPSHOT on Java 25 remains clearly
   labelled preview validation.
+- Added the `RUNNING_UNVERIFIED` operational state so a Docker-running container is not reported as
+  ready until AutoStopper has completed the configured readiness contract for the current mapping
+  lifecycle.
+
+### Changed
+
+- Operational status now reconciles Docker observations lazily with mapping-aware lifecycle
+  revisions. Active transitions remain authoritative, stopped/degraded Docker state overrides
+  stale quiescent state, and results captured before reload, mapping replacement, or newer
+  lifecycle work are discarded without eager startup readiness probing.
 
 ## [2.0.0] - 2026-08-13
 

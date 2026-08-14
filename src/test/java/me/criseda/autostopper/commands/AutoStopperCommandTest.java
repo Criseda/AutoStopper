@@ -209,7 +209,7 @@ public class AutoStopperCommandTest {
         // Arrange
         grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
-        String[] serverNames = {"s-stopped", "s-starting", "s-ready", "s-stopping", "s-failed", "s-docker"};
+        String[] serverNames = {"s-stopped", "s-starting", "s-ready", "s-unverified", "s-stopping", "s-failed", "s-docker"};
 
         ConfigSnapshot snapshot = snapshot(serverNames);
         when(config.snapshot()).thenReturn(snapshot);
@@ -222,21 +222,23 @@ public class AutoStopperCommandTest {
                 "s-stopped", operational(OperationalState.STOPPED),
                 "s-starting", operational(OperationalState.STARTING),
                 "s-ready", operational(OperationalState.READY),
+                "s-unverified", operational(OperationalState.RUNNING_UNVERIFIED),
                 "s-stopping", operational(OperationalState.STOPPING),
                 "s-failed", operational(OperationalState.FAILED),
                 "s-docker", operational(OperationalState.DOCKER_UNAVAILABLE))));
 
         // Assert
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(7)).sendMessage(messageCaptor.capture());
+        verify(source, times(8)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(plainText(messages.get(1)).contains("STOPPED"));
         assertTrue(plainText(messages.get(2)).contains("STARTING"));
         assertTrue(plainText(messages.get(3)).contains("READY"));
-        assertTrue(plainText(messages.get(4)).contains("STOPPING"));
-        assertTrue(plainText(messages.get(5)).contains("FAILED"));
-        assertTrue(plainText(messages.get(6)).contains("DOCKER_UNAVAILABLE"));
+        assertTrue(plainText(messages.get(4)).contains("RUNNING_UNVERIFIED"));
+        assertTrue(plainText(messages.get(5)).contains("STOPPING"));
+        assertTrue(plainText(messages.get(6)).contains("FAILED"));
+        assertTrue(plainText(messages.get(7)).contains("DOCKER_UNAVAILABLE"));
     }
 
     @Test

@@ -144,9 +144,12 @@ the backend containers in advance, and acceptance of the security boundary above
    docker compose ps
    ```
 
-   In Velocity, `/autostopper status` should report the monitored server as `READY` or `STOPPED`.
-   `DOCKER_UNAVAILABLE` or `FAILED` includes an operator-safe detail such as a missing container;
-   raw Docker stderr remains only in the proxy log.
+   In Velocity, `/autostopper status` should report the monitored server as `READY`,
+   `RUNNING_UNVERIFIED`, or `STOPPED`. `RUNNING_UNVERIFIED` means Docker reports the container
+   running but AutoStopper has not completed this process generation's configured readiness check;
+   normal player demand performs that check before connecting. `DOCKER_UNAVAILABLE` or `FAILED`
+   includes an operator-safe detail such as a missing container; raw Docker stderr remains only in
+   the proxy log.
 
 Managed containers must already exist and use `restart: "no"` so Docker does not immediately undo
 an inactivity stop. Unmonitored hubs or lobbies are not intercepted or stopped by AutoStopper and
@@ -156,6 +159,10 @@ may retain `restart: unless-stopped`.
 
 - A connection to a monitored server is held while AutoStopper inspects or starts its mapped
   container and completes the configured readiness check. Simultaneous players share that work.
+- Operational status distinguishes a merely running container (`RUNNING_UNVERIFIED`) from a
+  backend whose readiness has succeeded in the current lifecycle generation (`READY`). Active
+  `STARTING` and `STOPPING` transitions remain authoritative; otherwise current Docker observation
+  overrides stale quiescent lifecycle state.
 - A connection to an unmonitored Velocity server proceeds normally; AutoStopper never infers a
   container name and never manages it.
 - The inactivity scan runs once per minute. A mapped, running server with no players is stopped

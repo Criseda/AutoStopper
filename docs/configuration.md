@@ -138,10 +138,18 @@ entries from the rejected file.
 |---|---|
 | `STOPPED` | Docker reports the mapped container is stopped. This is a healthy idle state. |
 | `STARTING` | One shared start/readiness operation is active; the status may include waiting-player count. |
-| `READY` | Docker reports the container running, or the lifecycle has completed readiness. |
+| `READY` | Docker reports the container running and AutoStopper has completed readiness for the current mapping lifecycle. |
+| `RUNNING_UNVERIFIED` | Docker reports the container running, but AutoStopper has not verified configured readiness in the current lifecycle generation. Player or manual demand performs readiness before connection. |
 | `STOPPING` | An automatic inactivity stop is in progress. |
 | `FAILED` | The latest Docker or lifecycle observation failed. The line includes its safe detail and remediation. |
 | `DOCKER_UNAVAILABLE` | The Docker CLI, daemon, or socket permission boundary is unavailable. |
+
+Active `STARTING` and `STOPPING` operations take precedence while their coordinator-owned work is
+current. Outside those transitions, a current Docker observation overrides stale idle lifecycle
+state. Status observations are tied to the complete mapping and lifecycle revision that initiated
+them; results captured before a reload, mapping replacement, or newer lifecycle operation are
+discarded rather than applied to newer state. Startup and reload inspect Docker mappings but do
+not eagerly readiness-probe every running backend.
 
 Raw Docker stderr is deliberately restricted to operator logs and is never copied into player
 messages.

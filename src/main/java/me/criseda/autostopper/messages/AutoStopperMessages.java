@@ -104,7 +104,7 @@ public final class AutoStopperMessages {
         if (status.waitingPlayers() > 0) {
             detail.append(status.waitingPlayers()).append(" player(s) waiting");
         }
-        if (status.state() == OperationalState.READY) {
+        if (status.state() == OperationalState.READY || status.state() == OperationalState.RUNNING_UNVERIFIED) {
             appendDetail(detail, minutesSinceActivity == null
                     ? "No activity recorded"
                     : minutesSinceActivity + " minutes since last activity");
@@ -112,7 +112,7 @@ public final class AutoStopperMessages {
         status.lastFailure().ifPresent(failure -> appendDetail(detail, failureDetail(failure)));
         NamedTextColor color = switch (status.state()) {
             case READY -> SUCCESS_COLOR;
-            case STARTING, STOPPING -> WARNING_COLOR;
+            case STARTING, STOPPING, RUNNING_UNVERIFIED -> WARNING_COLOR;
             case STOPPED -> NEUTRAL_COLOR;
             case FAILED, DOCKER_UNAVAILABLE -> ERROR_COLOR;
         };
