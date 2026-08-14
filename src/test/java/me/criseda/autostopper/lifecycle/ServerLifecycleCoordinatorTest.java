@@ -453,6 +453,110 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
+    void markStoppedIfUnchangedReconcilesReadyAndFailedToStopped() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("ready-player");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+
+        long readyRevision = coordinator.statusSnapshot(mapping).revision();
+        assertTrue(coordinator.markStoppedIfUnchanged(mapping, readyRevision).isPresent());
+        assertEquals(Optional.of(ServerLifecycleState.STOPPED), coordinator.state("survival"));
+
+        assertTrue(coordinator.tryBeginStop(mapping));
+        coordinator.completeStop(mapping, ContainerStatus.TIMED_OUT);
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+        assertTrue(coordinator.lastFailure("survival").isPresent());
+
+        long failedRevision = coordinator.statusSnapshot(mapping).revision();
+        assertTrue(coordinator.markStoppedIfUnchanged(mapping, failedRevision).isPresent());
+        assertEquals(Optional.of(ServerLifecycleState.STOPPED), coordinator.state("survival"));
+        assertTrue(coordinator.lastFailure("survival").isEmpty());
+    }
+
+    @Test
+    void markStoppedIfUnchangedPreservesActiveStartingAndStoppingOperations() {
+        CompletableFuture<Optional<ContainerStatus>> status = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(status);
+        PlayerHarness player = player("active-waiter");
+
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        assertEquals(Optional.of(ServerLifecycleState.STARTING), coordinator.state("survival"));
+
+        long startingRevision = coordinator.statusSnapshot(mapping).revision();
+        assertTrue(coordinator.markStoppedIfUnchanged(mapping, startingRevision).isEmpty());
+        assertEquals(Optional.of(ServerLifecycleState.STARTING), coordinator.state("survival"));
+
+        status.complete(Optional.of(ContainerStatus.RUNNING));
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+
+        assertTrue(coordinator.tryBeginStop(mapping));
+        assertEquals(Optional.of(ServerLifecycleState.STOPPING), coordinator.state("survival"));
+
+        long stoppingRevision = coordinator.statusSnapshot(mapping).revision();
+        assertTrue(coordinator.markStoppedIfUnchanged(mapping, stoppingRevision).isEmpty());
+        assertEquals(Optional.of(ServerLifecycleState.STOPPING), coordinator.state("survival"));
+    }
+
+    @Test
+    void staleStoppedObservationCannotOverwriteNewerReadyState() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness initial = player("initial-ready-player");
+        coordinator.requestConnection(initial.player, targetServer, mapping);
+        initial.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        long observationRevision = coordinator.statusSnapshot(mapping).revision();
+        PlayerHarness later = player("later-ready-player");
+        CompletableFuture<ConnectionOutcome> outcome =
+                coordinator.requestConnection(later.player, targetServer, mapping);
+        later.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        assertEquals(ConnectionOutcome.CONNECTED, outcome.join());
+
+        assertTrue(coordinator.markStoppedIfUnchanged(mapping, observationRevision).isEmpty());
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state(mapping));
+    }
+
+    @Test
+    void unchangedReloadPreservesReadyRevisionWithoutPartialInvalidation() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("unchanged-reload-player");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        LifecycleStatusSnapshot before = coordinator.statusSnapshot(mapping);
+
+        ConfigSnapshot snapshot = new ConfigSnapshot(300, List.of(mapping));
+        coordinator.reconcileConfig(snapshot, snapshot);
+
+        assertEquals(before, coordinator.statusSnapshot(mapping));
+    }
+
+    @Test
+    void stateWithMappingReturnsEmptyWhenMappingModifiedOrRetired() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("ready-player");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state(mapping));
+
+        ServerMapping modified = new ServerMapping("survival", "modified-container");
+        assertEquals(Optional.empty(), coordinator.state(modified));
+
+        ConfigSnapshot previous = new ConfigSnapshot(300, List.of(mapping));
+        ConfigSnapshot current = new ConfigSnapshot(300, List.of(modified));
+        coordinator.reconcileConfig(previous, current);
+
+        assertEquals(Optional.empty(), coordinator.state("survival"));
+        assertEquals(Optional.empty(), coordinator.state(mapping));
+        assertEquals(Optional.empty(), coordinator.state(modified));
+    }
+
+    @Test
     void shutdownClosesAdmissionAndCancelsPendingVelocityConnection() {
         when(serverManager.getServerStatusAsync(mapping))
                 .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));

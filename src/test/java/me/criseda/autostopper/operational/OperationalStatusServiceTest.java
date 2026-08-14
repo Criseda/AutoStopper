@@ -5,6 +5,7 @@ import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerInspection;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerDiagnostic;
+import me.criseda.autostopper.lifecycle.LifecycleStatusSnapshot;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.lifecycle.ServerLifecycleState;
 import me.criseda.autostopper.server.ServerManager;
@@ -23,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -40,8 +42,12 @@ class OperationalStatusServiceTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(lifecycleCoordinator.state(anyString())).thenReturn(Optional.empty());
-        lenient().when(lifecycleCoordinator.lastFailure(anyString())).thenReturn(Optional.empty());
+        lenient().when(lifecycleCoordinator.statusSnapshot(any(ServerMapping.class)))
+                .thenReturn(LifecycleStatusSnapshot.absent());
+        lenient().when(lifecycleCoordinator.markStoppedIfUnchanged(any(ServerMapping.class), anyLong()))
+                .thenAnswer(invocation -> invocation.getArgument(1, Long.class) == 0L
+                        ? Optional.of(LifecycleStatusSnapshot.absent())
+                        : Optional.empty());
         service = new OperationalStatusService(logger, serverManager, lifecycleCoordinator,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
@@ -98,7 +104,37 @@ class OperationalStatusServiceTest {
     }
 
     @Test
-    void statusUsesLifecycleStateAndLatestTimestampedFailure() {
+    void runningContainerWithoutVerifiedReadinessReportsRunningUnverified() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+        when(serverManager.inspectContainersAsync(snapshot)).thenReturn(
+                CompletableFuture.completedFuture(Map.of(
+                        "survival", ContainerInspection.healthy(ContainerStatus.RUNNING))));
+        OperationalServerStatus status = service.collectStatuses(snapshot).join().get("survival");
+
+        assertEquals(OperationalState.RUNNING_UNVERIFIED, status.state());
+        assertEquals(0, status.waitingPlayers());
+        assertTrue(status.lastFailure().isEmpty());
+    }
+
+    @Test
+    void runningContainerWithVerifiedReadinessReportsReady() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+        when(serverManager.inspectContainersAsync(snapshot)).thenReturn(
+                CompletableFuture.completedFuture(Map.of(
+                        "survival", ContainerInspection.healthy(ContainerStatus.RUNNING))));
+        when(lifecycleCoordinator.statusSnapshot(any(ServerMapping.class)))
+                .thenReturn(lifecycle(ServerLifecycleState.READY, 0, Optional.empty(), 1));
+
+        OperationalServerStatus status = service.collectStatuses(snapshot).join().get("survival");
+
+        assertEquals(OperationalState.READY, status.state());
+        assertTrue(status.lastFailure().isEmpty());
+    }
+
+    @Test
+    void runningContainerWithFailedReadinessReportsFailed() {
         ConfigSnapshot snapshot = snapshot("survival");
         service.reconcileConfig(snapshot);
         OperationalFailure lifecycleFailure = new OperationalFailure(NOW.plusSeconds(1),
@@ -106,15 +142,38 @@ class OperationalStatusServiceTest {
         when(serverManager.inspectContainersAsync(snapshot)).thenReturn(
                 CompletableFuture.completedFuture(Map.of(
                         "survival", ContainerInspection.healthy(ContainerStatus.RUNNING))));
-        when(lifecycleCoordinator.state("survival")).thenReturn(Optional.of(ServerLifecycleState.FAILED));
-        when(lifecycleCoordinator.waitingCount("survival")).thenReturn(2);
-        when(lifecycleCoordinator.lastFailure("survival")).thenReturn(Optional.of(lifecycleFailure));
+        when(lifecycleCoordinator.statusSnapshot(any(ServerMapping.class)))
+                .thenReturn(lifecycle(ServerLifecycleState.FAILED, 2,
+                        Optional.of(lifecycleFailure), 1));
 
         OperationalServerStatus status = service.collectStatuses(snapshot).join().get("survival");
 
         assertEquals(OperationalState.FAILED, status.state());
         assertEquals(2, status.waitingPlayers());
         assertEquals(Optional.of(lifecycleFailure), status.lastFailure());
+    }
+
+    @Test
+    void stoppedContainerOverridesStaleReadyLifecycleStateAndReconcilesCoordinator() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+        when(serverManager.inspectContainersAsync(snapshot)).thenReturn(
+                CompletableFuture.completedFuture(Map.of(
+                        "survival", ContainerInspection.healthy(ContainerStatus.STOPPED))));
+        ServerMapping mapping = snapshot.server("survival").orElseThrow();
+        LifecycleStatusSnapshot ready = lifecycle(
+                ServerLifecycleState.READY, 0, Optional.empty(), 1);
+        LifecycleStatusSnapshot stopped = lifecycle(
+                ServerLifecycleState.STOPPED, 0, Optional.empty(), 2);
+        when(lifecycleCoordinator.statusSnapshot(mapping))
+                .thenReturn(ready, ready, stopped);
+        when(lifecycleCoordinator.markStoppedIfUnchanged(mapping, 1))
+                .thenReturn(Optional.of(stopped));
+
+        OperationalServerStatus status = service.collectStatuses(snapshot).join().get("survival");
+
+        assertEquals(OperationalState.STOPPED, status.state());
+        verify(lifecycleCoordinator).markStoppedIfUnchanged(mapping, 1);
     }
 
     @Test
@@ -125,7 +184,8 @@ class OperationalStatusServiceTest {
                 CompletableFuture.completedFuture(Map.of("survival",
                         failure(ContainerStatus.INACCESSIBLE, DockerDiagnostic.PERMISSION_DENIED,
                                 "permission denied accessing Docker"))));
-        when(lifecycleCoordinator.state("survival")).thenReturn(Optional.of(ServerLifecycleState.STOPPED));
+        when(lifecycleCoordinator.statusSnapshot(any(ServerMapping.class)))
+                .thenReturn(lifecycle(ServerLifecycleState.STOPPED, 0, Optional.empty(), 1));
 
         OperationalServerStatus status = service.collectStatuses(snapshot).join().get("survival");
 
@@ -161,12 +221,28 @@ class OperationalStatusServiceTest {
                 CompletableFuture.completedFuture(Map.of("survival",
                         failure(ContainerStatus.INACCESSIBLE, DockerDiagnostic.DAEMON_UNAVAILABLE,
                                 "Docker daemon is unavailable"))));
-        when(lifecycleCoordinator.state("survival")).thenReturn(Optional.of(ServerLifecycleState.STARTING));
+        when(lifecycleCoordinator.statusSnapshot(any(ServerMapping.class)))
+                .thenReturn(lifecycle(ServerLifecycleState.STARTING, 1, Optional.empty(), 1));
 
         OperationalServerStatus status = service.collectStatuses(snapshot).join().get("survival");
 
         assertEquals(OperationalState.STARTING, status.state());
         assertTrue(status.lastFailure().isPresent());
+    }
+
+    @Test
+    void activeStoppingTransitionOverridesRunningDockerObservation() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+        when(serverManager.inspectContainersAsync(snapshot)).thenReturn(
+                CompletableFuture.completedFuture(Map.of(
+                        "survival", ContainerInspection.healthy(ContainerStatus.RUNNING))));
+        when(lifecycleCoordinator.statusSnapshot(any(ServerMapping.class)))
+                .thenReturn(lifecycle(ServerLifecycleState.STOPPING, 0, Optional.empty(), 1));
+
+        OperationalServerStatus status = service.collectStatuses(snapshot).join().get("survival");
+
+        assertEquals(OperationalState.STOPPING, status.state());
     }
 
     @Test
@@ -186,6 +262,68 @@ class OperationalStatusServiceTest {
         Map<String, OperationalServerStatus> statuses = service.collectStatuses(current).join();
         assertEquals(List.of("current"), List.copyOf(statuses.keySet()));
         assertTrue(statuses.get("current").lastFailure().isEmpty());
+    }
+
+    @Test
+    void sameNameMappingReplacementRejectsPendingStatusObservation() {
+        ServerMapping oldMapping = new ServerMapping("survival", "old-container");
+        ServerMapping newMapping = new ServerMapping("survival", "new-container");
+        ConfigSnapshot oldSnapshot = new ConfigSnapshot(300, List.of(oldMapping));
+        ConfigSnapshot newSnapshot = new ConfigSnapshot(300, List.of(newMapping));
+        service.reconcileConfig(oldSnapshot);
+        CompletableFuture<Map<String, ContainerInspection>> inspections = new CompletableFuture<>();
+        when(serverManager.inspectContainersAsync(oldSnapshot)).thenReturn(inspections);
+
+        CompletableFuture<Map<String, OperationalServerStatus>> pending =
+                service.collectStatuses(oldSnapshot);
+        service.reconcileConfig(newSnapshot);
+        inspections.complete(Map.of(
+                "survival", ContainerInspection.healthy(ContainerStatus.STOPPED)));
+
+        assertThrows(CompletionException.class, pending::join);
+        verify(lifecycleCoordinator, never())
+                .markStoppedIfUnchanged(eq(oldMapping), anyLong());
+    }
+
+    @Test
+    void staleStoppedObservationCannotMisreportNewerReadyLifecycle() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        ServerMapping mapping = snapshot.server("survival").orElseThrow();
+        service.reconcileConfig(snapshot);
+        CompletableFuture<Map<String, ContainerInspection>> inspections = new CompletableFuture<>();
+        when(serverManager.inspectContainersAsync(snapshot)).thenReturn(inspections);
+        LifecycleStatusSnapshot before = lifecycle(
+                ServerLifecycleState.STOPPED, 0, Optional.empty(), 1);
+        LifecycleStatusSnapshot newer = lifecycle(
+                ServerLifecycleState.READY, 0, Optional.empty(), 2);
+        when(lifecycleCoordinator.statusSnapshot(mapping)).thenReturn(before, newer, newer);
+
+        CompletableFuture<Map<String, OperationalServerStatus>> pending =
+                service.collectStatuses(snapshot);
+        inspections.complete(Map.of(
+                "survival", ContainerInspection.healthy(ContainerStatus.STOPPED)));
+
+        OperationalServerStatus status = pending.join().get("survival");
+        assertEquals(OperationalState.READY, status.state());
+        assertTrue(status.lastFailure().isEmpty());
+        verify(lifecycleCoordinator, never())
+                .markStoppedIfUnchanged(eq(mapping), anyLong());
+    }
+
+    @Test
+    void mappingAwareSnapshotDoesNotLeakRetiredFailureOrWaiters() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+        when(serverManager.inspectContainersAsync(snapshot)).thenReturn(
+                CompletableFuture.completedFuture(Map.of(
+                        "survival", ContainerInspection.healthy(ContainerStatus.RUNNING))));
+        OperationalServerStatus status = service.collectStatuses(snapshot).join().get("survival");
+
+        assertEquals(OperationalState.RUNNING_UNVERIFIED, status.state());
+        assertEquals(0, status.waitingPlayers());
+        assertTrue(status.lastFailure().isEmpty());
+        verify(lifecycleCoordinator, never()).waitingCount(anyString());
+        verify(lifecycleCoordinator, never()).lastFailure(anyString());
     }
 
     @Test
@@ -209,6 +347,11 @@ class OperationalStatusServiceTest {
 
     private ContainerInspection failure(ContainerStatus status, DockerDiagnostic diagnostic, String detail) {
         return new ContainerInspection(status, diagnostic, detail, "Safe remediation.");
+    }
+
+    private LifecycleStatusSnapshot lifecycle(ServerLifecycleState state, int waitingPlayers,
+            Optional<OperationalFailure> failure, long revision) {
+        return new LifecycleStatusSnapshot(Optional.of(state), waitingPlayers, failure, revision);
     }
 
     @SuppressWarnings("unchecked")

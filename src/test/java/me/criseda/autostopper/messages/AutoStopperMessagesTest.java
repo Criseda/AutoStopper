@@ -4,10 +4,13 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import me.criseda.autostopper.operational.OperationalServerStatus;
+import me.criseda.autostopper.operational.OperationalState;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -36,6 +39,20 @@ class AutoStopperMessagesTest {
         assertNotNull(running);
         assertEquals(NamedTextColor.GREEN, running.color());
         assertEquals(TextDecoration.State.TRUE, running.decoration(TextDecoration.BOLD));
+    }
+
+    @Test
+    void operationalStatusForRunningUnverifiedUsesWarningColorAndDisplaysActivity() {
+        OperationalServerStatus status = new OperationalServerStatus(
+                OperationalState.RUNNING_UNVERIFIED, 0, Optional.empty());
+        Component message = AutoStopperMessages.operationalStatus("survival", status, 3L);
+
+        assertEquals("survival: RUNNING_UNVERIFIED - 3 minutes since last activity", plainText(message));
+        assertColor(message, "survival", NamedTextColor.YELLOW);
+        TextComponent stateText = findText(message, "RUNNING_UNVERIFIED");
+        assertNotNull(stateText);
+        assertEquals(NamedTextColor.YELLOW, stateText.color());
+        assertEquals(TextDecoration.State.TRUE, stateText.decoration(TextDecoration.BOLD));
     }
 
     @Test
