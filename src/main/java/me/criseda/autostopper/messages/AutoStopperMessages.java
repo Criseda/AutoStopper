@@ -1,6 +1,7 @@
 package me.criseda.autostopper.messages;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.ComponentLike;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
@@ -25,28 +26,25 @@ public final class AutoStopperMessages {
     }
 
     public static Component pluginInfo(String version) {
-        return Component.text()
+        return finish(Component.text()
                 .append(Component.text("AutoStopper ", BRAND_COLOR))
                 .append(argument(version))
                 .append(Component.text(" - ", NEUTRAL_COLOR))
-                .append(Component.text("Server Auto-Stop Plugin", ARGUMENT_COLOR))
-                .build();
+                .append(Component.text("Server Auto-Stop Plugin", ARGUMENT_COLOR)));
     }
 
     public static Component helpHint() {
-        return Component.text()
+        return finish(Component.text()
                 .append(Component.text("Use ", NEUTRAL_COLOR))
                 .append(command("/autostopper help"))
-                .append(Component.text(" for more information", NEUTRAL_COLOR))
-                .build();
+                .append(Component.text(" for more information", NEUTRAL_COLOR)));
     }
 
     public static Component unknownCommand() {
-        return prefixed()
+        return finish(prefixed()
                 .append(Component.text("Unknown command. Use ", ERROR_COLOR))
                 .append(command("/autostopper help"))
-                .append(Component.text(" for help.", ERROR_COLOR))
-                .build();
+                .append(Component.text(" for help.", ERROR_COLOR)));
     }
 
     public static Component helpHeader() {
@@ -54,10 +52,9 @@ public final class AutoStopperMessages {
     }
 
     public static Component helpEntry(String commandText, String description) {
-        return Component.text()
+        return finish(Component.text()
                 .append(command(commandText))
-                .append(Component.text(" - " + description, NEUTRAL_COLOR))
-                .build();
+                .append(Component.text(" - " + description, NEUTRAL_COLOR)));
     }
 
     public static Component statusHeader() {
@@ -127,10 +124,9 @@ public final class AutoStopperMessages {
     }
 
     public static Component reloadFailed(String errorSummary) {
-        return prefixed()
+        return finish(prefixed()
                 .append(Component.text("Configuration reload failed: ", ERROR_COLOR))
-                .append(argument(errorSummary))
-                .build();
+                .append(argument(errorSummary)));
     }
 
     public static Component reloadSucceeded() {
@@ -146,11 +142,10 @@ public final class AutoStopperMessages {
     }
 
     public static Component permissionDenied(String action) {
-        return prefixed()
+        return finish(prefixed()
                 .append(Component.text("You do not have permission to ", ERROR_COLOR))
                 .append(Component.text(action, ERROR_COLOR))
-                .append(Component.text(".", ERROR_COLOR))
-                .build();
+                .append(Component.text(".", ERROR_COLOR)));
     }
 
     public static Component serverAlreadyStarting() {
@@ -174,18 +169,16 @@ public final class AutoStopperMessages {
     }
 
     public static Component playersWaiting(int count) {
-        return prefixed()
+        return finish(prefixed()
                 .append(Component.text("Players waiting: ", WARNING_COLOR))
-                .append(argument(Integer.toString(count)))
-                .build();
+                .append(argument(Integer.toString(count))));
     }
 
     public static Component lifecycleSucceeded(String serverName, Duration elapsed) {
-        return prefixed()
+        return finish(prefixed()
                 .append(Component.text("Connected to server ", SUCCESS_COLOR))
                 .append(argument(serverName))
-                .append(Component.text(" after " + formatElapsed(elapsed) + ".", SUCCESS_COLOR))
-                .build();
+                .append(Component.text(" after " + formatElapsed(elapsed) + ".", SUCCESS_COLOR)));
     }
 
     public static Component lifecycleFailed(Component reason, Duration elapsed) {
@@ -258,11 +251,10 @@ public final class AutoStopperMessages {
     }
 
     public static Component serverNotReady(String serverName, String detail) {
-        return prefixed()
+        return finish(prefixed()
                 .append(Component.text("Server ", WARNING_COLOR))
                 .append(argument(serverName))
-                .append(Component.text(" is not ready. " + detail, WARNING_COLOR))
-                .build();
+                .append(Component.text(" is not ready. " + detail, WARNING_COLOR)));
     }
 
     public static Component serverReady(String serverName) {
@@ -270,11 +262,10 @@ public final class AutoStopperMessages {
     }
 
     public static Component retryServerCommand(String serverName) {
-        return prefixed()
+        return finish(prefixed()
                 .append(Component.text("Try again in a moment with ", WARNING_COLOR))
                 .append(command("/server "))
-                .append(argument(serverName))
-                .build();
+                .append(argument(serverName)));
     }
 
     public static Component connectionFailed(String serverName) {
@@ -305,7 +296,7 @@ public final class AutoStopperMessages {
         if (detail != null) {
             message.append(Component.text(" - " + detail, NEUTRAL_COLOR));
         }
-        return message.build();
+        return finish(message);
     }
 
     private static String formatElapsed(Duration elapsed) {
@@ -335,11 +326,10 @@ public final class AutoStopperMessages {
 
     private static Component serverMessage(NamedTextColor color, String before,
             String serverName, String after) {
-        return prefixed()
+        return finish(prefixed()
                 .append(Component.text(before, color))
                 .append(argument(serverName))
-                .append(Component.text(after, color))
-                .build();
+                .append(Component.text(after, color)));
     }
 
     private static Component progress(String content) {
@@ -359,7 +349,13 @@ public final class AutoStopperMessages {
     }
 
     private static Component message(String content, NamedTextColor color) {
-        return prefixed().append(Component.text(content, color)).build();
+        return finish(prefixed().append(Component.text(content, color)));
+    }
+
+    private static Component finish(ComponentLike componentLike) {
+        // Adventure 4 and 5 use different ComponentBuilder.build() descriptors. ComponentLike's
+        // asComponent() contract is stable across every Velocity runtime supported by AutoStopper.
+        return componentLike.asComponent();
     }
 
     private static TextComponent.Builder prefixed() {

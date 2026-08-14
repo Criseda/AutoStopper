@@ -24,6 +24,12 @@ All notable AutoStopper changes are documented here.
   stale quiescent state, and results captured before reload, mapping replacement, or newer
   lifecycle work are discarded without eager startup readiness probing.
 
+### Fixed
+
+- Restored command and lifecycle messages on Velocity 3.5.1 by avoiding the Adventure 5
+  component-builder ABI incompatibility and validating every message factory against the pinned
+  Velocity runtimes.
+
 ## [2.0.0] - 2026-08-13
 
 ### Added
