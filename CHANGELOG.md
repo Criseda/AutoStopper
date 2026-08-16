@@ -33,6 +33,11 @@ All notable AutoStopper changes are documented here.
   terminal lifecycle messages. Late arrivals see the current shared stage and unique waiter count,
 - Redesigned command and chat presentation around the brand identity ("Empty servers sleep. Players wake them."). Replaced legacy bracketed prefixes with clean brand prompts (`AutoStopper ›`, `AutoStopper ✓`, `AutoStopper !`), added scannable deterministic status rows with humanized states and durations, and introduced permission-filtered help with fuzzy command matching.
 - Added contributor-facing message style guide (`docs/message-style-guide.md`).
+- Added structured, typed lifecycle telemetry and bounded process-lifetime observability (#74). Authoritative
+  lifecycle operations emit machine-parsable `INFO` log lines (`op=`, `server=`, `origin=`, `outcome=`,
+  `elapsed_ms=`, `waiters=`) with monotonic duration measurement, and intermediate stage durations emit
+  `DEBUG` logs. Simultaneous waiters receive 1 shared startup record plus individual connection wait records.
+  Aggregates use thread-safe bounded memory with strictly zero PII and observational exception insulation.
 
 ### Changed
 

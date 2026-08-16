@@ -6,7 +6,7 @@ import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
-import me.criseda.autostopper.server.ActivityTracker;
+import me.criseda.autostopper.server.ActivityTrackerService;
 import me.criseda.autostopper.server.ServerManager;
 
 import java.util.Optional;
@@ -14,10 +14,10 @@ import java.util.Optional;
 public class ServerPreConnectListener {
     private final ServerManager serverManager;
     private final ServerLifecycleCoordinator lifecycleCoordinator;
-    private final ActivityTracker activityTracker;
+    private final ActivityTrackerService activityTracker;
 
     public ServerPreConnectListener(ServerManager serverManager,
-            ServerLifecycleCoordinator lifecycleCoordinator, ActivityTracker activityTracker) {
+            ServerLifecycleCoordinator lifecycleCoordinator, ActivityTrackerService activityTracker) {
         this.serverManager = serverManager;
         this.lifecycleCoordinator = lifecycleCoordinator;
         this.activityTracker = activityTracker;

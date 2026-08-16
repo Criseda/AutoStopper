@@ -11,6 +11,12 @@ import me.criseda.autostopper.messages.AutoStopperMessages;
 import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.readiness.ReadinessResult;
 import me.criseda.autostopper.server.ServerManager;
+import me.criseda.autostopper.telemetry.LifecycleTelemetry;
+import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
+import me.criseda.autostopper.telemetry.TelemetryOperationType;
+import me.criseda.autostopper.telemetry.TelemetryOrigin;
+import me.criseda.autostopper.telemetry.TelemetryOutcome;
+import me.criseda.autostopper.telemetry.TelemetrySnapshot;
 import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
 
@@ -51,11 +57,29 @@ public final class ServerLifecycleCoordinator {
     private final ServerHoldRegistry holdRegistry;
     private final AutoStopperExecutor executor;
     private final LongSupplier nanoTime;
+    private final LifecycleTelemetry telemetry;
     private final Map<String, LifecycleEntry> lifecycles = new ConcurrentHashMap<>();
     private final Set<ReconnectPermit> reconnectPermits = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
     private final AtomicLong lifecycleRevision = new AtomicLong();
     private final Object shutdownLock = new Object();
+
+    public ServerLifecycleCoordinator(Logger logger, ServerManager serverManager,
+            ServerHoldRegistry holdRegistry, AutoStopperExecutor executor,
+            LongSupplier nanoTime, LifecycleTelemetry telemetry) {
+        this.logger = Objects.requireNonNull(logger, "logger");
+        this.serverManager = Objects.requireNonNull(serverManager, "serverManager");
+        this.holdRegistry = Objects.requireNonNull(holdRegistry, "holdRegistry");
+        this.executor = Objects.requireNonNull(executor, "executor");
+        this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime");
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
+    }
+
+    public ServerLifecycleCoordinator(Logger logger, ServerManager serverManager,
+            ServerHoldRegistry holdRegistry, AutoStopperExecutor executor, LongSupplier nanoTime) {
+        this(logger, serverManager, holdRegistry, executor, nanoTime,
+                new LifecycleTelemetryService(logger, nanoTime));
+    }
 
     public ServerLifecycleCoordinator(Logger logger, ServerManager serverManager,
             ServerHoldRegistry holdRegistry, AutoStopperExecutor executor) {
@@ -70,13 +94,8 @@ public final class ServerLifecycleCoordinator {
         this(logger, serverManager, new ServerHoldRegistry(), new AutoStopperExecutor(), nanoTime);
     }
 
-    ServerLifecycleCoordinator(Logger logger, ServerManager serverManager,
-            ServerHoldRegistry holdRegistry, AutoStopperExecutor executor, LongSupplier nanoTime) {
-        this.logger = Objects.requireNonNull(logger, "logger");
-        this.serverManager = Objects.requireNonNull(serverManager, "serverManager");
-        this.holdRegistry = Objects.requireNonNull(holdRegistry, "holdRegistry");
-        this.executor = Objects.requireNonNull(executor, "executor");
-        this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime");
+    public TelemetrySnapshot snapshotTelemetry() {
+        return telemetry.snapshot();
     }
 
     public boolean isHeld(String serverName) {
@@ -110,6 +129,8 @@ public final class ServerLifecycleCoordinator {
         Objects.requireNonNull(targetServer, "targetServer");
         Objects.requireNonNull(mapping, "mapping");
         if (shutdown.get()) {
+            telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT, mapping.serverName(),
+                    TelemetryOrigin.PLAYER_CONNECTION, TelemetryOutcome.PROXY_SHUTDOWN, Duration.ZERO, 0);
             return CompletableFuture.completedFuture(ConnectionOutcome.PROXY_SHUTDOWN);
         }
 
@@ -141,6 +162,7 @@ public final class ServerLifecycleCoordinator {
                     if (existing != null) {
                         if (entry.state == ServerLifecycleState.STARTING) {
                             queueWaitingCount(existing, entry.waiters.size());
+                            entry.peakWaiterCount = Math.max(entry.peakWaiterCount, entry.waiters.size());
                         }
                         admitted.set(Admission.queued(entry, existing));
                         return entry;
@@ -156,10 +178,11 @@ public final class ServerLifecycleCoordinator {
                     }
 
                     ConnectionWaiter waiter = new ConnectionWaiter(
-                            playerId, player, targetServer, nanoTime.getAsLong());
+                            playerId, player, targetServer, mapping.serverName(), nanoTime.getAsLong());
                     entry.waiters.put(playerId, waiter);
                     touch(entry);
                     if (entry.state == ServerLifecycleState.STARTING) {
+                        entry.peakWaiterCount = Math.max(entry.peakWaiterCount, entry.waiters.size());
                         queueStage(waiter, entry.progressStage,
                                 stageMessage(entry.progressStage, mapping.serverName()), false);
                         queueWaitingCount(waiter, entry.waiters.size());
@@ -175,6 +198,9 @@ public final class ServerLifecycleCoordinator {
 
                     transition(entry, ServerLifecycleState.STARTING);
                     entry.progressStage = ConnectionLifecycleStage.INSPECTING;
+                    entry.startupStartNanos = nanoTime.getAsLong();
+                    entry.peakWaiterCount = 1;
+                    entry.startupTelemetryRecorded = false;
                     queueStage(waiter, entry.progressStage,
                             stageMessage(entry.progressStage, mapping.serverName()), false);
                     CompletableFuture<StartupOutcome> operation = new CompletableFuture<>();
@@ -187,9 +213,14 @@ public final class ServerLifecycleCoordinator {
 
         Admission admission = admitted.get();
         if (admission == null) {
+            telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT, mapping.serverName(),
+                    TelemetryOrigin.PLAYER_CONNECTION, TelemetryOutcome.START_FAILED, Duration.ZERO, 0);
             return CompletableFuture.completedFuture(ConnectionOutcome.START_FAILED);
         }
         if (admission.rejectedOutcome != null) {
+            telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT, mapping.serverName(),
+                    TelemetryOrigin.PLAYER_CONNECTION, TelemetryOutcome.from(admission.rejectedOutcome),
+                    Duration.ZERO, 0);
             if (admission.rejectedOutcome != ConnectionOutcome.PROXY_SHUTDOWN) {
                 notifyRejected(player, mapping.serverName(), admission.rejectedOutcome);
             }
@@ -206,7 +237,10 @@ public final class ServerLifecycleCoordinator {
 
     public CompletableFuture<ManualStartOutcome> requestManualStart(ServerMapping mapping) {
         Objects.requireNonNull(mapping, "mapping");
+        long startNanos = nanoTime.getAsLong();
         if (shutdown.get()) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_START, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.PROXY_SHUTDOWN, Duration.ZERO, 0);
             return CompletableFuture.completedFuture(ManualStartOutcome.PROXY_SHUTDOWN);
         }
 
@@ -252,6 +286,9 @@ public final class ServerLifecycleCoordinator {
 
                     transition(entry, ServerLifecycleState.STARTING);
                     entry.progressStage = ConnectionLifecycleStage.INSPECTING;
+                    entry.startupStartNanos = nanoTime.getAsLong();
+                    entry.peakWaiterCount = 0;
+                    entry.startupTelemetryRecorded = false;
                     CompletableFuture<StartupOutcome> operation = new CompletableFuture<>();
                     entry.startupFuture = operation;
                     admitted.set(ManualStartAdmission.start(entry, operation));
@@ -262,19 +299,35 @@ public final class ServerLifecycleCoordinator {
 
         ManualStartAdmission admission = admitted.get();
         if (admission == null) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_START, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.START_FAILED,
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
             return CompletableFuture.completedFuture(ManualStartOutcome.START_FAILED);
         }
         if (admission.rejectedOutcome != null) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_START, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.from(admission.rejectedOutcome),
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
             return CompletableFuture.completedFuture(admission.rejectedOutcome);
         }
         if (admission.completedOutcome != null) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_START, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.from(admission.completedOutcome),
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
             return CompletableFuture.completedFuture(admission.completedOutcome);
         }
         if (admission.launchStartup) {
             launchStatusCheck(admission.entry, mapping, admission.startupFuture);
         }
-        return admission.startupFuture.thenApply(this::toManualStartOutcome)
+        CompletableFuture<ManualStartOutcome> resultFuture = admission.startupFuture.thenApply(this::toManualStartOutcome)
                 .exceptionally(this::exceptionalStartOutcome);
+        resultFuture.whenComplete((outcome, error) -> {
+            ManualStartOutcome result = outcome != null ? outcome : ManualStartOutcome.START_FAILED;
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_START, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.from(result),
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
+        });
+        return resultFuture;
     }
 
     public CompletableFuture<ManualStopOutcome> requestManualStop(ServerMapping mapping) {
@@ -286,7 +339,10 @@ public final class ServerLifecycleCoordinator {
     public CompletableFuture<ManualStopOutcome> requestManualStop(ServerMapping mapping,
             RegisteredServer registeredServer) {
         Objects.requireNonNull(mapping, "mapping");
+        long startNanos = nanoTime.getAsLong();
         if (shutdown.get()) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_STOP, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.PROXY_SHUTDOWN, Duration.ZERO, 0);
             return CompletableFuture.completedFuture(ManualStopOutcome.PROXY_SHUTDOWN);
         }
 
@@ -349,14 +405,30 @@ public final class ServerLifecycleCoordinator {
 
         ManualStopAdmission admission = admitted.get();
         if (admission == null) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_STOP, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.STOP_FAILED,
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
             return CompletableFuture.completedFuture(ManualStopOutcome.STOP_FAILED);
         }
         if (admission.rejectedOutcome != null) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_STOP, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.from(admission.rejectedOutcome),
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
             return CompletableFuture.completedFuture(admission.rejectedOutcome);
         }
         if (admission.completedOutcome != null) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_STOP, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.from(admission.completedOutcome),
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
             return CompletableFuture.completedFuture(admission.completedOutcome);
         }
+
+        admission.stopFuture.whenComplete((outcome, error) -> {
+            ManualStopOutcome result = outcome != null ? outcome : ManualStopOutcome.STOP_FAILED;
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_STOP, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.from(result),
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
+        });
 
         executeManualStop(admission.entry, mapping, registeredServer, admission.stopFuture);
         return admission.stopFuture;
@@ -371,7 +443,10 @@ public final class ServerLifecycleCoordinator {
     public CompletableFuture<ManualRestartOutcome> requestManualRestart(ServerMapping mapping,
             RegisteredServer registeredServer) {
         Objects.requireNonNull(mapping, "mapping");
+        long startNanos = nanoTime.getAsLong();
         if (shutdown.get()) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_RESTART, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.PROXY_SHUTDOWN, Duration.ZERO, 0);
             return CompletableFuture.completedFuture(ManualRestartOutcome.PROXY_SHUTDOWN);
         }
 
@@ -424,6 +499,9 @@ public final class ServerLifecycleCoordinator {
                     if (entry.state == ServerLifecycleState.STOPPED) {
                         transition(entry, ServerLifecycleState.STARTING);
                         entry.progressStage = ConnectionLifecycleStage.INSPECTING;
+                        entry.startupStartNanos = nanoTime.getAsLong();
+                        entry.peakWaiterCount = 0;
+                        entry.startupTelemetryRecorded = false;
                         CompletableFuture<StartupOutcome> startupFuture = new CompletableFuture<>();
                         entry.startupFuture = startupFuture;
                         admitted.set(ManualRestartAdmission.startOnly(entry, operation, startupFuture));
@@ -439,11 +517,25 @@ public final class ServerLifecycleCoordinator {
 
         ManualRestartAdmission admission = admitted.get();
         if (admission == null) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_RESTART, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.STOP_FAILED,
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
             return CompletableFuture.completedFuture(ManualRestartOutcome.STOP_FAILED);
         }
         if (admission.rejectedOutcome != null) {
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_RESTART, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.from(admission.rejectedOutcome),
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
             return CompletableFuture.completedFuture(admission.rejectedOutcome);
         }
+
+        admission.restartFuture.whenComplete((outcome, error) -> {
+            ManualRestartOutcome result = outcome != null ? outcome : ManualRestartOutcome.STOP_FAILED;
+            telemetry.recordOperation(TelemetryOperationType.MANUAL_RESTART, mapping.serverName(),
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.from(result),
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos)), 0);
+        });
+
         if (admission.startOnly) {
             launchStatusCheck(admission.entry, mapping, admission.startupFuture);
             admission.startupFuture.whenComplete((outcome, error) -> {
@@ -487,6 +579,10 @@ public final class ServerLifecycleCoordinator {
         }
         reconnectPermits.removeIf(permit -> permit.playerId.equals(playerId));
         for (ConnectionWaiter waiter : discarded) {
+            telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT,
+                    waiter.serverName,
+                    TelemetryOrigin.PLAYER_CONNECTION, TelemetryOutcome.PLAYER_DISCONNECTED,
+                    elapsed(waiter), 0);
             waiter.future.complete(ConnectionOutcome.PLAYER_DISCONNECTED);
         }
     }
@@ -715,6 +811,7 @@ public final class ServerLifecycleCoordinator {
     public void shutdown() {
         List<CompletableFuture<?>> operations = new ArrayList<>();
         List<ConnectionWaiter> waiters = new ArrayList<>();
+        List<Map.Entry<String, Long>> interruptedStartups = new ArrayList<>();
         synchronized (shutdownLock) {
             if (!shutdown.compareAndSet(false, true)) {
                 return;
@@ -727,6 +824,10 @@ public final class ServerLifecycleCoordinator {
                         entry.activeOperation = null;
                     }
                     if (entry.startupFuture != null) {
+                        if (!entry.startupTelemetryRecorded) {
+                            entry.startupTelemetryRecorded = true;
+                            interruptedStartups.add(Map.entry(entry.mapping.serverName(), entry.startupStartNanos));
+                        }
                         entry.startupFuture.cancel(false);
                         entry.startupFuture = null;
                     }
@@ -746,7 +847,16 @@ public final class ServerLifecycleCoordinator {
             reconnectPermits.clear();
         }
 
+        for (Map.Entry<String, Long> startup : interruptedStartups) {
+            telemetry.recordOperation(TelemetryOperationType.STARTUP, startup.getKey(),
+                    TelemetryOrigin.INTERNAL, TelemetryOutcome.PROXY_SHUTDOWN,
+                    Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startup.getValue())), 0);
+        }
         for (ConnectionWaiter waiter : waiters) {
+            telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT,
+                    waiter.serverName,
+                    TelemetryOrigin.PLAYER_CONNECTION, TelemetryOutcome.PROXY_SHUTDOWN,
+                    elapsed(waiter), 0);
             waiter.future.complete(ConnectionOutcome.PROXY_SHUTDOWN);
         }
         for (CompletableFuture<?> operation : operations) {
@@ -756,15 +866,22 @@ public final class ServerLifecycleCoordinator {
 
     private void launchStatusCheck(LifecycleEntry entry, ServerMapping mapping,
             CompletableFuture<StartupOutcome> operation) {
+        long stageStart = nanoTime.getAsLong();
         CompletableFuture<Optional<ContainerStatus>> statusFuture;
         try {
             statusFuture = serverManager.getServerStatusAsync(mapping);
         } catch (RuntimeException error) {
-            completeStartup(entry, mapping, operation,
-                    exceptionalOutcome(error, StartupStage.STATUS, mapping.serverName()));
+            Duration stageElapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - stageStart));
+            StartupOutcome outcome = exceptionalOutcome(error, StartupStage.STATUS, mapping.serverName());
+            telemetry.recordStage(TelemetryOperationType.STATUS_CHECK, mapping.serverName(),
+                    toTelemetryOutcome(outcome), stageElapsed);
+            completeStartup(entry, mapping, operation, outcome);
             return;
         }
         if (statusFuture == null) {
+            Duration stageElapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - stageStart));
+            telemetry.recordStage(TelemetryOperationType.STATUS_CHECK, mapping.serverName(),
+                    TelemetryOutcome.STATUS_FAILED, stageElapsed);
             completeStartup(entry, mapping, operation, StartupOutcome.STATUS_ERROR);
             return;
         }
@@ -775,20 +892,30 @@ public final class ServerLifecycleCoordinator {
             if (shutdown.get()) {
                 return;
             }
+            Duration stageElapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - stageStart));
             if (error != null) {
-                completeStartup(entry, mapping, operation,
-                        exceptionalOutcome(error, StartupStage.STATUS, mapping.serverName()));
+                StartupOutcome outcome = exceptionalOutcome(error, StartupStage.STATUS, mapping.serverName());
+                telemetry.recordStage(TelemetryOperationType.STATUS_CHECK, mapping.serverName(),
+                        toTelemetryOutcome(outcome), stageElapsed);
+                completeStartup(entry, mapping, operation, outcome);
                 return;
             }
             if (status == null) {
+                telemetry.recordStage(TelemetryOperationType.STATUS_CHECK, mapping.serverName(),
+                        TelemetryOutcome.STATUS_FAILED, stageElapsed);
                 completeStartup(entry, mapping, operation, StartupOutcome.STATUS_ERROR);
                 return;
             }
             if (status.isEmpty()) {
+                telemetry.recordStage(TelemetryOperationType.STATUS_CHECK, mapping.serverName(),
+                        TelemetryOutcome.NO_MAPPING, stageElapsed);
                 completeStartup(entry, mapping, operation, StartupOutcome.STATUS_NO_MAPPING);
                 return;
             }
-            switch (status.get()) {
+            ContainerStatus containerStatus = status.get();
+            telemetry.recordStage(TelemetryOperationType.STATUS_CHECK, mapping.serverName(),
+                    TelemetryOutcome.from(containerStatus), stageElapsed);
+            switch (containerStatus) {
                 case RUNNING -> launchReadiness(entry, mapping, operation, false);
                 case STOPPED -> launchStart(entry, mapping, operation);
                 case MISSING -> completeStartup(entry, mapping, operation, StartupOutcome.STATUS_MISSING);
@@ -801,6 +928,7 @@ public final class ServerLifecycleCoordinator {
 
     private void launchStart(LifecycleEntry entry, ServerMapping mapping,
             CompletableFuture<StartupOutcome> operation) {
+        long stageStart = nanoTime.getAsLong();
         List<ConnectionWaiter> stageWaiters = recordSharedStage(
                 entry, operation, ConnectionLifecycleStage.STARTING);
         if (stageWaiters == null) {
@@ -810,11 +938,17 @@ public final class ServerLifecycleCoordinator {
         try {
             startFuture = serverManager.startServerAsync(mapping);
         } catch (RuntimeException error) {
-            completeStartup(entry, mapping, operation,
-                    exceptionalOutcome(error, StartupStage.START, mapping.serverName()));
+            Duration stageElapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - stageStart));
+            StartupOutcome outcome = exceptionalOutcome(error, StartupStage.START, mapping.serverName());
+            telemetry.recordStage(TelemetryOperationType.CONTAINER_START, mapping.serverName(),
+                    toTelemetryOutcome(outcome), stageElapsed);
+            completeStartup(entry, mapping, operation, outcome);
             return;
         }
         if (startFuture == null) {
+            Duration stageElapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - stageStart));
+            telemetry.recordStage(TelemetryOperationType.CONTAINER_START, mapping.serverName(),
+                    TelemetryOutcome.START_FAILED, stageElapsed);
             completeStartup(entry, mapping, operation, StartupOutcome.START_ERROR);
             return;
         }
@@ -825,15 +959,22 @@ public final class ServerLifecycleCoordinator {
             if (shutdown.get()) {
                 return;
             }
+            Duration stageElapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - stageStart));
             if (error != null) {
-                completeStartup(entry, mapping, operation,
-                        exceptionalOutcome(error, StartupStage.START, mapping.serverName()));
+                StartupOutcome outcome = exceptionalOutcome(error, StartupStage.START, mapping.serverName());
+                telemetry.recordStage(TelemetryOperationType.CONTAINER_START, mapping.serverName(),
+                        toTelemetryOutcome(outcome), stageElapsed);
+                completeStartup(entry, mapping, operation, outcome);
                 return;
             }
             if (result == null) {
+                telemetry.recordStage(TelemetryOperationType.CONTAINER_START, mapping.serverName(),
+                        TelemetryOutcome.START_FAILED, stageElapsed);
                 completeStartup(entry, mapping, operation, StartupOutcome.START_ERROR);
                 return;
             }
+            telemetry.recordStage(TelemetryOperationType.CONTAINER_START, mapping.serverName(),
+                    TelemetryOutcome.from(result), stageElapsed);
             switch (result) {
                 case RUNNING -> launchReadiness(entry, mapping, operation, true);
                 case MISSING -> completeStartup(entry, mapping, operation, StartupOutcome.START_MISSING);
@@ -847,6 +988,7 @@ public final class ServerLifecycleCoordinator {
 
     private void launchReadiness(LifecycleEntry entry, ServerMapping mapping,
             CompletableFuture<StartupOutcome> operation, boolean startedContainer) {
+        long stageStart = nanoTime.getAsLong();
         List<ConnectionWaiter> stageWaiters = recordSharedStage(
                 entry, operation, ConnectionLifecycleStage.WAITING_FOR_READINESS);
         if (stageWaiters == null) {
@@ -856,11 +998,17 @@ public final class ServerLifecycleCoordinator {
         try {
             readinessFuture = serverManager.waitForServerReadyAsync(mapping);
         } catch (RuntimeException error) {
-            completeStartup(entry, mapping, operation,
-                    exceptionalOutcome(error, StartupStage.READINESS, mapping.serverName()));
+            Duration stageElapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - stageStart));
+            StartupOutcome outcome = exceptionalOutcome(error, StartupStage.READINESS, mapping.serverName());
+            telemetry.recordStage(TelemetryOperationType.READINESS_CHECK, mapping.serverName(),
+                    toTelemetryOutcome(outcome), stageElapsed);
+            completeStartup(entry, mapping, operation, outcome);
             return;
         }
         if (readinessFuture == null) {
+            Duration stageElapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - stageStart));
+            telemetry.recordStage(TelemetryOperationType.READINESS_CHECK, mapping.serverName(),
+                    TelemetryOutcome.SERVER_NOT_READY, stageElapsed);
             completeStartup(entry, mapping, operation, StartupOutcome.READINESS_ERROR);
             return;
         }
@@ -871,13 +1019,23 @@ public final class ServerLifecycleCoordinator {
             if (shutdown.get()) {
                 return;
             }
+            Duration stageElapsed = Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - stageStart));
             if (error != null) {
-                completeStartup(entry, mapping, operation,
-                        exceptionalOutcome(error, StartupStage.READINESS, mapping.serverName()));
+                StartupOutcome outcome = exceptionalOutcome(error, StartupStage.READINESS, mapping.serverName());
+                telemetry.recordStage(TelemetryOperationType.READINESS_CHECK, mapping.serverName(),
+                        toTelemetryOutcome(outcome), stageElapsed);
+                completeStartup(entry, mapping, operation, outcome);
             } else if (ready != null && ready.ready()) {
+                telemetry.recordStage(TelemetryOperationType.READINESS_CHECK, mapping.serverName(),
+                        TelemetryOutcome.READY, stageElapsed);
                 completeStartup(entry, mapping, operation,
                         startedContainer ? StartupOutcome.READY_AFTER_START : StartupOutcome.READY_RUNNING);
             } else {
+                TelemetryOutcome stageOutcome = ready == null
+                        ? TelemetryOutcome.SERVER_NOT_READY
+                        : TelemetryOutcome.from(ready.outcome());
+                telemetry.recordStage(TelemetryOperationType.READINESS_CHECK, mapping.serverName(),
+                        stageOutcome, stageElapsed);
                 completeStartup(entry, mapping, operation, StartupOutcome.NOT_READY, ready);
             }
         });
@@ -894,6 +1052,8 @@ public final class ServerLifecycleCoordinator {
             ReadinessResult readinessFailure) {
         List<ConnectionWaiter> waiters;
         boolean accepted;
+        long startupDurationNanos;
+        int waiterCount;
         synchronized (entry) {
             if (shutdown.get()) {
                 return;
@@ -901,6 +1061,15 @@ public final class ServerLifecycleCoordinator {
             accepted = entry.state == ServerLifecycleState.STARTING && entry.startupFuture == operation;
             if (!accepted) {
                 return;
+            }
+            startupDurationNanos = Math.max(0, nanoTime.getAsLong() - entry.startupStartNanos);
+            waiterCount = Math.max(entry.peakWaiterCount, entry.waiters.size());
+            if (!entry.startupTelemetryRecorded) {
+                entry.startupTelemetryRecorded = true;
+                TelemetryOutcome teleOutcome = outcome.ready ? TelemetryOutcome.READY : toTelemetryOutcome(outcome);
+                telemetry.recordOperation(TelemetryOperationType.STARTUP, mapping.serverName(),
+                        TelemetryOrigin.PLAYER_CONNECTION, teleOutcome,
+                        Duration.ofNanos(startupDurationNanos), waiterCount);
             }
             entry.startupFuture = null;
             entry.activeOperation = null;
@@ -945,9 +1114,13 @@ public final class ServerLifecycleCoordinator {
                             elapsed(waiter));
                     queueStage(waiter, ConnectionLifecycleStage.FAILED, failureMessage, initialConnection);
                 }
-                waiter.future.complete(active
+                ConnectionOutcome waiterOutcome = active
                         ? outcome.connectionOutcome
-                        : ConnectionOutcome.PLAYER_DISCONNECTED);
+                        : ConnectionOutcome.PLAYER_DISCONNECTED;
+                telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT, mapping.serverName(),
+                        TelemetryOrigin.PLAYER_CONNECTION, TelemetryOutcome.from(waiterOutcome),
+                        elapsed(waiter), 0);
+                waiter.future.complete(waiterOutcome);
                 drainNotifications(waiter);
                 if (active && !initialConnection && (outcome == StartupOutcome.NOT_READY
                         || outcome == StartupOutcome.READINESS_ERROR)) {
@@ -1032,11 +1205,14 @@ public final class ServerLifecycleCoordinator {
 
     private void finishWaiter(LifecycleEntry entry, ConnectionWaiter waiter, ConnectionOutcome outcome) {
         boolean owned;
+        Duration elapsed = elapsed(waiter);
+        int remainingWaiters;
         synchronized (entry) {
             owned = entry.waiters.remove(waiter.playerId, waiter);
             if (!owned) {
                 return;
             }
+            remainingWaiters = entry.waiters.size();
             touch(entry);
             entry.lastConnectionOutcome = outcome;
             waiter.connectionFuture = null;
@@ -1057,6 +1233,8 @@ public final class ServerLifecycleCoordinator {
                         "Check the backend listener and Velocity server address, then retry.");
             }
         }
+        telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT, entry.mapping.serverName(),
+                TelemetryOrigin.PLAYER_CONNECTION, TelemetryOutcome.from(outcome), elapsed, remainingWaiters);
         if (outcome.isSuccessful()) {
             queueStage(waiter, ConnectionLifecycleStage.SUCCEEDED,
                     AutoStopperMessages.lifecycleSucceeded(entry.mapping.serverName(), elapsed(waiter)), false);
@@ -1393,6 +1571,9 @@ public final class ServerLifecycleCoordinator {
         private boolean readyConnectionSucceeded;
         private boolean retired;
         private long revision;
+        private long startupStartNanos;
+        private int peakWaiterCount;
+        private boolean startupTelemetryRecorded;
 
         private LifecycleEntry(ServerMapping mapping, long revision) {
             this.mapping = mapping;
@@ -1410,6 +1591,7 @@ public final class ServerLifecycleCoordinator {
         private final UUID playerId;
         private final Player player;
         private final RegisteredServer targetServer;
+        private final String serverName;
         private final CompletableFuture<ConnectionOutcome> future = new CompletableFuture<>();
         private final long startNanos;
         private final ArrayDeque<WaiterNotification> notifications = new ArrayDeque<>();
@@ -1424,10 +1606,11 @@ public final class ServerLifecycleCoordinator {
         private CompletableFuture<ConnectionRequestBuilder.Result> connectionFuture;
 
         private ConnectionWaiter(UUID playerId, Player player, RegisteredServer targetServer,
-                long startNanos) {
+                String serverName, long startNanos) {
             this.playerId = playerId;
             this.player = player;
             this.targetServer = targetServer;
+            this.serverName = serverName;
             this.startNanos = startNanos;
         }
     }
@@ -1511,6 +1694,22 @@ public final class ServerLifecycleCoordinator {
         boolean isReady() {
             return ready;
         }
+    }
+
+    private TelemetryOutcome toTelemetryOutcome(StartupOutcome outcome) {
+        return switch (outcome) {
+            case READY_RUNNING, READY_AFTER_START -> TelemetryOutcome.READY;
+            case STATUS_NO_MAPPING -> TelemetryOutcome.NO_MAPPING;
+            case STATUS_MISSING, START_MISSING -> TelemetryOutcome.CONTAINER_MISSING;
+            case STATUS_INACCESSIBLE, START_INACCESSIBLE -> TelemetryOutcome.DOCKER_INACCESSIBLE;
+            case STATUS_TIMED_OUT -> TelemetryOutcome.STATUS_TIMED_OUT;
+            case STATUS_FAILED, STATUS_ERROR -> TelemetryOutcome.STATUS_FAILED;
+            case START_TIMED_OUT -> TelemetryOutcome.START_TIMED_OUT;
+            case START_FAILED, START_ERROR -> TelemetryOutcome.START_FAILED;
+            case NOT_READY, READINESS_ERROR -> TelemetryOutcome.SERVER_NOT_READY;
+            case CANCELLED -> TelemetryOutcome.CANCELLED;
+            case OVERLOADED -> TelemetryOutcome.OVERLOADED;
+        };
     }
 
     private void executeManualStop(LifecycleEntry entry, ServerMapping mapping,
@@ -1627,6 +1826,9 @@ public final class ServerLifecycleCoordinator {
                     transition(entry, ServerLifecycleState.STOPPED);
                     transition(entry, ServerLifecycleState.STARTING);
                     entry.progressStage = ConnectionLifecycleStage.STARTING;
+                    entry.startupStartNanos = nanoTime.getAsLong();
+                    entry.peakWaiterCount = 0;
+                    entry.startupTelemetryRecorded = false;
                     startupFuture = new CompletableFuture<>();
                     entry.startupFuture = startupFuture;
                 }

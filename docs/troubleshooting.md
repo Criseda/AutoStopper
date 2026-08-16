@@ -107,6 +107,19 @@ container: Docker would restart it after AutoStopper successfully stops it.
 | Hold disappeared after proxy restart | Runtime holds are memory-only and do not survive proxy restarts. | Re-apply the hold with `/autostopper hold <name>` or omit the server from `monitored_servers` if it should remain persistent. |
 | Hold disappeared after reload | The server mapping was modified or removed in `config.yml`. | Re-apply the hold if the server is still monitored under a new mapping. |
 
+## Lifecycle telemetry diagnostics
+
+AutoStopper emits structured `INFO` log lines upon completing every authoritative operation and `DEBUG`
+log lines for intermediate stages:
+
+- Search `velocity.log` for `AutoStopper lifecycle completed:` to track completed lifecycle operations
+  with their duration (`elapsed_ms`), outcome, origin, and waiter counts.
+- Search `velocity.log` for `AutoStopper lifecycle stage:` with debug logging enabled to diagnose
+  individual stage durations (e.g. whether container launch or readiness probing took the majority
+  of startup time).
+- Telemetry records use typed outcomes (e.g., `START_TIMED_OUT`, `SERVER_NOT_READY`, `CONTAINER_MISSING`,
+  `DOCKER_INACCESSIBLE`) to quickly isolate root causes without needing to guess from unformatted messages.
+
 ## Shutdown
 
 `shutdown_timeout_seconds` bounds cancellation of AutoStopper's own scheduled checks, readiness

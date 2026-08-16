@@ -5,13 +5,13 @@ import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
 
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
-import me.criseda.autostopper.server.ActivityTracker;
+import me.criseda.autostopper.server.ActivityTrackerService;
 
 public class ConnectionListener {
-    private final ActivityTracker activityTracker;
+    private final ActivityTrackerService activityTracker;
     private final ServerLifecycleCoordinator lifecycleCoordinator;
 
-    public ConnectionListener(ActivityTracker activityTracker, ServerLifecycleCoordinator lifecycleCoordinator) {
+    public ConnectionListener(ActivityTrackerService activityTracker, ServerLifecycleCoordinator lifecycleCoordinator) {
         this.activityTracker = activityTracker;
         this.lifecycleCoordinator = lifecycleCoordinator;
     }

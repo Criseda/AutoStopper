@@ -14,6 +14,10 @@ import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.lifecycle.ServerHoldRegistry;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
+import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
+import me.criseda.autostopper.telemetry.TelemetryOperationType;
+import me.criseda.autostopper.telemetry.TelemetryOrigin;
+import me.criseda.autostopper.telemetry.TelemetryOutcome;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,6 +61,7 @@ public class ActivityTrackerTest {
     @Mock
     private ServerLifecycleCoordinator lifecycleCoordinator;
 
+    private LifecycleTelemetryService telemetry;
     private ActivityTracker activityTracker;
     private AutoStopperExecutor executor;
     private ServerHoldRegistry holdRegistry;
@@ -70,12 +75,13 @@ public class ActivityTrackerTest {
         mapping2 = new ServerMapping("server2", "container2");
         when(config.snapshot()).thenReturn(new ConfigSnapshot(300, List.of(mapping1, mapping2)));
         holdRegistry = new me.criseda.autostopper.lifecycle.ServerHoldRegistry();
+        telemetry = new LifecycleTelemetryService(logger);
         lenient().when(lifecycleCoordinator.isHeld(anyString())).thenAnswer(inv -> holdRegistry.isHeld(inv.getArgument(0)));
         lenient().when(lifecycleCoordinator.tryBeginStop(any(ServerMapping.class))).thenReturn(true);
         
         executor = new AutoStopperExecutor();
         activityTracker = new ActivityTracker(
-                proxyServer, logger, config, serverManager, executor, plugin, lifecycleCoordinator);
+                proxyServer, logger, config, serverManager, executor, plugin, lifecycleCoordinator, telemetry);
     }
 
     @AfterEach
@@ -670,6 +676,23 @@ public class ActivityTrackerTest {
             java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
         }
         assertFalse(isScanActive(), "inactivity scan did not complete in time");
+    }
+
+    @Test
+    public void recordsAutomaticStopTelemetry() {
+        RegisteredServer server1 = mock(RegisteredServer.class);
+        when(server1.getPlayersConnected()).thenReturn(Collections.emptyList());
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        when(serverManager.stopServer(mapping1)).thenReturn(ContainerStatus.STOPPED);
+
+        Instant oldTime = Instant.now().minus(Duration.ofMinutes(10));
+        activityTracker.setLastActivityForTest("server1", oldTime);
+
+        activityTracker.requestInactivityCheck().join();
+
+        assertEquals(1, telemetry.operationCount(TelemetryOperationType.AUTOMATIC_STOP));
+        assertEquals(1, telemetry.outcomeCount(TelemetryOperationType.AUTOMATIC_STOP, TelemetryOutcome.STOPPED));
     }
 
     private boolean isScanActive() {

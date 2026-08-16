@@ -9,6 +9,7 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigLoadResult;
+import me.criseda.autostopper.config.ConfigProvider;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.messages.AutoStopperMessages;
@@ -16,6 +17,7 @@ import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalStatusService;
 import me.criseda.autostopper.server.ActivityTracker;
+import me.criseda.autostopper.server.ActivityTrackerService;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -33,14 +35,14 @@ public class AutoStopperCommand implements SimpleCommand {
     static final String HOLD_PERMISSION = "autostopper.command.hold";
     static final String RELEASE_PERMISSION = "autostopper.command.release";
 
-    private final AutoStopperConfig config;
-    private final ActivityTracker activityTracker;
+    private final ConfigProvider config;
+    private final ActivityTrackerService activityTracker;
     private final ServerLifecycleCoordinator lifecycleCoordinator;
     private final OperationalStatusService operationalStatus;
     private final PluginContainer pluginContainer;
 
-    public AutoStopperCommand(AutoStopperConfig config,
-            ActivityTracker activityTracker,
+    public AutoStopperCommand(ConfigProvider config,
+            ActivityTrackerService activityTracker,
             ServerLifecycleCoordinator lifecycleCoordinator, OperationalStatusService operationalStatus,
             PluginContainer pluginContainer) {
         this.config = config;

@@ -182,3 +182,64 @@ Runtime holds:
 - Are cleared on proxy shutdown or restart.
 - Do not persist across proxy process restarts (configuration-driven persistent pinning is not
   supported; unmanaged servers should simply not be included in `monitored_servers`).
+
+## Lifecycle telemetry and observability
+
+AutoStopper records typed, monotonic lifecycle telemetry for all server operations and intermediate
+stages. Telemetry is emitted directly to Velocity operator logs and accumulated into thread-safe,
+bounded in-memory metrics across the proxy process lifetime.
+
+### Structured log format
+
+Every completed authoritative lifecycle operation emits a machine-parsable `INFO` log line using
+consistent key-value pairs:
+
+```text
+AutoStopper lifecycle completed: op=STARTUP server=survival origin=PLAYER_CONNECTION outcome=READY elapsed_ms=3420 waiters=2
+```
+
+| Key | Description | Values / Examples |
+|---|---|---|
+| `op` | The completed operation type. | `STARTUP`, `MANUAL_START`, `MANUAL_STOP`, `AUTOMATIC_STOP`, `MANUAL_RESTART`, `CONNECTION_WAIT` |
+| `server` | The Velocity server name. | `survival`, `creative`, `lobby` |
+| `origin` | The initiator or source of the operation. | `PLAYER_CONNECTION`, `MANUAL_COMMAND`, `ACTIVITY_TRACKER`, `STATUS_POLL`, `INTERNAL` |
+| `outcome` | Typed terminal outcome classification. | `READY`, `STOPPED`, `CONNECTED`, `CONTAINER_MISSING`, `DOCKER_INACCESSIBLE`, `START_TIMED_OUT`, `STOP_TIMED_OUT`, `STATUS_TIMED_OUT`, `SERVER_NOT_READY`, `OVERLOADED`, `CANCELLED`, `PROXY_SHUTDOWN`, etc. |
+| `elapsed_ms` | Monotonic elapsed execution duration in milliseconds. | Integer duration measured via high-precision monotonic clock (`System.nanoTime`). |
+| `waiters` | Number of affected or waiting players. | Peak waiter count during startup, remaining waiters for individual connection waits, or `0` for manual/inactivity operations. |
+
+### Intermediate stage diagnostics
+
+When `DEBUG` logging is enabled for AutoStopper, the plugin logs fine-grained duration records for
+each internal stage transition:
+
+```text
+AutoStopper lifecycle stage: op=CONTAINER_START server=survival outcome=RUNNING elapsed_ms=1240
+AutoStopper lifecycle stage: op=READINESS_CHECK server=survival outcome=READY elapsed_ms=2180
+```
+
+Intermediate stage operations include `STATUS_CHECK`, `CONTAINER_START`, and `READINESS_CHECK`.
+
+### Shared startup vs. individual waiter tracking
+
+When multiple players connect to a sleeping server simultaneously:
+- Exactly **one** `STARTUP` operation record is logged with origin `PLAYER_CONNECTION`, the total
+  shared container startup/readiness duration, and the peak waiter count.
+- Each waiting player receives an individual `CONNECTION_WAIT` operation record logged with their
+  own precise wait time and outcome (e.g., `CONNECTED`, `PLAYER_DISCONNECTED`, or failure).
+
+### Memory and process-lifetime contract
+
+- In-memory metrics are accumulated using bounded atomic counters and min/max/total duration
+  aggregators with strictly $O(1)$ constant memory overhead.
+- No historical unbounded per-event log lists are retained in memory.
+- Metrics are scoped to the running proxy process lifetime and reset upon proxy restart or shutdown.
+
+### Privacy, security, and error safety
+
+- **Zero PII**: Telemetry records never contain player UUIDs, player usernames, IP addresses,
+  command secrets, or environment variables.
+- **Sanitized diagnostics**: Raw Docker standard error is never included in telemetry messages.
+- **Observational safety**: Telemetry recording is completely insulated from lifecycle execution; any
+  unexpected recording or logging error is caught defensively and can never disrupt player connections,
+  fail asynchronous futures, or modify lifecycle states.
+
