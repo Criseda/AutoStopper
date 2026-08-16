@@ -15,7 +15,8 @@ All notable AutoStopper changes are documented here.
   lifecycle.
 - Connecting players now receive authoritative inspection, startup, readiness, connection, and
   terminal lifecycle messages. Late arrivals see the current shared stage and unique waiter count,
-  while terminal feedback includes each player's monotonic elapsed wait time.
+- Redesigned command and chat presentation around the brand identity ("Empty servers sleep. Players wake them."). Replaced legacy bracketed prefixes with clean brand prompts (`AutoStopper ›`, `AutoStopper ✓`, `AutoStopper !`), added scannable deterministic status rows with humanized states and durations, and introduced permission-filtered help with fuzzy command matching.
+- Added contributor-facing message style guide (`docs/message-style-guide.md`).
 
 ### Changed
 

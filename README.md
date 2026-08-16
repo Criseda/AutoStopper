@@ -144,12 +144,12 @@ the backend containers in advance, and acceptance of the security boundary above
    docker compose ps
    ```
 
-   In Velocity, `/autostopper status` should report the monitored server as `READY`,
-   `RUNNING_UNVERIFIED`, or `STOPPED`. `RUNNING_UNVERIFIED` means Docker reports the container
-   running but AutoStopper has not completed this process generation's configured readiness check;
-   normal player demand performs that check before connecting. `DOCKER_UNAVAILABLE` or `FAILED`
-   includes an operator-safe detail such as a missing container; raw Docker stderr remains only in
-   the proxy log.
+   In Velocity, `/autostopper status` reports each monitored server with clear state badges such as
+   `● Ready`, `○ Sleeping`, `◐ Waking`, or `◐ Running · readiness unverified`.
+   `Running · readiness unverified` means Docker reports the container running but AutoStopper has not
+   completed this process generation's configured readiness check; normal player demand performs that
+   check before connecting. `! Unavailable · Docker cannot be reached` or `! Failed` includes an
+   operator-safe detail; raw Docker stderr remains only in the proxy log.
 
 Managed containers must already exist and use `restart: "no"` so Docker does not immediately undo
 an inactivity stop. Unmonitored hubs or lobbies are not intercepted or stopped by AutoStopper and
@@ -159,15 +159,13 @@ may retain `restart: unless-stopped`.
 
 - A connection to a monitored server is held while AutoStopper inspects or starts its mapped
   container and completes the configured readiness check. Simultaneous players share that work.
-- Waiting players receive one message when the shared lifecycle moves through inspection, backend
-  startup (when needed), readiness, and connection. A player joining an existing operation sees its
-  current stage; terminal success or failure includes that player's elapsed wait time. AutoStopper
-  also reports the unique waiter count to later arrivals and earlier waiters who try again after the
-  count changes. The first waiter sees no count. AutoStopper does not send periodic updates or
-  estimate a completion percentage.
-- Operational status distinguishes a merely running container (`RUNNING_UNVERIFIED`) from a
-  backend whose readiness has succeeded in the current lifecycle generation (`READY`). Active
-  `STARTING` and `STOPPING` transitions remain authoritative; otherwise current Docker observation
+- Waiting players receive clean, branded lifecycle messages moving through inspection, waking,
+  readiness, and connection (`AutoStopper › Waking survival…`). Late arrivals see the current stage
+  and waiter count, while terminal success/failure includes the elapsed wait time. AutoStopper does
+  not send periodic percentage spam.
+- Operational status distinguishes a merely running container (`Running · readiness unverified`) from
+  a backend whose readiness has succeeded in the current lifecycle generation (`Ready`). Active
+  `Waking` and `Stopping` transitions remain authoritative; otherwise current Docker observation
   overrides stale quiescent lifecycle state.
 - A connection to an unmonitored Velocity server proceeds normally; AutoStopper never infers a
   container name and never manages it.
@@ -180,16 +178,17 @@ may retain `restart: unless-stopped`.
 - Proxy shutdown cancels plugin work within `shutdown_timeout_seconds`; it does not stop managed
   Minecraft containers.
 
-See the [configuration reference](docs/configuration.md) and
-[troubleshooting guide](docs/troubleshooting.md) for the complete contract.
+See the [configuration reference](docs/configuration.md),
+[troubleshooting guide](docs/troubleshooting.md), and [message style guide](docs/message-style-guide.md)
+for the complete contract.
 
 ## Commands and permissions
 
 | Command | Required permission | Notes |
 |---|---|---|
-| `/autostopper`, `/as` | None | Shows plugin information. |
-| `/autostopper help` | None | Shows only commands the source may use. |
-| `/autostopper status` | `autostopper.command.status` or `autostopper.admin` | Collects current operational state for every mapping. |
+| `/autostopper`, `/as` | None | Shows plugin overview and permitted commands. |
+| `/autostopper help` | None | Shows only commands the source may use, with click-to-suggest for players. |
+| `/autostopper status` | `autostopper.command.status` or `autostopper.admin` | Shows scannable, deterministic operational status for all mapped backends. |
 | `/autostopper reload` | `autostopper.command.reload` or `autostopper.admin` | Atomically validates, applies, and preflights the new configuration. |
 
 `autostopper.admin` is an explicit umbrella. If it is granted, it authorizes both restricted

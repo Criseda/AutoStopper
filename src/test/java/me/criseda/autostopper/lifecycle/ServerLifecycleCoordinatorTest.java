@@ -80,11 +80,11 @@ class ServerLifecycleCoordinatorTest {
         assertEquals(ConnectionOutcome.CONNECTED, outcome.join());
         List<String> messages = sentMessages(player.player);
         assertEquals(List.of(
-                        "[AutoStopper] Checking server survival...",
-                        "[AutoStopper] Waiting for server survival to become ready...",
-                        "[AutoStopper] Connecting you to server survival..."),
+                        "AutoStopper › Checking server survival…",
+                        "AutoStopper › Waiting for server survival to become ready…",
+                        "AutoStopper › Connecting you to server survival…"),
                 messages.subList(0, 3));
-        assertTrue(messages.stream().noneMatch(message -> message.contains("Starting server")));
+        assertTrue(messages.stream().noneMatch(message -> message.contains("Waking survival")));
     }
 
     @Test
@@ -155,7 +155,7 @@ class ServerLifecycleCoordinatorTest {
         CompletableFuture<ConnectionOutcome> lateOutcome =
                 coordinator.requestConnection(late.player, targetServer, mapping);
         assertTrue(sentMessages(first.player).stream()
-                .noneMatch(message -> message.contains("Players waiting")));
+                .noneMatch(message -> message.contains("players waiting")));
         assertSame(firstOutcome, coordinator.requestConnection(first.player, targetServer, mapping));
         assertSame(firstOutcome, coordinator.requestConnection(first.player, targetServer, mapping));
         start.complete(ContainerStatus.RUNNING);
@@ -167,19 +167,19 @@ class ServerLifecycleCoordinatorTest {
         assertEquals(ConnectionOutcome.CONNECTED, firstOutcome.join());
         assertEquals(ConnectionOutcome.CONNECTED, lateOutcome.join());
         assertEquals(List.of(
-                        "[AutoStopper] Checking server survival...",
-                        "[AutoStopper] Starting server survival...",
-                        "[AutoStopper] Players waiting: 2",
-                        "[AutoStopper] Waiting for server survival to become ready...",
-                        "[AutoStopper] Connecting you to server survival...",
-                        "[AutoStopper] Connected to server survival after 2.5 seconds."),
+                        "AutoStopper › Checking server survival…",
+                        "AutoStopper › Waking survival…",
+                        "AutoStopper › 2 players waiting",
+                        "AutoStopper › Waiting for server survival to become ready…",
+                        "AutoStopper › Connecting you to server survival…",
+                        "AutoStopper ✓ Connected to survival · 2.5s"),
                 sentMessages(first.player));
         assertEquals(List.of(
-                        "[AutoStopper] Starting server survival...",
-                        "[AutoStopper] Players waiting: 2",
-                        "[AutoStopper] Waiting for server survival to become ready...",
-                        "[AutoStopper] Connecting you to server survival...",
-                        "[AutoStopper] Connected to server survival after 2.5 seconds."),
+                        "AutoStopper › Waking survival…",
+                        "AutoStopper › 2 players waiting",
+                        "AutoStopper › Waiting for server survival to become ready…",
+                        "AutoStopper › Connecting you to server survival…",
+                        "AutoStopper ✓ Connected to survival · 2.5s"),
                 sentMessages(late.player));
         verify(serverManager).getServerStatusAsync(mapping);
         verify(serverManager).startServerAsync(mapping);
@@ -207,7 +207,7 @@ class ServerLifecycleCoordinatorTest {
         assertEquals(ConnectionOutcome.CONNECTED, unaffectedOutcome.join());
         assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state(mapping));
         assertTrue(sentMessages(unaffected.player).stream()
-                .anyMatch(message -> message.contains("Connected to server survival after")));
+                .anyMatch(message -> message.contains("Connected to survival")));
     }
 
     @Test
@@ -220,7 +220,7 @@ class ServerLifecycleCoordinatorTest {
         coordinator.discardPlayer(player.player);
         status.complete(Optional.of(ContainerStatus.STOPPED));
 
-        assertEquals(List.of("[AutoStopper] Checking server survival..."), sentMessages(player.player));
+        assertEquals(List.of("AutoStopper › Checking server survival…"), sentMessages(player.player));
     }
 
     @Test
@@ -477,7 +477,7 @@ class ServerLifecycleCoordinatorTest {
         oldStatus.complete(Optional.of(ContainerStatus.RUNNING));
         original.complete(ConnectionRequestBuilder.Status.SUCCESS);
         assertEquals(ConnectionOutcome.CONNECTED, originalOutcome.join());
-        assertEquals(List.of("[AutoStopper] Checking server survival..."),
+        assertEquals(List.of("AutoStopper › Checking server survival…"),
                 sentMessages(original.player));
         assertEquals(Optional.empty(), coordinator.state("survival"));
 
