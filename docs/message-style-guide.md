@@ -53,7 +53,7 @@ AutoStopper ! Couldn't connect to survival · Try /server survival again in a mo
 
 ```text
 Server status
-● survival   Ready · active 2m ago
+● survival   Ready · held; active 2m ago
 ◐ creative   Waking · 2 players waiting
 ○ events     Sleeping
 ! modded     Unavailable · Docker cannot be reached

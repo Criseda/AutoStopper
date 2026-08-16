@@ -172,7 +172,8 @@ public final class OperationalStatusService {
                     "lifecycle changed while Docker status was collected",
                     "Retry the status command to collect a current observation."));
         }
-        return new OperationalServerStatus(state, lifecycle.waitingPlayers(), latest);
+        boolean held = lifecycleCoordinator.isHeld(serverName);
+        return new OperationalServerStatus(state, lifecycle.waitingPlayers(), latest, held);
     }
 
     private OperationalState determineState(Optional<ServerLifecycleState> lifecycle,

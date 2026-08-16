@@ -675,6 +675,414 @@ class ServerLifecycleCoordinatorTest {
         assertFalse(coordinator.tryBeginStop(mapping));
     }
 
+    @Test
+    void manualStart_AlreadyReady() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertEquals(ManualStartOutcome.ALREADY_READY, startFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStart_FromStopped_StartsAndReadies() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ReadinessResult.ready(1)));
+
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertEquals(ManualStartOutcome.READY, startFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStart_WhileStarting_JoinsInFlight() {
+        CompletableFuture<ReadinessResult> readiness = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        when(serverManager.waitForServerReadyAsync(mapping)).thenReturn(readiness);
+
+        PlayerHarness player = player("waiter");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertFalse(startFuture.isDone());
+
+        readiness.complete(ReadinessResult.ready(1));
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        assertEquals(ManualStartOutcome.READY, startFuture.join());
+    }
+
+    @Test
+    void manualStart_WhileStopping_Rejected() {
+        assertTrue(coordinator.tryBeginStop(mapping));
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertEquals(ManualStartOutcome.SERVER_STOPPING, startFuture.join());
+    }
+
+    @Test
+    void manualStop_AlreadyStopped() {
+        CompletableFuture<ManualStopOutcome> stopFuture =
+                coordinator.requestManualStop(mapping, targetServer);
+        assertEquals(ManualStopOutcome.ALREADY_STOPPED, stopFuture.join());
+        verify(serverManager, never()).stopServer(any(ServerMapping.class));
+    }
+
+    @Test
+    void manualStop_RefusedWhenPlayersConnected() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of(player.player));
+
+        CompletableFuture<ManualStopOutcome> stopFuture =
+                coordinator.requestManualStop(mapping, targetServer);
+        assertEquals(ManualStopOutcome.PLAYERS_CONNECTED, stopFuture.join());
+        verify(serverManager, never()).stopServer(any(ServerMapping.class));
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStop_RefusedWhenWaitersPresent() {
+        CompletableFuture<ReadinessResult> readiness = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        when(serverManager.waitForServerReadyAsync(mapping)).thenReturn(readiness);
+
+        PlayerHarness player = player("waiting-player");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+
+        CompletableFuture<ManualStopOutcome> stopFuture =
+                coordinator.requestManualStop(mapping, targetServer);
+        assertEquals(ManualStopOutcome.WAITERS_PRESENT, stopFuture.join());
+        verify(serverManager, never()).stopServer(any(ServerMapping.class));
+    }
+
+    @Test
+    void manualStop_Success_TransitionsToStopped() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+
+        CompletableFuture<ManualStopOutcome> stopFuture =
+                coordinator.requestManualStop(mapping, targetServer);
+        assertEquals(ManualStopOutcome.STOPPED, stopFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.STOPPED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStop_DockerFailure_TransitionsToFailed() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.INACCESSIBLE);
+
+        CompletableFuture<ManualStopOutcome> stopFuture =
+                coordinator.requestManualStop(mapping, targetServer);
+        assertEquals(ManualStopOutcome.DOCKER_INACCESSIBLE, stopFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStop_ImmediatePreDockerRace_AbortsWhenPlayerConnects() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected())
+                .thenReturn(List.of())
+                .thenReturn(List.of(player.player));
+
+        CompletableFuture<ManualStopOutcome> stopFuture =
+                coordinator.requestManualStop(mapping, targetServer);
+
+        assertEquals(ManualStopOutcome.PLAYERS_CONNECTED, stopFuture.join());
+        verify(serverManager, never()).stopServer(any(ServerMapping.class));
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualRestart_RefusedWhenPlayersConnected() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of(player.player));
+
+        CompletableFuture<ManualRestartOutcome> restartFuture =
+                coordinator.requestManualRestart(mapping, targetServer);
+        assertEquals(ManualRestartOutcome.PLAYERS_CONNECTED, restartFuture.join());
+        verify(serverManager, never()).stopServer(any(ServerMapping.class));
+    }
+
+    @Test
+    void manualRestart_FromReady_ExecutesStopThenStartAndReadiness() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ReadinessResult.ready(1)));
+
+        CompletableFuture<ManualRestartOutcome> restartFuture =
+                coordinator.requestManualRestart(mapping, targetServer);
+        assertEquals(ManualRestartOutcome.RESTARTED_AND_READY, restartFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualRestart_FromStopped_ExecutesStartAndReadiness() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ReadinessResult.ready(1)));
+
+        CompletableFuture<ManualRestartOutcome> restartFuture =
+                coordinator.requestManualRestart(mapping, targetServer);
+        assertEquals(ManualRestartOutcome.RESTARTED_AND_READY, restartFuture.join());
+        verify(serverManager, never()).stopServer(any(ServerMapping.class));
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualRestart_StopFails_HaltsSequenceAndTransitionsToFailed() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.FAILED);
+
+        CompletableFuture<ManualRestartOutcome> restartFuture =
+                coordinator.requestManualRestart(mapping, targetServer);
+        assertEquals(ManualRestartOutcome.STOP_FAILED, restartFuture.join());
+        verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualRestart_ReadinessFails_TransitionsToFailed() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ReadinessResult.failure(ReadinessResult.Outcome.TIMED_OUT, 1, null)));
+
+        CompletableFuture<ManualRestartOutcome> restartFuture =
+                coordinator.requestManualRestart(mapping, targetServer);
+        assertEquals(ManualRestartOutcome.SERVER_NOT_READY, restartFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStart_ContainerMissing() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.MISSING)));
+
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertEquals(ManualStartOutcome.CONTAINER_MISSING, startFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStart_DockerInaccessible() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.INACCESSIBLE)));
+
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertEquals(ManualStartOutcome.DOCKER_INACCESSIBLE, startFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStart_StartTimedOut() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.TIMED_OUT));
+
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertEquals(ManualStartOutcome.START_TIMED_OUT, startFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStart_ReadinessFails() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ReadinessResult.failure(ReadinessResult.Outcome.TIMED_OUT, 1, null)));
+
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertEquals(ManualStartOutcome.SERVER_NOT_READY, startFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStop_StopTimedOut() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.TIMED_OUT);
+
+        CompletableFuture<ManualStopOutcome> stopFuture =
+                coordinator.requestManualStop(mapping, targetServer);
+        assertEquals(ManualStopOutcome.STOP_TIMED_OUT, stopFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualRestart_ContainerMissing() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.MISSING);
+
+        CompletableFuture<ManualRestartOutcome> restartFuture =
+                coordinator.requestManualRestart(mapping, targetServer);
+        assertEquals(ManualRestartOutcome.CONTAINER_MISSING, restartFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualRestart_DockerInaccessible() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.INACCESSIBLE);
+
+        CompletableFuture<ManualRestartOutcome> restartFuture =
+                coordinator.requestManualRestart(mapping, targetServer);
+        assertEquals(ManualRestartOutcome.DOCKER_INACCESSIBLE, restartFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualRestart_StopTimedOut() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.TIMED_OUT);
+
+        CompletableFuture<ManualRestartOutcome> restartFuture =
+                coordinator.requestManualRestart(mapping, targetServer);
+        assertEquals(ManualRestartOutcome.STOP_TIMED_OUT, restartFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualRestart_StartTimedOut() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.TIMED_OUT));
+
+        CompletableFuture<ManualRestartOutcome> restartFuture =
+                coordinator.requestManualRestart(mapping, targetServer);
+        assertEquals(ManualRestartOutcome.START_TIMED_OUT, restartFuture.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+    }
+
+    @Test
+    void hold_Release_IsHeld_Delegation() {
+        assertFalse(coordinator.isHeld("survival"));
+        assertTrue(coordinator.hold(mapping));
+        assertTrue(coordinator.isHeld("survival"));
+        assertFalse(coordinator.hold(mapping));
+        assertTrue(coordinator.release("survival"));
+        assertFalse(coordinator.isHeld("survival"));
+        assertFalse(coordinator.release("survival"));
+    }
+
+    @Test
+    void manualStop_ConvenienceOverload_UsesServerManagerLookup() {
+        when(serverManager.getServer("survival")).thenReturn(Optional.of(targetServer));
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+
+        CompletableFuture<ManualStopOutcome> stopFuture = coordinator.requestManualStop(mapping);
+        assertEquals(ManualStopOutcome.STOPPED, stopFuture.join());
+    }
+
+    @Test
+    void manualRestart_ConvenienceOverload_UsesServerManagerLookup() {
+        when(serverManager.getServer("survival")).thenReturn(Optional.of(targetServer));
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ReadinessResult.ready(1)));
+
+        CompletableFuture<ManualRestartOutcome> restartFuture = coordinator.requestManualRestart(mapping);
+        assertEquals(ManualRestartOutcome.RESTARTED_AND_READY, restartFuture.join());
+    }
+
     private PlayerHarness player(String name) {
         Player player = mock(Player.class, name);
         ConnectionRequestBuilder request = mock(ConnectionRequestBuilder.class, name + "-request");

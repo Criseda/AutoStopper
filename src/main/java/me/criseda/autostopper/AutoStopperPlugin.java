@@ -18,6 +18,7 @@ import me.criseda.autostopper.docker.ProcessCommandRunner;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.listeners.ServerPreConnectListener;
+import me.criseda.autostopper.lifecycle.ServerHoldRegistry;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.operational.OperationalStatusService;
 import me.criseda.autostopper.server.ActivityTracker;
@@ -68,7 +69,7 @@ public class AutoStopperPlugin {
 		// Initialize server management
 		this.executor = createExecutor();
 		this.serverManager = createServerManager(config, executor);
-		this.lifecycleCoordinator = createLifecycleCoordinator(serverManager);
+		this.lifecycleCoordinator = createLifecycleCoordinator(serverManager, executor);
 		this.operationalStatus = createOperationalStatusService(serverManager, lifecycleCoordinator);
 		
 		// Initialize activity tracking but DON'T start the inactivity check yet
@@ -145,6 +146,11 @@ public class AutoStopperPlugin {
     protected ActivityTracker createActivityTracker(AutoStopperConfig config, ServerManager serverManager,
             AutoStopperExecutor executor, ServerLifecycleCoordinator lifecycleCoordinator) {
         return new ActivityTracker(server, logger, config, serverManager, executor, this, lifecycleCoordinator);
+    }
+
+    protected ServerLifecycleCoordinator createLifecycleCoordinator(ServerManager serverManager,
+            AutoStopperExecutor executor) {
+        return new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(), executor);
     }
 
     protected ServerLifecycleCoordinator createLifecycleCoordinator(ServerManager serverManager) {

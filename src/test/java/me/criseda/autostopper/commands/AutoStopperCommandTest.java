@@ -59,6 +59,8 @@ public class AutoStopperCommandTest {
     private PluginDescription pluginDescription;
 
     private AutoStopperCommand command;
+    private me.criseda.autostopper.lifecycle.ServerHoldRegistry holdRegistry;
+    private me.criseda.autostopper.server.ServerManager serverManager;
 
     @BeforeEach
     public void setup() {
@@ -67,6 +69,10 @@ public class AutoStopperCommandTest {
         lenient().when(source.getPermissionValue(anyString())).thenReturn(Tristate.UNDEFINED);
         lenient().when(operationalStatus.runPreflight(any(), anyString()))
                 .thenReturn(CompletableFuture.completedFuture(new PreflightSummary(1, 0)));
+        holdRegistry = new me.criseda.autostopper.lifecycle.ServerHoldRegistry();
+        lenient().when(lifecycleCoordinator.hold(any())).thenAnswer(inv -> holdRegistry.hold(inv.getArgument(0)));
+        lenient().when(lifecycleCoordinator.release(anyString())).thenAnswer(inv -> holdRegistry.release(inv.getArgument(0)));
+        lenient().when(lifecycleCoordinator.isHeld(anyString())).thenAnswer(inv -> holdRegistry.isHeld(inv.getArgument(0)));
 
         command = new AutoStopperCommand(
                 config, activityTracker, lifecycleCoordinator,
@@ -112,7 +118,7 @@ public class AutoStopperCommandTest {
         command.execute(invocation);
 
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(5)).sendMessage(messageCaptor.capture());
+        verify(source, times(10)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(plainText(messages.get(0)).contains("AutoStopper Commands"));
@@ -120,6 +126,11 @@ public class AutoStopperCommandTest {
         assertTrue(plainText(messages.get(2)).contains("/autostopper help"));
         assertTrue(plainText(messages.get(3)).contains("/autostopper status"));
         assertTrue(plainText(messages.get(4)).contains("/autostopper reload"));
+        assertTrue(plainText(messages.get(5)).contains("/autostopper start <server>"));
+        assertTrue(plainText(messages.get(6)).contains("/autostopper stop <server>"));
+        assertTrue(plainText(messages.get(7)).contains("/autostopper restart <server>"));
+        assertTrue(plainText(messages.get(8)).contains("/autostopper hold <server>"));
+        assertTrue(plainText(messages.get(9)).contains("/autostopper release <server>"));
     }
 
     @Test
@@ -394,10 +405,15 @@ public class AutoStopperCommandTest {
 
         List<String> suggestions = command.suggest(invocation);
 
-        assertEquals(3, suggestions.size());
+        assertEquals(8, suggestions.size());
         assertTrue(suggestions.contains("help"));
         assertTrue(suggestions.contains("status"));
         assertTrue(suggestions.contains("reload"));
+        assertTrue(suggestions.contains("start"));
+        assertTrue(suggestions.contains("stop"));
+        assertTrue(suggestions.contains("restart"));
+        assertTrue(suggestions.contains("hold"));
+        assertTrue(suggestions.contains("release"));
     }
 
     @Test
@@ -481,6 +497,326 @@ public class AutoStopperCommandTest {
         assertTrue(status.contains("2026-08-12T12:00:00Z"));
         assertTrue(status.contains("Grant Docker socket access"));
         assertFalse(status.contains("/var/run/docker.sock"));
+    }
+
+    @Test
+    public void testExecuteStart_PermissionDenied() {
+        deny(AutoStopperCommand.START_PERMISSION);
+        command.execute(mockInvocation(source, new String[]{"start", "survival"}));
+        assertPermissionDenied("start a server");
+    }
+
+    @Test
+    public void testExecuteStart_MissingArgs() {
+        grant(AutoStopperCommand.START_PERMISSION);
+        command.execute(mockInvocation(source, new String[]{"start"}));
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Usage: /autostopper start <server>"));
+    }
+
+    @Test
+    public void testExecuteStart_UnmappedServer() {
+        grant(AutoStopperCommand.START_PERMISSION);
+        when(config.snapshot()).thenReturn(snapshot("survival"));
+        command.execute(mockInvocation(source, new String[]{"start", "creative"}));
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Server creative is not mapped in AutoStopper."));
+    }
+
+    @Test
+    public void testExecuteStart_Success() {
+        grant(AutoStopperCommand.START_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualStart(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(me.criseda.autostopper.lifecycle.ManualStartOutcome.READY));
+
+        command.execute(mockInvocation(source, new String[]{"start", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(captor.capture());
+        List<Component> messages = captor.getAllValues();
+        assertTrue(plainText(messages.get(0)).contains("Waking survival"));
+        assertTrue(plainText(messages.get(1)).contains("Server survival is now ready!"));
+    }
+
+    @Test
+    public void testExecuteStart_AlreadyReady() {
+        grant(AutoStopperCommand.START_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualStart(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(me.criseda.autostopper.lifecycle.ManualStartOutcome.ALREADY_READY));
+
+        command.execute(mockInvocation(source, new String[]{"start", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(captor.capture());
+        List<Component> messages = captor.getAllValues();
+        assertTrue(plainText(messages.get(0)).contains("Waking survival"));
+        assertTrue(plainText(messages.get(1)).contains("Server survival is already ready."));
+    }
+
+    @Test
+    public void testExecuteStop_PermissionDenied() {
+        deny(AutoStopperCommand.STOP_PERMISSION);
+        command.execute(mockInvocation(source, new String[]{"stop", "survival"}));
+        assertPermissionDenied("stop a server");
+    }
+
+    @Test
+    public void testExecuteStop_MissingArgs() {
+        grant(AutoStopperCommand.STOP_PERMISSION);
+        command.execute(mockInvocation(source, new String[]{"stop"}));
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Usage: /autostopper stop <server>"));
+    }
+
+    @Test
+    public void testExecuteStop_UnmappedServer() {
+        grant(AutoStopperCommand.STOP_PERMISSION);
+        when(config.snapshot()).thenReturn(snapshot("survival"));
+        command.execute(mockInvocation(source, new String[]{"stop", "creative"}));
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Server creative is not mapped in AutoStopper."));
+    }
+
+    @Test
+    public void testExecuteStop_Success() {
+        grant(AutoStopperCommand.STOP_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualStop(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(me.criseda.autostopper.lifecycle.ManualStopOutcome.STOPPED));
+
+        command.execute(mockInvocation(source, new String[]{"stop", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(captor.capture());
+        List<Component> messages = captor.getAllValues();
+        assertTrue(plainText(messages.get(0)).contains("Stopping survival"));
+        assertTrue(plainText(messages.get(1)).contains("Stopped server survival"));
+        verify(activityTracker).removeActivity("survival");
+    }
+
+    @Test
+    public void testExecuteStop_RefusedPlayers() {
+        grant(AutoStopperCommand.STOP_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualStop(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(me.criseda.autostopper.lifecycle.ManualStopOutcome.PLAYERS_CONNECTED));
+
+        command.execute(mockInvocation(source, new String[]{"stop", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(captor.capture());
+        List<Component> messages = captor.getAllValues();
+        assertTrue(plainText(messages.get(0)).contains("Stopping survival"));
+        assertTrue(plainText(messages.get(1)).contains("Cannot stop server survival"));
+        assertTrue(plainText(messages.get(1)).contains("currently connected"));
+    }
+
+    @Test
+    public void testExecuteRestart_PermissionDenied() {
+        deny(AutoStopperCommand.RESTART_PERMISSION);
+        command.execute(mockInvocation(source, new String[]{"restart", "survival"}));
+        assertPermissionDenied("restart a server");
+    }
+
+    @Test
+    public void testExecuteRestart_Success() {
+        grant(AutoStopperCommand.RESTART_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualRestart(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(me.criseda.autostopper.lifecycle.ManualRestartOutcome.RESTARTED_AND_READY));
+
+        command.execute(mockInvocation(source, new String[]{"restart", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(captor.capture());
+        List<Component> messages = captor.getAllValues();
+        assertTrue(plainText(messages.get(0)).contains("Restarting survival"));
+        assertTrue(plainText(messages.get(1)).contains("Restarted server survival"));
+    }
+
+    @Test
+    public void testExecuteHold_Success() {
+        grant(AutoStopperCommand.HOLD_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+
+        command.execute(mockInvocation(source, new String[]{"hold", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Automatic shutdown held for server survival."));
+        assertTrue(holdRegistry.isHeld("survival"));
+    }
+
+    @Test
+    public void testExecuteHold_AlreadyActive() {
+        grant(AutoStopperCommand.HOLD_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        holdRegistry.hold(snapshot.server("survival").orElseThrow());
+
+        command.execute(mockInvocation(source, new String[]{"hold", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Automatic shutdown is already held for server survival."));
+    }
+
+    @Test
+    public void testExecuteRelease_Success() {
+        grant(AutoStopperCommand.RELEASE_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        holdRegistry.hold(snapshot.server("survival").orElseThrow());
+
+        command.execute(mockInvocation(source, new String[]{"release", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Automatic shutdown hold released for server survival."));
+        assertFalse(holdRegistry.isHeld("survival"));
+        verify(activityTracker).updateActivity("survival");
+    }
+
+    @Test
+    public void testExecuteRelease_NotActive() {
+        grant(AutoStopperCommand.RELEASE_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+
+        command.execute(mockInvocation(source, new String[]{"release", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Server survival does not have an active hold."));
+    }
+
+    @Test
+    public void testSuggest_SubcommandsWithPermissions() {
+        grant(AutoStopperCommand.START_PERMISSION);
+        grant(AutoStopperCommand.STOP_PERMISSION);
+        grant(AutoStopperCommand.RESTART_PERMISSION);
+        grant(AutoStopperCommand.HOLD_PERMISSION);
+        grant(AutoStopperCommand.RELEASE_PERMISSION);
+
+        List<String> suggestions = command.suggest(mockInvocation(source, new String[]{""}));
+        assertTrue(suggestions.contains("start"));
+        assertTrue(suggestions.contains("stop"));
+        assertTrue(suggestions.contains("restart"));
+        assertTrue(suggestions.contains("hold"));
+        assertTrue(suggestions.contains("release"));
+    }
+
+    @Test
+    public void testSuggest_ServerNamesForSubcommands() {
+        grant(AutoStopperCommand.START_PERMISSION);
+        when(config.snapshot()).thenReturn(snapshot("survival", "creative", "skyblock"));
+
+        List<String> suggestions = command.suggest(mockInvocation(source, new String[]{"start", "s"}));
+        assertEquals(List.of("skyblock", "survival"), suggestions);
+    }
+
+    @Test
+    public void testAdminPermissionUmbrellaForSubcommands() {
+        grant(AutoStopperCommand.ADMIN_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+
+        command.execute(mockInvocation(source, new String[]{"hold", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Automatic shutdown held for server survival."));
+    }
+
+    @Test
+    public void testExecuteStart_FailureOutcomes() {
+        grant(AutoStopperCommand.START_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+
+        for (me.criseda.autostopper.lifecycle.ManualStartOutcome outcome : me.criseda.autostopper.lifecycle.ManualStartOutcome.values()) {
+            if (outcome == me.criseda.autostopper.lifecycle.ManualStartOutcome.READY
+                    || outcome == me.criseda.autostopper.lifecycle.ManualStartOutcome.ALREADY_READY) {
+                continue;
+            }
+            when(lifecycleCoordinator.requestManualStart(snapshot.server("survival").orElseThrow()))
+                    .thenReturn(CompletableFuture.completedFuture(outcome));
+
+            command.execute(mockInvocation(source, new String[]{"start", "survival"}));
+        }
+
+        // Also test exceptional completion
+        when(lifecycleCoordinator.requestManualStart(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("boom")));
+        command.execute(mockInvocation(source, new String[]{"start", "survival"}));
+    }
+
+    @Test
+    public void testExecuteStop_FailureOutcomes() {
+        grant(AutoStopperCommand.STOP_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+
+        for (me.criseda.autostopper.lifecycle.ManualStopOutcome outcome : me.criseda.autostopper.lifecycle.ManualStopOutcome.values()) {
+            if (outcome == me.criseda.autostopper.lifecycle.ManualStopOutcome.STOPPED
+                    || outcome == me.criseda.autostopper.lifecycle.ManualStopOutcome.ALREADY_STOPPED) {
+                continue;
+            }
+            when(lifecycleCoordinator.requestManualStop(snapshot.server("survival").orElseThrow()))
+                    .thenReturn(CompletableFuture.completedFuture(outcome));
+
+            command.execute(mockInvocation(source, new String[]{"stop", "survival"}));
+        }
+
+        // Exceptional completion
+        when(lifecycleCoordinator.requestManualStop(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("boom")));
+        command.execute(mockInvocation(source, new String[]{"stop", "survival"}));
+    }
+
+    @Test
+    public void testExecuteRestart_FailureOutcomes() {
+        grant(AutoStopperCommand.RESTART_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+
+        for (me.criseda.autostopper.lifecycle.ManualRestartOutcome outcome : me.criseda.autostopper.lifecycle.ManualRestartOutcome.values()) {
+            if (outcome == me.criseda.autostopper.lifecycle.ManualRestartOutcome.RESTARTED_AND_READY) {
+                continue;
+            }
+            when(lifecycleCoordinator.requestManualRestart(snapshot.server("survival").orElseThrow()))
+                    .thenReturn(CompletableFuture.completedFuture(outcome));
+
+            command.execute(mockInvocation(source, new String[]{"restart", "survival"}));
+        }
+
+        // Exceptional completion
+        when(lifecycleCoordinator.requestManualRestart(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("boom")));
+        command.execute(mockInvocation(source, new String[]{"restart", "survival"}));
+    }
+
+    @Test
+    public void testSuggest_ServerNamesForOtherCommands() {
+        grant(AutoStopperCommand.ADMIN_PERMISSION);
+        when(config.snapshot()).thenReturn(snapshot("survival", "creative"));
+
+        assertEquals(List.of("survival"), command.suggest(mockInvocation(source, new String[]{"stop", "s"})));
+        assertEquals(List.of("survival"), command.suggest(mockInvocation(source, new String[]{"restart", "s"})));
+        assertEquals(List.of("survival"), command.suggest(mockInvocation(source, new String[]{"hold", "s"})));
+        assertEquals(List.of("survival"), command.suggest(mockInvocation(source, new String[]{"release", "s"})));
     }
 
     private OperationalServerStatus operational(OperationalState state) {

@@ -190,12 +190,17 @@ for the complete contract.
 | `/autostopper help` | None | Shows only commands the source may use, with click-to-suggest for players. |
 | `/autostopper status` | `autostopper.command.status` or `autostopper.admin` | Shows scannable, deterministic operational status for all mapped backends. |
 | `/autostopper reload` | `autostopper.command.reload` or `autostopper.admin` | Atomically validates, applies, and preflights the new configuration. |
+| `/autostopper start <server>` | `autostopper.command.start` or `autostopper.admin` | Starts the mapped backend container and awaits verified readiness. |
+| `/autostopper stop <server>` | `autostopper.command.stop` or `autostopper.admin` | Stops the mapped backend container; refused if players or waiters are present. |
+| `/autostopper restart <server>` | `autostopper.command.restart` or `autostopper.admin` | Atomically stops (if running), starts, and awaits readiness for the mapped server. |
+| `/autostopper hold <server>` | `autostopper.command.hold` or `autostopper.admin` | Sets a runtime hold suppressing automatic inactivity shutdown. |
+| `/autostopper release <server>` | `autostopper.command.release` or `autostopper.admin` | Releases an active runtime hold, resuming normal inactivity evaluation. |
 
-`autostopper.admin` is an explicit umbrella. If it is granted, it authorizes both restricted
+`autostopper.admin` is an explicit umbrella. If it is granted, it authorizes all restricted
 commands even when a command-specific node is not granted. Automatic starts and stops have no
 player permission node; normal Velocity connection rules still apply. AutoStopper does not register
-or replace `/server`, does not check or change `velocity.command.server`, and exposes no manual
-start or stop command.
+or replace `/server` and does not check or change `velocity.command.server`. All operator lifecycle
+operations route strictly through the shared coordinator and validate empty-server invariants.
 
 ## Building and verification
 

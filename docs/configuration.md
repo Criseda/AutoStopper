@@ -151,5 +151,34 @@ them; results captured before a reload, mapping replacement, or newer lifecycle 
 discarded rather than applied to newer state. Startup and reload inspect Docker mappings but do
 not eagerly readiness-probe every running backend.
 
+When a runtime hold is active on a server, `/autostopper status` displays a `held` badge (e.g.
+`● survival   Ready · held; active 2m ago`).
+
 Raw Docker stderr is deliberately restricted to operator logs and is never copied into player
 messages.
+
+## Operator lifecycle commands and runtime holds
+
+AutoStopper provides operator commands to manage mapped backend containers directly:
+
+- `/autostopper start <server>` (`autostopper.command.start`): Starts the mapped backend container
+  and awaits verified readiness. If the server is already ready, returns immediately.
+- `/autostopper stop <server>` (`autostopper.command.stop`): Stops the mapped backend container.
+  Refused if players are connected or waiters are queued, preventing accidental player disconnection.
+- `/autostopper restart <server>` (`autostopper.command.restart`): Atomically stops (if running),
+  starts, and awaits readiness under a single coordinator-owned future. Refused if players are
+  connected or waiters are queued.
+- `/autostopper hold <server>` (`autostopper.command.hold`): Sets a runtime hold that suppresses
+  automatic inactivity shutdown without preventing manual commands or player connections.
+- `/autostopper release <server>` (`autostopper.command.release`): Releases an active hold, returning
+  the server to normal inactivity evaluation.
+
+### Hold lifecycle and reload semantics
+
+Runtime holds:
+- Are maintained in memory by `ServerHoldRegistry`.
+- Survive unchanged configuration reloads (`/autostopper reload`).
+- Are automatically cleared when a server mapping is removed or changed in `config.yml`.
+- Are cleared on proxy shutdown or restart.
+- Do not persist across proxy process restarts (configuration-driven persistent pinning is not
+  supported; unmanaged servers should simply not be included in `monitored_servers`).

@@ -138,6 +138,7 @@ public class AutoStopperPluginTest {
         AutoStopperExecutor mockExecutor = mock(AutoStopperExecutor.class);
         ConfigSnapshot initialSnapshot = ConfigSnapshot.emptyDefault();
         when(mockConfig.loadConfig()).thenReturn(ConfigLoadResult.success(initialSnapshot));
+        lenient().when(mockConfig.snapshot()).thenReturn(initialSnapshot);
         
         // Create a partial mock of the plugin to stub out the object creation
         AutoStopperPlugin spyPlugin = spy(plugin);
@@ -146,7 +147,7 @@ public class AutoStopperPluginTest {
         doReturn(mockConfig).when(spyPlugin).createConfig();
         doReturn(mockExecutor).when(spyPlugin).createExecutor();
         doReturn(mockServerManager).when(spyPlugin).createServerManager(mockConfig, mockExecutor);
-        doReturn(mockLifecycleCoordinator).when(spyPlugin).createLifecycleCoordinator(mockServerManager);
+        doReturn(mockLifecycleCoordinator).when(spyPlugin).createLifecycleCoordinator(mockServerManager, mockExecutor);
         doReturn(mockOperationalStatus).when(spyPlugin)
                 .createOperationalStatusService(mockServerManager, mockLifecycleCoordinator);
         doReturn(mockActivityTracker).when(spyPlugin)
