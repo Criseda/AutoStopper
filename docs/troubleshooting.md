@@ -10,7 +10,7 @@ docker compose exec velocity docker version
 docker compose exec velocity docker inspect purpur-server
 ```
 
-`RUNNING_UNVERIFIED` is expected when Docker reports a mapped container running but AutoStopper has
+`RUNNING_UNVERIFIED` (`Running · readiness unverified`) is expected when Docker reports a mapped container running but AutoStopper has
 not completed the configured readiness check for that mapping in the current proxy process. This
 commonly appears after a proxy restart while a backend remains running. It is not a failure and it
 does not bypass readiness: the next player or manual start request performs the configured bounded

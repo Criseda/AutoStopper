@@ -54,10 +54,13 @@ public final class MessageCompatibilityProbe {
         if (type == String.class) {
             return "compatibility-probe";
         }
-        if (type == int.class) {
+        if (type == boolean.class || type == Boolean.class) {
+            return true;
+        }
+        if (type == int.class || type == Integer.class) {
             return 1;
         }
-        if (type == Long.class) {
+        if (type == Long.class || type == long.class) {
             return 1L;
         }
         if (type == Duration.class) {

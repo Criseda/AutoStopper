@@ -29,7 +29,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.time.Instant;
 
 import static me.criseda.autostopper.testing.ComponentTestUtils.plainText;
 import static org.junit.jupiter.api.Assertions.*;
@@ -40,7 +39,7 @@ public class AutoStopperCommandTest {
 
     @Mock
     private AutoStopperConfig config;
-    
+
     @Mock
     private ActivityTracker activityTracker;
 
@@ -49,7 +48,7 @@ public class AutoStopperCommandTest {
 
     @Mock
     private OperationalStatusService operationalStatus;
-    
+
     @Mock
     private CommandSource source;
 
@@ -58,9 +57,9 @@ public class AutoStopperCommandTest {
 
     @Mock
     private PluginDescription pluginDescription;
-    
+
     private AutoStopperCommand command;
-    
+
     @BeforeEach
     public void setup() {
         lenient().when(pluginContainer.getDescription()).thenReturn(pluginDescription);
@@ -68,66 +67,59 @@ public class AutoStopperCommandTest {
         lenient().when(source.getPermissionValue(anyString())).thenReturn(Tristate.UNDEFINED);
         lenient().when(operationalStatus.runPreflight(any(), anyString()))
                 .thenReturn(CompletableFuture.completedFuture(new PreflightSummary(1, 0)));
-        
+
         command = new AutoStopperCommand(
                 config, activityTracker, lifecycleCoordinator,
                 operationalStatus, pluginContainer);
     }
-    
+
     @Test
     public void testExecuteWithNoArgs() {
-        // Arrange
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{});
-        
-        // Act
+
         command.execute(invocation);
-        
-        // Assert
+
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(2)).sendMessage(messageCaptor.capture());
-        
+        verify(source, times(3)).sendMessage(messageCaptor.capture());
+
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(plainText(messages.get(0)).contains("AutoStopper 1.1.2"));
-        assertTrue(plainText(messages.get(1)).contains("help"));
+        assertTrue(plainText(messages.get(1)).contains("Empty servers sleep. Players wake them."));
+        assertTrue(plainText(messages.get(2)).contains("help"));
     }
 
     @Test
     public void testExecuteWithNoArgs_UnknownVersion() {
-        // Arrange
         when(pluginDescription.getVersion()).thenReturn(Optional.empty());
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{});
-        
-        // Act
+
         command.execute(invocation);
-        
-        // Assert
+
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(2)).sendMessage(messageCaptor.capture());
-        
+        verify(source, times(3)).sendMessage(messageCaptor.capture());
+
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(plainText(messages.get(0)).contains("AutoStopper Unknown"));
-        assertTrue(plainText(messages.get(1)).contains("help"));
+        assertTrue(plainText(messages.get(1)).contains("Empty servers sleep. Players wake them."));
+        assertTrue(plainText(messages.get(2)).contains("help"));
     }
-    
+
     @Test
     public void testExecuteHelpCommand() {
-        // Arrange
         grant(AutoStopperCommand.ADMIN_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"help"});
-        
-        // Act
+
         command.execute(invocation);
-        
-        // Assert
+
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(5)).sendMessage(messageCaptor.capture());
-        
+
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(plainText(messages.get(0)).contains("Help"));
+        assertTrue(plainText(messages.get(0)).contains("AutoStopper Commands"));
         assertTrue(plainText(messages.get(1)).contains("/autostopper"));
-        assertTrue(plainText(messages.get(2)).contains("help"));
-        assertTrue(plainText(messages.get(3)).contains("status"));
-        assertTrue(plainText(messages.get(4)).contains("reload"));
+        assertTrue(plainText(messages.get(2)).contains("/autostopper help"));
+        assertTrue(plainText(messages.get(3)).contains("/autostopper status"));
+        assertTrue(plainText(messages.get(4)).contains("/autostopper reload"));
     }
 
     @Test
@@ -139,19 +131,17 @@ public class AutoStopperCommandTest {
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(3)).sendMessage(messageCaptor.capture());
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(plainText(messages.get(0)).contains("Help"));
+        assertTrue(plainText(messages.get(0)).contains("AutoStopper Commands"));
         assertTrue(plainText(messages.get(1)).contains("/autostopper"));
-        assertTrue(plainText(messages.get(2)).contains("help"));
+        assertTrue(plainText(messages.get(2)).contains("/autostopper help"));
         assertTrue(messages.stream().noneMatch(message -> plainText(message).contains("status")));
         assertTrue(messages.stream().noneMatch(message -> plainText(message).contains("reload")));
     }
-    
+
     @Test
     public void testExecuteStatusCommand_RunningServerWithActivity() {
-        // Arrange
         grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
-        String[] serverNames = {"server1", "server2"};
 
         ConfigSnapshot snapshot = snapshot("server1", "server2");
         when(config.snapshot()).thenReturn(snapshot);
@@ -160,31 +150,27 @@ public class AutoStopperCommandTest {
         when(activityTracker.getLastActivity("server1")).thenReturn(Instant.now().minusSeconds(300));
         when(activityTracker.getMinutesSinceActivity("server1")).thenReturn(5L);
 
-        // Act - command returns immediately, statuses arrive asynchronously
         command.execute(invocation);
         statuses.complete(Map.of(
                 "server1", operational(OperationalState.READY),
                 "server2", operational(OperationalState.STOPPED)));
 
-        // Assert
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(3)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(plainText(messages.get(0)).contains("Status"));
+        assertTrue(plainText(messages.get(0)).contains("Server status"));
         assertTrue(plainText(messages.get(1)).contains("server1"));
-        assertTrue(plainText(messages.get(1)).contains("READY"));
-        assertTrue(plainText(messages.get(1)).contains("5 minutes"));
+        assertTrue(plainText(messages.get(1)).contains("Ready"));
+        assertTrue(plainText(messages.get(1)).contains("active 5m ago"));
         assertTrue(plainText(messages.get(2)).contains("server2"));
-        assertTrue(plainText(messages.get(2)).contains("STOPPED"));
+        assertTrue(plainText(messages.get(2)).contains("Sleeping"));
     }
-    
+
     @Test
     public void testExecuteStatusCommand_RunningServerWithNoActivity() {
-        // Arrange
         grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
-        String[] serverNames = {"server1"};
 
         ConfigSnapshot snapshot = snapshot("server1");
         when(config.snapshot()).thenReturn(snapshot);
@@ -192,21 +178,18 @@ public class AutoStopperCommandTest {
         when(operationalStatus.collectStatuses(snapshot)).thenReturn(statuses);
         when(activityTracker.getLastActivity("server1")).thenReturn(null);
 
-        // Act
         command.execute(invocation);
         statuses.complete(Map.of("server1", operational(OperationalState.READY)));
 
-        // Assert
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(2)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(plainText(messages.get(1)).contains("No activity recorded"));
+        assertTrue(plainText(messages.get(1)).contains("no activity recorded"));
     }
-    
+
     @Test
     public void testExecuteStatusCommand_DistinctTypedStates() {
-        // Arrange
         grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
         String[] serverNames = {"s-stopped", "s-starting", "s-ready", "s-unverified", "s-stopping", "s-failed", "s-docker"};
@@ -216,7 +199,6 @@ public class AutoStopperCommandTest {
         CompletableFuture<Map<String, OperationalServerStatus>> statuses = new CompletableFuture<>();
         when(operationalStatus.collectStatuses(snapshot)).thenReturn(statuses);
 
-        // Act
         command.execute(invocation);
         statuses.complete(new java.util.LinkedHashMap<>(Map.of(
                 "s-stopped", operational(OperationalState.STOPPED),
@@ -227,37 +209,32 @@ public class AutoStopperCommandTest {
                 "s-failed", operational(OperationalState.FAILED),
                 "s-docker", operational(OperationalState.DOCKER_UNAVAILABLE))));
 
-        // Assert
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(8)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(plainText(messages.get(1)).contains("STOPPED"));
-        assertTrue(plainText(messages.get(2)).contains("STARTING"));
-        assertTrue(plainText(messages.get(3)).contains("READY"));
-        assertTrue(plainText(messages.get(4)).contains("RUNNING_UNVERIFIED"));
-        assertTrue(plainText(messages.get(5)).contains("STOPPING"));
-        assertTrue(plainText(messages.get(6)).contains("FAILED"));
-        assertTrue(plainText(messages.get(7)).contains("DOCKER_UNAVAILABLE"));
+        assertTrue(plainText(messages.get(1)).contains("Unavailable · Docker cannot be reached")); // s-docker (sorted first)
+        assertTrue(plainText(messages.get(2)).contains("Failed")); // s-failed
+        assertTrue(plainText(messages.get(3)).contains("Ready")); // s-ready
+        assertTrue(plainText(messages.get(4)).contains("Waking")); // s-starting
+        assertTrue(plainText(messages.get(5)).contains("Sleeping")); // s-stopped
+        assertTrue(plainText(messages.get(6)).contains("Stopping")); // s-stopping
+        assertTrue(plainText(messages.get(7)).contains("Running · readiness unverified")); // s-unverified
     }
 
     @Test
     public void testExecuteStatusCommand_StatusCollectionFails() {
-        // Arrange
         grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
-        String[] serverNames = {"server1"};
 
         ConfigSnapshot snapshot = snapshot("server1");
         when(config.snapshot()).thenReturn(snapshot);
         CompletableFuture<Map<String, OperationalServerStatus>> statuses = new CompletableFuture<>();
         when(operationalStatus.collectStatuses(snapshot)).thenReturn(statuses);
 
-        // Act
         command.execute(invocation);
         statuses.completeExceptionally(new RuntimeException("daemon exploded"));
 
-        // Assert
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(2)).sendMessage(messageCaptor.capture());
         List<Component> messages = messageCaptor.getAllValues();
@@ -298,29 +275,26 @@ public class AutoStopperCommandTest {
         command.execute(invocation);
 
         verify(operationalStatus).collectStatuses(snapshot);
-        verify(source).sendMessage(argThat(message -> plainText(message).contains("Status")));
+        verify(source).sendMessage(argThat(message -> plainText(message).contains("Server status")));
     }
-    
+
     @Test
     public void testExecuteReloadCommand() {
-        // Arrange
         grant(AutoStopperCommand.RELOAD_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"reload"});
         ConfigSnapshot previous = snapshot("server1");
         ConfigSnapshot current = snapshot("server2");
         when(config.snapshot()).thenReturn(previous);
         when(config.loadConfig()).thenReturn(ConfigLoadResult.success(current));
-        
-        // Act
+
         command.execute(invocation);
-        
-        // Assert
+
         verify(config).loadConfig();
         verify(lifecycleCoordinator).reconcileConfig(previous, current);
         verify(activityTracker).reconcileConfig(previous, current);
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source, times(3)).sendMessage(messageCaptor.capture());
-        
+
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(plainText(messages.get(0)).contains("Reloading"));
         assertTrue(plainText(messages.get(1)).contains("reloaded successfully"));
@@ -383,76 +357,76 @@ public class AutoStopperCommandTest {
         verify(lifecycleCoordinator).reconcileConfig(previous, current);
         verify(activityTracker).reconcileConfig(previous, current);
     }
-    
+
     @Test
-    public void testExecuteUnknownCommand() {
-        // Arrange
-        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"unknown"});
-        
-        // Act
+    public void testExecuteUnknownCommand_ClosestMatchSuggestion() {
+        grant(AutoStopperCommand.ADMIN_PERMISSION);
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"statsu"});
+
         command.execute(invocation);
-        
-        // Assert
+
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
         verify(source).sendMessage(messageCaptor.capture());
-        
-        // Now we expect the "Unknown command" message
-        assertTrue(plainText(messageCaptor.getValue()).contains("Unknown command"));
+
+        String message = plainText(messageCaptor.getValue());
+        assertTrue(message.contains("Unknown command 'statsu'"));
+        assertTrue(message.contains("Did you mean /autostopper status?"));
     }
-    
+
+    @Test
+    public void testExecuteUnknownCommand_NoCloseMatchShowsHelpHint() {
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"xyzabc"});
+
+        command.execute(invocation);
+
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(messageCaptor.capture());
+
+        String message = plainText(messageCaptor.getValue());
+        assertTrue(message.contains("Unknown command 'xyzabc'"));
+        assertTrue(message.contains("Use /autostopper help"));
+    }
+
     @Test
     public void testSuggest_FirstArgument() {
-        // Arrange
         grant(AutoStopperCommand.ADMIN_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{""});
-        
-        // Act
+
         List<String> suggestions = command.suggest(invocation);
-        
-        // Assert
-        // Now expecting all three commands as suggestions when input is empty/partial
+
         assertEquals(3, suggestions.size());
         assertTrue(suggestions.contains("help"));
         assertTrue(suggestions.contains("status"));
         assertTrue(suggestions.contains("reload"));
     }
-    
+
     @Test
     public void testSuggest_WithoutPermission() {
-        // Arrange
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{""});
-        
-        // Act
+
         List<String> suggestions = command.suggest(invocation);
-        
-        // Assert
+
         assertEquals(List.of("help"), suggestions);
     }
-    
+
     @Test
     public void testSuggest_SecondArgument() {
-        // Arrange
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"help", ""});
-        
-        // Act
+
         List<String> suggestions = command.suggest(invocation);
-        
-        // Assert
+
         assertTrue(suggestions.isEmpty());
     }
-    
+
     @Test
     public void testHasPermission() {
-        // Arrange
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{});
-        
-        // Act
+
         boolean result = command.hasPermission(invocation);
-        
-        // Assert - We now expect true since we updated the hasPermission method
+
         assertTrue(result, "hasPermission should always return true to show commands in tab completion");
     }
-    
+
     private SimpleCommand.Invocation mockInvocation(CommandSource source, String[] args) {
         SimpleCommand.Invocation invocation = mock(SimpleCommand.Invocation.class);
         lenient().when(invocation.source()).thenReturn(source);
@@ -503,7 +477,7 @@ public class AutoStopperCommandTest {
         ArgumentCaptor<Component> messages = ArgumentCaptor.forClass(Component.class);
         verify(source, times(2)).sendMessage(messages.capture());
         String status = plainText(messages.getAllValues().get(1));
-        assertTrue(status.contains("DOCKER_UNAVAILABLE"));
+        assertTrue(status.contains("Unavailable · Docker cannot be reached"));
         assertTrue(status.contains("2026-08-12T12:00:00Z"));
         assertTrue(status.contains("Grant Docker socket access"));
         assertFalse(status.contains("/var/run/docker.sock"));
