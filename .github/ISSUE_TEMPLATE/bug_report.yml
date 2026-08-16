@@ -26,7 +26,7 @@ body:
     attributes:
       label: AutoStopper version
       description: Version shown by `/autostopper` or in the JAR manifest, and the download source (GitHub Releases or Modrinth).
-      placeholder: "2.0.0 from GitHub Releases, checksum verified"
+      placeholder: "2.1.0 from GitHub Releases, checksum verified"
     validations:
       required: true
   - type: input

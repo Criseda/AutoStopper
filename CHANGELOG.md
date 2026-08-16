@@ -2,7 +2,7 @@
 
 All notable AutoStopper changes are documented here.
 
-## [Unreleased]
+## [2.1.0] - 2026-08-16
 
 ### Added
 
@@ -30,7 +30,7 @@ All notable AutoStopper changes are documented here.
   ready until AutoStopper has completed the configured readiness contract for the current mapping
   lifecycle.
 - Connecting players now receive authoritative inspection, startup, readiness, connection, and
-  terminal lifecycle messages. Late arrivals see the current shared stage and unique waiter count,
+  terminal lifecycle messages. Late arrivals see the current shared stage and unique waiter count.
 - Redesigned command and chat presentation around the brand identity ("Empty servers sleep. Players wake them."). Replaced legacy bracketed prefixes with clean brand prompts (`AutoStopper ›`, `AutoStopper ✓`, `AutoStopper !`), added scannable deterministic status rows with humanized states and durations, and introduced permission-filtered help with fuzzy command matching.
 - Added contributor-facing message style guide (`docs/message-style-guide.md`).
 - Added structured, typed lifecycle telemetry and bounded process-lifetime observability (#74). Authoritative
@@ -111,5 +111,6 @@ mappings, pinned examples, and Docker security boundary all require operator rev
 
 - Last 1.x migration source and prototype release tag.
 
+[2.1.0]: https://github.com/Criseda/AutoStopper/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/Criseda/AutoStopper/compare/1.1.2...2.0.0
 [1.1.2]: https://github.com/Criseda/AutoStopper/releases/tag/1.1.2

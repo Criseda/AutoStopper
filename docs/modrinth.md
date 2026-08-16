@@ -1,4 +1,4 @@
-# Modrinth listing source for AutoStopper 2.0.0
+# Modrinth listing source for AutoStopper 2.1.0
 
 This file is the repository-reviewed source for the Modrinth project and version metadata. The
 project-page copy and gallery were applied by the maintainer on 2026-08-13. The protected release
@@ -11,7 +11,7 @@ the source of truth for future listing reviews.
 
 ## Project metadata
 
-| Field | 2.0.0 value |
+| Field | 2.1.0 value |
 |---|---|
 | Project type | Plugin |
 | Loader/platform | Velocity |
@@ -41,11 +41,11 @@ so the published project page uses its own gallery asset.
 
 ## Version metadata
 
-| Field | 2.0.0 value |
+| Field | 2.1.0 value |
 |---|---|
-| Version number | `2.0.0` |
-| Version title | `AutoStopper 2.0.0` |
-| Version type | Release only after all Phase 4 gates pass |
+| Version number | `2.1.0` |
+| Version title | `AutoStopper 2.1.0` |
+| Version type | Release |
 | Loader | Velocity |
 | Java | Java 21 bytecode; validated proxy runtimes are Java 21 and Java 25 as paired below |
 | Compatible Minecraft range | Java Edition 1.7.2 through 26.2 when used through a supported Velocity runtime |
@@ -203,9 +203,9 @@ and install the same validated JAR published here and on GitHub Releases.
 
 ---
 
-## 2.0.0 version changelog
+## 2.1.0 version changelog
 
-The protected release workflow derives the version changelog from the dated `2.0.0` section of
+The protected release workflow derives the version changelog from the dated `2.1.0` section of
 [`CHANGELOG.md`](../CHANGELOG.md) and the game-version list from the `minecraftVersionRange` in
 [`release-metadata.json`](../release/release-metadata.json). The Modrinth file hash, GitHub asset
 hash, tag, POM version, Velocity descriptor version, and changelog version must all agree. See

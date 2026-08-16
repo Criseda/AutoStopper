@@ -2,7 +2,7 @@
 
 ## Project Direction & Architecture
 
-AutoStopper is moving from the 1.1.2 prototype to a supportable 2.0.0. GitHub issue #18 is the authoritative implementation order and release checklist. Phases 0-2 are complete; preserve Velocity 3/4 compatibility, explicit mappings, off-thread bounded I/O, atomic configuration, typed outcomes, the shared lifecycle, real readiness, retry semantics, bounded shutdown, and diagnostics. Do not call the project production-ready until all Phase 3 and 4 gates pass.
+AutoStopper is a production-ready, readiness-aware Docker lifecycle management plugin for Velocity networks. Master is the sole authoritative development and release branch. Preserve Velocity 3/4 compatibility, explicit mappings, off-thread bounded I/O, atomic configuration, typed outcomes, the shared lifecycle coordinator, real readiness, retry semantics, bounded shutdown, and structured telemetry diagnostics.
 
 ## Project Structure & Module Organization
 
@@ -10,11 +10,11 @@ Production code is under `src/main/java/me/criseda/autostopper` in responsibilit
 
 ## Build, Test, and Development Commands
 
-- `mvn clean verify` is the current complete local verification command.
-- `mvn clean package` creates the shaded plugin JAR under `target/`.
+- `.\mvnw.cmd verify` (Windows) or `./mvnw verify` (POSIX) is the canonical local verification entry point.
+- `.\mvnw.cmd package` creates the shaded plugin JAR under `target/`.
 - `.\smoke\run-smoke.ps1` tests all pinned Velocity profiles; use `-Profile legacy`, `stable`, or `preview` to select one.
 
-Use JDK 21+. After issue #15 lands, use the pinned Wrapper (`.\mvnw.cmd verify` or `./mvnw verify`) as the canonical entry point.
+Use JDK 21+.
 
 ## Coding Style & Safety Invariants
 
@@ -22,11 +22,11 @@ Use four spaces, UTF-8, lowercase packages, `PascalCase` types, `camelCase` memb
 
 ## Testing Guidelines
 
-Use JUnit 5 and Mockito; name classes `<ProductionClass>Test`. Cover production and failure behavior at the owning layer. Add deterministic tests for concurrency, timeouts, cancellation, reload, and shutdown races. Validate the shaded JAR for packaging changes. Smoke tests prove loadability, not live Docker behavior; issue #25 owns the exact-candidate Docker/Compose/Minecraft gate. Phase 3 separately adds integration tests, SpotBugs, coverage gates, and CI.
+Use JUnit 5 and Mockito; name classes `<ProductionClass>Test`. Cover production and failure behavior at the owning layer. Add deterministic tests for concurrency, timeouts, cancellation, reload, and shutdown races. Validate the shaded JAR for packaging changes. Smoke tests prove loadability, not live Docker behavior; the release-candidate E2E workflow owns the exact-candidate Docker/Compose/Minecraft gate.
 
 ## Commits & Pull Requests
 
-Use short imperative subjects. Name branches by intent, using prefixes such as `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, or `chore/`; include the primary issue and a concise topic when useful, for example `chore/15-reproducible-build`. Keep one primary roadmap issue per branch and draft PR, targeting `master` until issue #17 establishes the final branch strategy. Link and close exactly one primary issue where practical. PRs must document behavior, risks, public/configuration impact, and every local verification command run. Update README, examples, migration notes, or smoke pins when their contracts change.
+Use short imperative subjects. Name branches by intent, using prefixes such as `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, or `chore/`; include the primary issue and a concise topic when useful, for example `chore/release-2.1.0`. Keep one primary roadmap issue per branch and draft PR, targeting `master`. Link and close exactly one primary issue where practical. PRs must document behavior, risks, public/configuration impact, and every local verification command run. Update README, examples, migration notes, or smoke pins when their contracts change.
 
 ## Security
 

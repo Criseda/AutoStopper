@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>me.criseda</groupId>
     <artifactId>AutoStopper</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
     <name>AutoStopper</name>
     <description>A Velocity plugin that starts and stops Minecraft Docker containers based on player activity.</description>
     <url>https://github.com/Criseda/AutoStopper</url>

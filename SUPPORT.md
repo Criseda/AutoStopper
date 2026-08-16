@@ -20,8 +20,8 @@ time, and there is no separate paid or prioritized channel.
 ## Supported versions
 
 Only the current release is supported. That release is
-[2.0.0](https://github.com/Criseda/AutoStopper/releases/tag/2.0.0) at the time of writing; older
-releases, including 1.1.2, are unsupported and receive no fixes. Users of 1.1.2 must follow the
+[2.1.0](https://github.com/Criseda/AutoStopper/releases/tag/2.1.0) at the time of writing; older
+releases, including 1.1.2 and 2.0.0, are unsupported and receive no fixes. Users of older versions must follow the
 [migration guide](docs/migration-1.1.2-to-2.0.0.md) before replacing the artifact.
 
 Install only from the project's GitHub or Modrinth release pages and verify the published SHA-256
