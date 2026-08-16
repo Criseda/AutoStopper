@@ -242,6 +242,81 @@ class AutoStopperMessagesTest {
         }
     }
 
+    @Test
+    void operationalStatus_IncludesHeldDetail() {
+        OperationalServerStatus heldReady = new OperationalServerStatus(
+                OperationalState.READY, 0, Optional.empty(), true);
+        OperationalServerStatus heldWaking = new OperationalServerStatus(
+                OperationalState.STARTING, 1, Optional.empty(), true);
+
+        assertEquals("● survival   Ready · held; active 5m ago",
+                plainText(AutoStopperMessages.operationalStatus("survival", heldReady, 5L)));
+        assertEquals("◐ creative   Waking · held; 1 player waiting",
+                plainText(AutoStopperMessages.operationalStatus("creative", heldWaking, null)));
+    }
+
+    @Test
+    void manualCommandMessages_RenderExpectedTextAndTokens() {
+        Component starting = AutoStopperMessages.manualStartStarting("survival");
+        Component alreadyReady = AutoStopperMessages.manualStartAlreadyReady("survival");
+        Component ready = AutoStopperMessages.manualStartSucceeded("survival", Duration.ofSeconds(2));
+        Component stopping = AutoStopperMessages.manualStopStopping("survival");
+        Component alreadyStopped = AutoStopperMessages.manualStopAlreadyStopped("survival");
+        Component stopped = AutoStopperMessages.manualStopSucceeded("survival", Duration.ofSeconds(1));
+        Component stopRefused = AutoStopperMessages.manualStopRefusedPlayers("survival", 2);
+        Component stopRefusedWaiters = AutoStopperMessages.manualStopRefusedWaiters("survival");
+        Component restarting = AutoStopperMessages.manualRestartRestarting("survival");
+        Component restarted = AutoStopperMessages.manualRestartSucceeded("survival", Duration.ofSeconds(3));
+        Component holdApplied = AutoStopperMessages.holdApplied("survival");
+        Component holdAlready = AutoStopperMessages.holdAlreadyActive("survival");
+        Component holdReleased = AutoStopperMessages.holdReleased("survival");
+        Component holdNot = AutoStopperMessages.holdNotActive("survival");
+        Component unmapped = AutoStopperMessages.unmappedServer("unknown");
+
+        assertEquals("AutoStopper › Waking survival…", plainText(starting));
+        assertEquals("AutoStopper ✓ Server survival is already ready.", plainText(alreadyReady));
+        assertEquals("AutoStopper ✓ Server survival is now ready! · 2s", plainText(ready));
+        assertEquals("AutoStopper › Stopping survival…", plainText(stopping));
+        assertEquals("AutoStopper ✓ Server survival is already sleeping.", plainText(alreadyStopped));
+        assertEquals("AutoStopper ✓ Stopped server survival · 1s", plainText(stopped));
+        assertEquals("AutoStopper ! Cannot stop server survival: 2 players are currently connected.", plainText(stopRefused));
+        assertEquals("AutoStopper ! Cannot stop server survival: players are waiting to connect.", plainText(stopRefusedWaiters));
+        assertEquals("AutoStopper › Restarting survival…", plainText(restarting));
+        assertEquals("AutoStopper ✓ Restarted server survival · 3s", plainText(restarted));
+        assertEquals("AutoStopper ✓ Automatic shutdown held for server survival.", plainText(holdApplied));
+        assertEquals("AutoStopper › Automatic shutdown is already held for server survival.", plainText(holdAlready));
+        assertEquals("AutoStopper ✓ Automatic shutdown hold released for server survival.", plainText(holdReleased));
+        assertEquals("AutoStopper › Server survival does not have an active hold.", plainText(holdNot));
+        assertEquals("AutoStopper ! Server unknown is not mapped in AutoStopper.", plainText(unmapped));
+    }
+
+    @Test
+    void manualCommandFailureMessages_RenderExpectedText() {
+        Component startFail = AutoStopperMessages.manualStartFailed("survival",
+                AutoStopperMessages.startFailed("survival"), Duration.ofSeconds(5));
+        Component stopFail = AutoStopperMessages.manualStopFailed("survival",
+                AutoStopperMessages.stopFailed("survival"));
+        Component restartFail = AutoStopperMessages.manualRestartFailed("survival",
+                AutoStopperMessages.startFailed("survival"), Duration.ofSeconds(10));
+        Component stopTimedOut = AutoStopperMessages.stopTimedOut("survival");
+        Component stopFailed = AutoStopperMessages.stopFailed("survival");
+
+        assertTrue(plainText(startFail).contains("Waited 5s."));
+        assertTrue(plainText(stopFail).contains("Failed to stop server survival."));
+        assertTrue(plainText(restartFail).contains("Waited 10s."));
+        assertTrue(plainText(stopTimedOut).contains("Timed out stopping server survival."));
+        assertTrue(plainText(stopFailed).contains("Failed to stop server survival."));
+    }
+
+    @Test
+    void formatElapsed_FormatsVariousDurations() {
+        assertEquals("500 ms", AutoStopperMessages.formatElapsed(Duration.ofMillis(500)));
+        assertEquals("1.5s", AutoStopperMessages.formatElapsed(Duration.ofMillis(1500)));
+        assertEquals("2s", AutoStopperMessages.formatElapsed(Duration.ofSeconds(2)));
+        assertEquals("1m 30s", AutoStopperMessages.formatElapsed(Duration.ofSeconds(90)));
+        assertEquals("2m", AutoStopperMessages.formatElapsed(Duration.ofMinutes(2)));
+    }
+
     private static void assertColor(Component component, String content, TextColor expected) {
         TextComponent text = findText(component, content);
         assertNotNull(text, "Missing text component containing: " + content);

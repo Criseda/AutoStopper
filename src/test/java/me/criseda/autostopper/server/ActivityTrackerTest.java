@@ -12,6 +12,7 @@ import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.config.StopRetrySettings;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.lifecycle.ServerHoldRegistry;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,6 +59,7 @@ public class ActivityTrackerTest {
 
     private ActivityTracker activityTracker;
     private AutoStopperExecutor executor;
+    private ServerHoldRegistry holdRegistry;
     private ServerMapping mapping1;
     private ServerMapping mapping2;
 
@@ -67,6 +69,8 @@ public class ActivityTrackerTest {
         mapping1 = new ServerMapping("server1", "container1");
         mapping2 = new ServerMapping("server2", "container2");
         when(config.snapshot()).thenReturn(new ConfigSnapshot(300, List.of(mapping1, mapping2)));
+        holdRegistry = new me.criseda.autostopper.lifecycle.ServerHoldRegistry();
+        lenient().when(lifecycleCoordinator.isHeld(anyString())).thenAnswer(inv -> holdRegistry.isHeld(inv.getArgument(0)));
         lenient().when(lifecycleCoordinator.tryBeginStop(any(ServerMapping.class))).thenReturn(true);
         
         executor = new AutoStopperExecutor();
@@ -623,6 +627,36 @@ public class ActivityTrackerTest {
         assertEquals(0, tracker.getFailedStopAttemptsForTest("server1"));
         verify(logger).warn(contains("Stop retries exhausted"), eq("server1"), eq(2),
                 eq(ContainerStatus.FAILED));
+    }
+
+    @Test
+    public void testInactivityCheck_SkipsStopWhenServerIsHeld() {
+        RegisteredServer registeredServer1 = mock(RegisteredServer.class);
+        RegisteredServer registeredServer2 = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(registeredServer1));
+        when(proxyServer.getServer("server2")).thenReturn(Optional.of(registeredServer2));
+        when(registeredServer1.getPlayersConnected()).thenReturn(Collections.emptyList());
+        when(registeredServer2.getPlayersConnected()).thenReturn(Collections.emptyList());
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        when(serverManager.getServerStatus(mapping2)).thenReturn(Optional.of(ContainerStatus.RUNNING));
+
+        Instant start = Instant.parse("2026-08-16T12:00:00Z");
+        MutableClock clock = new MutableClock(start);
+        ActivityTracker tracker = new ActivityTracker(
+                proxyServer, logger, config, serverManager, executor, plugin, lifecycleCoordinator, clock);
+
+        // Put hold on server1
+        holdRegistry.hold(mapping1);
+
+        // Fast forward 6 minutes (inactivity timeout is 5 min)
+        clock.advance(Duration.ofMinutes(6));
+
+        tracker.requestInactivityCheck().join();
+
+        // server1 is held, so stopServer should NOT be called for mapping1
+        verify(serverManager, never()).stopServer(mapping1);
+        // server2 is NOT held, so stopServer should be called for mapping2
+        verify(serverManager).stopServer(mapping2);
     }
 
     private void runAndWait(Runnable inactivityCheck) {

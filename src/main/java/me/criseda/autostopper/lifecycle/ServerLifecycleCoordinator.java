@@ -48,6 +48,8 @@ public final class ServerLifecycleCoordinator {
 
     private final Logger logger;
     private final ServerManager serverManager;
+    private final ServerHoldRegistry holdRegistry;
+    private final AutoStopperExecutor executor;
     private final LongSupplier nanoTime;
     private final Map<String, LifecycleEntry> lifecycles = new ConcurrentHashMap<>();
     private final Set<ReconnectPermit> reconnectPermits = ConcurrentHashMap.newKeySet();
@@ -55,14 +57,44 @@ public final class ServerLifecycleCoordinator {
     private final AtomicLong lifecycleRevision = new AtomicLong();
     private final Object shutdownLock = new Object();
 
+    public ServerLifecycleCoordinator(Logger logger, ServerManager serverManager,
+            ServerHoldRegistry holdRegistry, AutoStopperExecutor executor) {
+        this(logger, serverManager, holdRegistry, executor, System::nanoTime);
+    }
+
     public ServerLifecycleCoordinator(Logger logger, ServerManager serverManager) {
-        this(logger, serverManager, System::nanoTime);
+        this(logger, serverManager, new ServerHoldRegistry(), new AutoStopperExecutor(), System::nanoTime);
     }
 
     ServerLifecycleCoordinator(Logger logger, ServerManager serverManager, LongSupplier nanoTime) {
+        this(logger, serverManager, new ServerHoldRegistry(), new AutoStopperExecutor(), nanoTime);
+    }
+
+    ServerLifecycleCoordinator(Logger logger, ServerManager serverManager,
+            ServerHoldRegistry holdRegistry, AutoStopperExecutor executor, LongSupplier nanoTime) {
         this.logger = Objects.requireNonNull(logger, "logger");
         this.serverManager = Objects.requireNonNull(serverManager, "serverManager");
+        this.holdRegistry = Objects.requireNonNull(holdRegistry, "holdRegistry");
+        this.executor = Objects.requireNonNull(executor, "executor");
         this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime");
+    }
+
+    public boolean isHeld(String serverName) {
+        return holdRegistry.isHeld(serverName);
+    }
+
+    public boolean hold(ServerMapping mapping) {
+        return holdRegistry.hold(mapping);
+    }
+
+    public boolean release(String serverName) {
+        return holdRegistry.release(serverName);
+    }
+
+    public int connectedPlayerCount(String serverName) {
+        return serverManager.getServer(serverName)
+                .map(server -> server.getPlayersConnected().size())
+                .orElse(0);
     }
 
     public boolean consumeReconnectPermit(Player player, String serverName) {
@@ -170,6 +202,271 @@ public final class ServerLifecycleCoordinator {
         }
         drainNotifications(admission.waiter);
         return admission.waiter.future;
+    }
+
+    public CompletableFuture<ManualStartOutcome> requestManualStart(ServerMapping mapping) {
+        Objects.requireNonNull(mapping, "mapping");
+        if (shutdown.get()) {
+            return CompletableFuture.completedFuture(ManualStartOutcome.PROXY_SHUTDOWN);
+        }
+
+        AtomicReference<ManualStartAdmission> admitted = new AtomicReference<>();
+        synchronized (shutdownLock) {
+            lifecycles.compute(mapping.serverName(), (serverName, current) -> {
+                if (shutdown.get()) {
+                    admitted.set(ManualStartAdmission.rejected(ManualStartOutcome.PROXY_SHUTDOWN));
+                    return current;
+                }
+                LifecycleEntry entry = current;
+                if (entry == null) {
+                    entry = new LifecycleEntry(mapping, nextRevision());
+                }
+
+                synchronized (entry) {
+                    if (!entry.mapping.equals(mapping)) {
+                        if (entry.isBusy()) {
+                            admitted.set(ManualStartAdmission.rejected(ManualStartOutcome.MAPPING_CHANGED));
+                            return entry;
+                        }
+                        entry = new LifecycleEntry(mapping, nextRevision());
+                    } else if (entry.retired && !entry.isBusy()) {
+                        entry.retired = false;
+                    }
+
+                    if (entry.retired) {
+                        admitted.set(ManualStartAdmission.rejected(ManualStartOutcome.MAPPING_CHANGED));
+                        return entry;
+                    }
+                    if (entry.state == ServerLifecycleState.STOPPING) {
+                        admitted.set(ManualStartAdmission.rejected(ManualStartOutcome.SERVER_STOPPING));
+                        return entry;
+                    }
+                    if (entry.state == ServerLifecycleState.READY) {
+                        admitted.set(ManualStartAdmission.completed(ManualStartOutcome.ALREADY_READY));
+                        return entry;
+                    }
+                    if (entry.state == ServerLifecycleState.STARTING && entry.startupFuture != null) {
+                        admitted.set(ManualStartAdmission.track(entry.startupFuture));
+                        return entry;
+                    }
+
+                    transition(entry, ServerLifecycleState.STARTING);
+                    entry.progressStage = ConnectionLifecycleStage.INSPECTING;
+                    CompletableFuture<StartupOutcome> operation = new CompletableFuture<>();
+                    entry.startupFuture = operation;
+                    admitted.set(ManualStartAdmission.start(entry, operation));
+                    return entry;
+                }
+            });
+        }
+
+        ManualStartAdmission admission = admitted.get();
+        if (admission == null) {
+            return CompletableFuture.completedFuture(ManualStartOutcome.START_FAILED);
+        }
+        if (admission.rejectedOutcome != null) {
+            return CompletableFuture.completedFuture(admission.rejectedOutcome);
+        }
+        if (admission.completedOutcome != null) {
+            return CompletableFuture.completedFuture(admission.completedOutcome);
+        }
+        if (admission.launchStartup) {
+            launchStatusCheck(admission.entry, mapping, admission.startupFuture);
+        }
+        return admission.startupFuture.thenApply(this::toManualStartOutcome)
+                .exceptionally(this::exceptionalStartOutcome);
+    }
+
+    public CompletableFuture<ManualStopOutcome> requestManualStop(ServerMapping mapping) {
+        Objects.requireNonNull(mapping, "mapping");
+        RegisteredServer registered = serverManager.getServer(mapping.serverName()).orElse(null);
+        return requestManualStop(mapping, registered);
+    }
+
+    public CompletableFuture<ManualStopOutcome> requestManualStop(ServerMapping mapping,
+            RegisteredServer registeredServer) {
+        Objects.requireNonNull(mapping, "mapping");
+        if (shutdown.get()) {
+            return CompletableFuture.completedFuture(ManualStopOutcome.PROXY_SHUTDOWN);
+        }
+
+        AtomicReference<ManualStopAdmission> admitted = new AtomicReference<>();
+        synchronized (shutdownLock) {
+            lifecycles.compute(mapping.serverName(), (serverName, current) -> {
+                if (shutdown.get()) {
+                    admitted.set(ManualStopAdmission.rejected(ManualStopOutcome.PROXY_SHUTDOWN));
+                    return current;
+                }
+                LifecycleEntry entry = current;
+                if (entry == null) {
+                    entry = new LifecycleEntry(mapping, nextRevision());
+                }
+
+                synchronized (entry) {
+                    if (!entry.mapping.equals(mapping)) {
+                        if (entry.isBusy()) {
+                            admitted.set(ManualStopAdmission.rejected(ManualStopOutcome.MAPPING_CHANGED));
+                            return entry;
+                        }
+                        entry = new LifecycleEntry(mapping, nextRevision());
+                    } else if (entry.retired && !entry.isBusy()) {
+                        entry.retired = false;
+                    }
+
+                    if (entry.retired) {
+                        admitted.set(ManualStopAdmission.rejected(ManualStopOutcome.MAPPING_CHANGED));
+                        return entry;
+                    }
+                    if (registeredServer != null && !registeredServer.getPlayersConnected().isEmpty()) {
+                        admitted.set(ManualStopAdmission.rejected(ManualStopOutcome.PLAYERS_CONNECTED));
+                        return entry;
+                    }
+                    if (!entry.waiters.isEmpty()) {
+                        admitted.set(ManualStopAdmission.rejected(ManualStopOutcome.WAITERS_PRESENT));
+                        return entry;
+                    }
+                    if (entry.state == ServerLifecycleState.STARTING) {
+                        admitted.set(ManualStopAdmission.rejected(ManualStopOutcome.SERVER_STARTING));
+                        return entry;
+                    }
+                    if (entry.state == ServerLifecycleState.STOPPING) {
+                        admitted.set(ManualStopAdmission.rejected(ManualStopOutcome.SERVER_STOPPING));
+                        return entry;
+                    }
+                    if (entry.state == ServerLifecycleState.STOPPED) {
+                        admitted.set(ManualStopAdmission.completed(ManualStopOutcome.ALREADY_STOPPED));
+                        return entry;
+                    }
+
+                    transition(entry, ServerLifecycleState.STOPPING);
+                    CompletableFuture<ManualStopOutcome> operation = new CompletableFuture<>();
+                    entry.activeOperation = operation;
+                    admitted.set(ManualStopAdmission.start(entry, operation));
+                    return entry;
+                }
+            });
+        }
+
+        ManualStopAdmission admission = admitted.get();
+        if (admission == null) {
+            return CompletableFuture.completedFuture(ManualStopOutcome.STOP_FAILED);
+        }
+        if (admission.rejectedOutcome != null) {
+            return CompletableFuture.completedFuture(admission.rejectedOutcome);
+        }
+        if (admission.completedOutcome != null) {
+            return CompletableFuture.completedFuture(admission.completedOutcome);
+        }
+
+        executeManualStop(admission.entry, mapping, registeredServer, admission.stopFuture);
+        return admission.stopFuture;
+    }
+
+    public CompletableFuture<ManualRestartOutcome> requestManualRestart(ServerMapping mapping) {
+        Objects.requireNonNull(mapping, "mapping");
+        RegisteredServer registered = serverManager.getServer(mapping.serverName()).orElse(null);
+        return requestManualRestart(mapping, registered);
+    }
+
+    public CompletableFuture<ManualRestartOutcome> requestManualRestart(ServerMapping mapping,
+            RegisteredServer registeredServer) {
+        Objects.requireNonNull(mapping, "mapping");
+        if (shutdown.get()) {
+            return CompletableFuture.completedFuture(ManualRestartOutcome.PROXY_SHUTDOWN);
+        }
+
+        AtomicReference<ManualRestartAdmission> admitted = new AtomicReference<>();
+        synchronized (shutdownLock) {
+            lifecycles.compute(mapping.serverName(), (serverName, current) -> {
+                if (shutdown.get()) {
+                    admitted.set(ManualRestartAdmission.rejected(ManualRestartOutcome.PROXY_SHUTDOWN));
+                    return current;
+                }
+                LifecycleEntry entry = current;
+                if (entry == null) {
+                    entry = new LifecycleEntry(mapping, nextRevision());
+                }
+
+                synchronized (entry) {
+                    if (!entry.mapping.equals(mapping)) {
+                        if (entry.isBusy()) {
+                            admitted.set(ManualRestartAdmission.rejected(ManualRestartOutcome.MAPPING_CHANGED));
+                            return entry;
+                        }
+                        entry = new LifecycleEntry(mapping, nextRevision());
+                    } else if (entry.retired && !entry.isBusy()) {
+                        entry.retired = false;
+                    }
+
+                    if (entry.retired) {
+                        admitted.set(ManualRestartAdmission.rejected(ManualRestartOutcome.MAPPING_CHANGED));
+                        return entry;
+                    }
+                    if (registeredServer != null && !registeredServer.getPlayersConnected().isEmpty()) {
+                        admitted.set(ManualRestartAdmission.rejected(ManualRestartOutcome.PLAYERS_CONNECTED));
+                        return entry;
+                    }
+                    if (!entry.waiters.isEmpty()) {
+                        admitted.set(ManualRestartAdmission.rejected(ManualRestartOutcome.WAITERS_PRESENT));
+                        return entry;
+                    }
+                    if (entry.state == ServerLifecycleState.STARTING) {
+                        admitted.set(ManualRestartAdmission.rejected(ManualRestartOutcome.SERVER_STARTING));
+                        return entry;
+                    }
+                    if (entry.state == ServerLifecycleState.STOPPING) {
+                        admitted.set(ManualRestartAdmission.rejected(ManualRestartOutcome.SERVER_STOPPING));
+                        return entry;
+                    }
+
+                    CompletableFuture<ManualRestartOutcome> operation = new CompletableFuture<>();
+                    entry.activeOperation = operation;
+                    if (entry.state == ServerLifecycleState.STOPPED) {
+                        transition(entry, ServerLifecycleState.STARTING);
+                        entry.progressStage = ConnectionLifecycleStage.INSPECTING;
+                        CompletableFuture<StartupOutcome> startupFuture = new CompletableFuture<>();
+                        entry.startupFuture = startupFuture;
+                        admitted.set(ManualRestartAdmission.startOnly(entry, operation, startupFuture));
+                        return entry;
+                    }
+
+                    transition(entry, ServerLifecycleState.STOPPING);
+                    admitted.set(ManualRestartAdmission.stopThenStart(entry, operation));
+                    return entry;
+                }
+            });
+        }
+
+        ManualRestartAdmission admission = admitted.get();
+        if (admission == null) {
+            return CompletableFuture.completedFuture(ManualRestartOutcome.STOP_FAILED);
+        }
+        if (admission.rejectedOutcome != null) {
+            return CompletableFuture.completedFuture(admission.rejectedOutcome);
+        }
+        if (admission.startOnly) {
+            launchStatusCheck(admission.entry, mapping, admission.startupFuture);
+            admission.startupFuture.whenComplete((outcome, error) -> {
+                synchronized (admission.entry) {
+                    if (admission.entry.activeOperation == admission.restartFuture) {
+                        admission.entry.activeOperation = null;
+                    }
+                }
+                if (error != null) {
+                    admission.restartFuture.complete(exceptionalRestartOutcome(error));
+                } else if (outcome != null && outcome.isReady()) {
+                    admission.restartFuture.complete(ManualRestartOutcome.RESTARTED_AND_READY);
+                } else if (outcome != null) {
+                    admission.restartFuture.complete(toManualRestartOutcome(outcome));
+                } else {
+                    admission.restartFuture.complete(ManualRestartOutcome.START_FAILED);
+                }
+            });
+            return admission.restartFuture;
+        }
+
+        executeManualRestart(admission.entry, mapping, registeredServer, admission.restartFuture);
+        return admission.restartFuture;
     }
 
     public void discardPlayer(Player player) {
@@ -321,6 +618,7 @@ public final class ServerLifecycleCoordinator {
         if (shutdown.get()) {
             return;
         }
+        holdRegistry.reconcileConfig(previous, current);
         for (String serverName : previous.serverNames()) {
             Optional<ServerMapping> currentMapping = current.server(serverName);
             lifecycles.computeIfPresent(serverName, (ignored, entry) -> {
@@ -421,6 +719,7 @@ public final class ServerLifecycleCoordinator {
             if (!shutdown.compareAndSet(false, true)) {
                 return;
             }
+            holdRegistry.clear();
             for (LifecycleEntry entry : lifecycles.values()) {
                 synchronized (entry) {
                     if (entry.activeOperation != null) {
@@ -1207,6 +1506,360 @@ public final class ServerLifecycleCoordinator {
         StartupOutcome(boolean ready, ConnectionOutcome connectionOutcome) {
             this.ready = ready;
             this.connectionOutcome = connectionOutcome;
+        }
+
+        boolean isReady() {
+            return ready;
+        }
+    }
+
+    private void executeManualStop(LifecycleEntry entry, ServerMapping mapping,
+            RegisteredServer registeredServer, CompletableFuture<ManualStopOutcome> stopFuture) {
+        try {
+            executor.supply(() -> {
+                synchronized (entry) {
+                    if (shutdown.get()) {
+                        abortStopUnderLock(entry, stopFuture, ManualStopOutcome.PROXY_SHUTDOWN);
+                        return ManualStopOutcome.PROXY_SHUTDOWN;
+                    }
+                    if (entry.activeOperation != stopFuture || entry.state != ServerLifecycleState.STOPPING) {
+                        abortStopUnderLock(entry, stopFuture, ManualStopOutcome.CANCELLED);
+                        return ManualStopOutcome.CANCELLED;
+                    }
+                    if (registeredServer != null && !registeredServer.getPlayersConnected().isEmpty()) {
+                        abortStopUnderLock(entry, stopFuture, ManualStopOutcome.PLAYERS_CONNECTED);
+                        return ManualStopOutcome.PLAYERS_CONNECTED;
+                    }
+                    if (!entry.waiters.isEmpty()) {
+                        abortStopUnderLock(entry, stopFuture, ManualStopOutcome.WAITERS_PRESENT);
+                        return ManualStopOutcome.WAITERS_PRESENT;
+                    }
+                }
+
+                ContainerStatus result = serverManager.stopServer(mapping);
+                return completeManualStop(entry, mapping, stopFuture, result);
+            }).exceptionally(error -> {
+                synchronized (entry) {
+                    abortStopUnderLock(entry, stopFuture, exceptionalStopOutcome(error));
+                }
+                return null;
+            });
+        } catch (AutoStopperExecutor.SaturationException e) {
+            synchronized (entry) {
+                abortStopUnderLock(entry, stopFuture, ManualStopOutcome.OVERLOADED);
+            }
+        } catch (RuntimeException e) {
+            synchronized (entry) {
+                abortStopUnderLock(entry, stopFuture, ManualStopOutcome.STOP_FAILED);
+            }
+        }
+    }
+
+    private ManualStopOutcome completeManualStop(LifecycleEntry entry, ServerMapping mapping,
+            CompletableFuture<ManualStopOutcome> operation, ContainerStatus result) {
+        synchronized (entry) {
+            if (shutdown.get() || entry.activeOperation != operation || entry.state != ServerLifecycleState.STOPPING) {
+                transition(entry, result == ContainerStatus.STOPPED
+                        ? ServerLifecycleState.STOPPED : ServerLifecycleState.FAILED);
+                operation.complete(ManualStopOutcome.PROXY_SHUTDOWN);
+                return ManualStopOutcome.PROXY_SHUTDOWN;
+            }
+            entry.activeOperation = null;
+            if (result == ContainerStatus.STOPPED) {
+                transition(entry, ServerLifecycleState.STOPPED);
+                entry.lastFailure = null;
+                operation.complete(ManualStopOutcome.STOPPED);
+                return ManualStopOutcome.STOPPED;
+            } else {
+                transition(entry, ServerLifecycleState.FAILED);
+                entry.lastFailure = failure("manual stop",
+                        "container stop failed with " + result,
+                        "Check Docker access and container state, then retry.");
+                ManualStopOutcome outcome = toManualStopOutcome(result);
+                operation.complete(outcome);
+                return outcome;
+            }
+        }
+    }
+
+    private void executeManualRestart(LifecycleEntry entry, ServerMapping mapping,
+            RegisteredServer registeredServer, CompletableFuture<ManualRestartOutcome> restartFuture) {
+        try {
+            executor.supply(() -> {
+                synchronized (entry) {
+                    if (shutdown.get()) {
+                        abortStopUnderLock(entry, restartFuture, ManualRestartOutcome.PROXY_SHUTDOWN);
+                        return null;
+                    }
+                    if (entry.activeOperation != restartFuture || entry.state != ServerLifecycleState.STOPPING) {
+                        abortStopUnderLock(entry, restartFuture, ManualRestartOutcome.CANCELLED);
+                        return null;
+                    }
+                    if (registeredServer != null && !registeredServer.getPlayersConnected().isEmpty()) {
+                        abortStopUnderLock(entry, restartFuture, ManualRestartOutcome.PLAYERS_CONNECTED);
+                        return null;
+                    }
+                    if (!entry.waiters.isEmpty()) {
+                        abortStopUnderLock(entry, restartFuture, ManualRestartOutcome.WAITERS_PRESENT);
+                        return null;
+                    }
+                }
+
+                ContainerStatus stopResult = serverManager.stopServer(mapping);
+                CompletableFuture<StartupOutcome> startupFuture;
+                synchronized (entry) {
+                    if (shutdown.get() || entry.activeOperation != restartFuture) {
+                        transition(entry, stopResult == ContainerStatus.STOPPED
+                                ? ServerLifecycleState.STOPPED : ServerLifecycleState.FAILED);
+                        restartFuture.complete(ManualRestartOutcome.PROXY_SHUTDOWN);
+                        return null;
+                    }
+                    if (stopResult != ContainerStatus.STOPPED) {
+                        transition(entry, ServerLifecycleState.FAILED);
+                        entry.lastFailure = failure("container stop during restart",
+                                "container stop failed with " + stopResult,
+                                "Check Docker access and container state, then retry.");
+                        entry.activeOperation = null;
+                        restartFuture.complete(toRestartStopFailure(stopResult));
+                        return null;
+                    }
+
+                    transition(entry, ServerLifecycleState.STOPPED);
+                    transition(entry, ServerLifecycleState.STARTING);
+                    entry.progressStage = ConnectionLifecycleStage.STARTING;
+                    startupFuture = new CompletableFuture<>();
+                    entry.startupFuture = startupFuture;
+                }
+
+                launchStart(entry, mapping, startupFuture);
+                startupFuture.whenComplete((outcome, error) -> {
+                    synchronized (entry) {
+                        if (entry.activeOperation == restartFuture) {
+                            entry.activeOperation = null;
+                        }
+                    }
+                    if (error != null) {
+                        restartFuture.complete(exceptionalRestartOutcome(error));
+                    } else if (outcome != null && outcome.isReady()) {
+                        restartFuture.complete(ManualRestartOutcome.RESTARTED_AND_READY);
+                    } else if (outcome != null) {
+                        restartFuture.complete(toManualRestartOutcome(outcome));
+                    } else {
+                        restartFuture.complete(ManualRestartOutcome.START_FAILED);
+                    }
+                });
+                return null;
+            }).exceptionally(error -> {
+                synchronized (entry) {
+                    abortStopUnderLock(entry, restartFuture, exceptionalRestartOutcome(error));
+                }
+                return null;
+            });
+        } catch (AutoStopperExecutor.SaturationException e) {
+            synchronized (entry) {
+                abortStopUnderLock(entry, restartFuture, ManualRestartOutcome.OVERLOADED);
+            }
+        } catch (RuntimeException e) {
+            synchronized (entry) {
+                abortStopUnderLock(entry, restartFuture, ManualRestartOutcome.STOP_FAILED);
+            }
+        }
+    }
+
+    private <T> void abortStopUnderLock(LifecycleEntry entry, CompletableFuture<T> operation, T outcome) {
+        if (entry.state == ServerLifecycleState.STOPPING) {
+            transition(entry, ServerLifecycleState.READY);
+        }
+        if (entry.activeOperation == operation) {
+            entry.activeOperation = null;
+        }
+        operation.complete(outcome);
+    }
+
+    private ManualStartOutcome toManualStartOutcome(StartupOutcome outcome) {
+        if (outcome == null) {
+            return ManualStartOutcome.START_FAILED;
+        }
+        return switch (outcome) {
+            case READY_RUNNING, READY_AFTER_START -> ManualStartOutcome.READY;
+            case STATUS_NO_MAPPING, CANCELLED -> ManualStartOutcome.CANCELLED;
+            case STATUS_MISSING, START_MISSING -> ManualStartOutcome.CONTAINER_MISSING;
+            case STATUS_INACCESSIBLE, START_INACCESSIBLE -> ManualStartOutcome.DOCKER_INACCESSIBLE;
+            case STATUS_TIMED_OUT -> ManualStartOutcome.STATUS_TIMED_OUT;
+            case STATUS_FAILED, STATUS_ERROR -> ManualStartOutcome.STATUS_FAILED;
+            case START_TIMED_OUT -> ManualStartOutcome.START_TIMED_OUT;
+            case START_FAILED, START_ERROR -> ManualStartOutcome.START_FAILED;
+            case NOT_READY, READINESS_ERROR -> ManualStartOutcome.SERVER_NOT_READY;
+            case OVERLOADED -> ManualStartOutcome.OVERLOADED;
+        };
+    }
+
+    private ManualStopOutcome toManualStopOutcome(ContainerStatus status) {
+        return switch (status) {
+            case STOPPED -> ManualStopOutcome.STOPPED;
+            case MISSING -> ManualStopOutcome.CONTAINER_MISSING;
+            case INACCESSIBLE -> ManualStopOutcome.DOCKER_INACCESSIBLE;
+            case TIMED_OUT -> ManualStopOutcome.STOP_TIMED_OUT;
+            case RUNNING, FAILED -> ManualStopOutcome.STOP_FAILED;
+        };
+    }
+
+    private ManualRestartOutcome toRestartStopFailure(ContainerStatus status) {
+        return switch (status) {
+            case STOPPED -> throw new IllegalArgumentException("stopped is not a failure");
+            case MISSING -> ManualRestartOutcome.CONTAINER_MISSING;
+            case INACCESSIBLE -> ManualRestartOutcome.DOCKER_INACCESSIBLE;
+            case TIMED_OUT -> ManualRestartOutcome.STOP_TIMED_OUT;
+            case RUNNING, FAILED -> ManualRestartOutcome.STOP_FAILED;
+        };
+    }
+
+    private ManualRestartOutcome toManualRestartOutcome(StartupOutcome outcome) {
+        if (outcome == null) {
+            return ManualRestartOutcome.START_FAILED;
+        }
+        return switch (outcome) {
+            case READY_RUNNING, READY_AFTER_START -> ManualRestartOutcome.RESTARTED_AND_READY;
+            case STATUS_NO_MAPPING, CANCELLED -> ManualRestartOutcome.CANCELLED;
+            case STATUS_MISSING, START_MISSING -> ManualRestartOutcome.CONTAINER_MISSING;
+            case STATUS_INACCESSIBLE, START_INACCESSIBLE -> ManualRestartOutcome.DOCKER_INACCESSIBLE;
+            case STATUS_TIMED_OUT, START_TIMED_OUT -> ManualRestartOutcome.START_TIMED_OUT;
+            case STATUS_FAILED, STATUS_ERROR, START_FAILED, START_ERROR -> ManualRestartOutcome.START_FAILED;
+            case NOT_READY, READINESS_ERROR -> ManualRestartOutcome.SERVER_NOT_READY;
+            case OVERLOADED -> ManualRestartOutcome.OVERLOADED;
+        };
+    }
+
+    private ManualStartOutcome exceptionalStartOutcome(Throwable error) {
+        Throwable cause = unwrap(error);
+        if (cause instanceof AutoStopperExecutor.SaturationException) {
+            return ManualStartOutcome.OVERLOADED;
+        }
+        if (cause instanceof CancellationException || cause instanceof AutoStopperExecutor.ShutdownException) {
+            return ManualStartOutcome.CANCELLED;
+        }
+        return ManualStartOutcome.START_FAILED;
+    }
+
+    private ManualStopOutcome exceptionalStopOutcome(Throwable error) {
+        Throwable cause = unwrap(error);
+        if (cause instanceof AutoStopperExecutor.SaturationException) {
+            return ManualStopOutcome.OVERLOADED;
+        }
+        if (cause instanceof CancellationException || cause instanceof AutoStopperExecutor.ShutdownException) {
+            return ManualStopOutcome.CANCELLED;
+        }
+        return ManualStopOutcome.STOP_FAILED;
+    }
+
+    private ManualRestartOutcome exceptionalRestartOutcome(Throwable error) {
+        Throwable cause = unwrap(error);
+        if (cause instanceof AutoStopperExecutor.SaturationException) {
+            return ManualRestartOutcome.OVERLOADED;
+        }
+        if (cause instanceof CancellationException || cause instanceof AutoStopperExecutor.ShutdownException) {
+            return ManualRestartOutcome.CANCELLED;
+        }
+        return ManualRestartOutcome.STOP_FAILED;
+    }
+
+    private static final class ManualStartAdmission {
+        private final LifecycleEntry entry;
+        private final CompletableFuture<StartupOutcome> startupFuture;
+        private final ManualStartOutcome rejectedOutcome;
+        private final ManualStartOutcome completedOutcome;
+        private final boolean launchStartup;
+
+        private ManualStartAdmission(LifecycleEntry entry,
+                CompletableFuture<StartupOutcome> startupFuture,
+                ManualStartOutcome rejectedOutcome,
+                ManualStartOutcome completedOutcome,
+                boolean launchStartup) {
+            this.entry = entry;
+            this.startupFuture = startupFuture;
+            this.rejectedOutcome = rejectedOutcome;
+            this.completedOutcome = completedOutcome;
+            this.launchStartup = launchStartup;
+        }
+
+        static ManualStartAdmission start(LifecycleEntry entry, CompletableFuture<StartupOutcome> startupFuture) {
+            return new ManualStartAdmission(entry, startupFuture, null, null, true);
+        }
+
+        static ManualStartAdmission track(CompletableFuture<StartupOutcome> startupFuture) {
+            return new ManualStartAdmission(null, startupFuture, null, null, false);
+        }
+
+        static ManualStartAdmission completed(ManualStartOutcome outcome) {
+            return new ManualStartAdmission(null, null, null, outcome, false);
+        }
+
+        static ManualStartAdmission rejected(ManualStartOutcome outcome) {
+            return new ManualStartAdmission(null, null, outcome, null, false);
+        }
+    }
+
+    private static final class ManualStopAdmission {
+        private final LifecycleEntry entry;
+        private final CompletableFuture<ManualStopOutcome> stopFuture;
+        private final ManualStopOutcome rejectedOutcome;
+        private final ManualStopOutcome completedOutcome;
+
+        private ManualStopAdmission(LifecycleEntry entry,
+                CompletableFuture<ManualStopOutcome> stopFuture,
+                ManualStopOutcome rejectedOutcome,
+                ManualStopOutcome completedOutcome) {
+            this.entry = entry;
+            this.stopFuture = stopFuture;
+            this.rejectedOutcome = rejectedOutcome;
+            this.completedOutcome = completedOutcome;
+        }
+
+        static ManualStopAdmission start(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stopFuture) {
+            return new ManualStopAdmission(entry, stopFuture, null, null);
+        }
+
+        static ManualStopAdmission completed(ManualStopOutcome outcome) {
+            return new ManualStopAdmission(null, null, null, outcome);
+        }
+
+        static ManualStopAdmission rejected(ManualStopOutcome outcome) {
+            return new ManualStopAdmission(null, null, outcome, null);
+        }
+    }
+
+    private static final class ManualRestartAdmission {
+        private final LifecycleEntry entry;
+        private final CompletableFuture<ManualRestartOutcome> restartFuture;
+        private final CompletableFuture<StartupOutcome> startupFuture;
+        private final ManualRestartOutcome rejectedOutcome;
+        private final boolean startOnly;
+
+        private ManualRestartAdmission(LifecycleEntry entry,
+                CompletableFuture<ManualRestartOutcome> restartFuture,
+                CompletableFuture<StartupOutcome> startupFuture,
+                ManualRestartOutcome rejectedOutcome,
+                boolean startOnly) {
+            this.entry = entry;
+            this.restartFuture = restartFuture;
+            this.startupFuture = startupFuture;
+            this.rejectedOutcome = rejectedOutcome;
+            this.startOnly = startOnly;
+        }
+
+        static ManualRestartAdmission stopThenStart(LifecycleEntry entry,
+                CompletableFuture<ManualRestartOutcome> restartFuture) {
+            return new ManualRestartAdmission(entry, restartFuture, null, null, false);
+        }
+
+        static ManualRestartAdmission startOnly(LifecycleEntry entry,
+                CompletableFuture<ManualRestartOutcome> restartFuture,
+                CompletableFuture<StartupOutcome> startupFuture) {
+            return new ManualRestartAdmission(entry, restartFuture, startupFuture, null, true);
+        }
+
+        static ManualRestartAdmission rejected(ManualRestartOutcome outcome) {
+            return new ManualRestartAdmission(null, null, null, outcome, false);
         }
     }
 

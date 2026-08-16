@@ -96,6 +96,17 @@ container: Docker would restart it after AutoStopper successfully stops it.
   permissions. On failure the plugin may suggest retrying with `/server <name>`, but it does not own
   that command.
 
+## Manual lifecycle commands and holds
+
+| Symptom / Error | Cause | Operator action |
+|---|---|---|
+| `Cannot stop server <name>: X players are currently connected` | An operator ran `/autostopper stop` or `restart` while players were active. | Move or disconnect players before stopping, or wait for them to leave so inactivity stopping takes over. |
+| `Cannot stop server <name>: players are waiting to connect` | An operator ran `/autostopper stop` or `restart` while player connections were waking the server. | Allow the connection sequence to complete or fail; do not interrupt in-flight player admission. |
+| `Server <name> is already ready` | `/autostopper start` was run on an already running and ready server. | No action needed; start is idempotent. |
+| `Server <name> is already sleeping` | `/autostopper stop` was run on an already stopped server. | No action needed; stop is idempotent. |
+| Hold disappeared after proxy restart | Runtime holds are memory-only and do not survive proxy restarts. | Re-apply the hold with `/autostopper hold <name>` or omit the server from `monitored_servers` if it should remain persistent. |
+| Hold disappeared after reload | The server mapping was modified or removed in `config.yml`. | Re-apply the hold if the server is still monitored under a new mapping. |
+
 ## Shutdown
 
 `shutdown_timeout_seconds` bounds cancellation of AutoStopper's own scheduled checks, readiness

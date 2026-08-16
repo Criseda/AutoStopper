@@ -48,6 +48,7 @@ class OperationalStatusServiceTest {
                 .thenAnswer(invocation -> invocation.getArgument(1, Long.class) == 0L
                         ? Optional.of(LifecycleStatusSnapshot.absent())
                         : Optional.empty());
+        lenient().when(lifecycleCoordinator.isHeld(anyString())).thenReturn(false);
         service = new OperationalStatusService(logger, serverManager, lifecycleCoordinator,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }

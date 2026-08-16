@@ -6,6 +6,22 @@ All notable AutoStopper changes are documented here.
 
 ### Added
 
+- Added coordinator-owned operator lifecycle commands for mapped servers: `/autostopper start <server>`,
+  `/autostopper stop <server>`, `/autostopper restart <server>`, `/autostopper hold <server>`, and
+  `/autostopper release <server>`.
+- Added command-specific permission nodes (`autostopper.command.start`, `autostopper.command.stop`,
+  `autostopper.command.restart`, `autostopper.command.hold`, `autostopper.command.release`) while
+  retaining `autostopper.admin` as an explicit umbrella.
+- Implemented runtime shutdown holds that suppress automatic inactivity shutdown without blocking
+  manual commands or player-driven wake-up. Holds survive unchanged reloads and clear on proxy
+  restart, mapping removal, or mapping replacement.
+- Manual stop and restart enforce strict safety invariants, refusing execution if connected players
+  or lifecycle waiters are present, with an immediate deterministic pre-Docker safety re-check on the
+  worker thread.
+- Manual restart runs as one atomic coordinator-owned stop → start → readiness sequence under a single
+  authoritative future.
+- Surfaced hold state in `/autostopper status` and updated `/autostopper help` with permission-filtered
+  entries and argument tab completion.
 - Pinned stable Velocity 4.0.0 build 6 as the production support line on Java 25, tested by the
   packaged-runtime system tests and the release-candidate Docker/Minecraft gate. Velocity 3.5.1 on
   Java 21 remains the tested minimum/floor, and Velocity 4.1.0-SNAPSHOT on Java 25 remains clearly

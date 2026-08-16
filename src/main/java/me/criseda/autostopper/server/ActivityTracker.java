@@ -192,6 +192,10 @@ public class ActivityTracker {
             if (shutdown.get()) {
                 return;
             }
+            if (lifecycleCoordinator.isHeld(serverName)) {
+                logger.debug("Server {} has an active hold; skipping inactivity shutdown", serverName);
+                return;
+            }
             if (!lifecycleCoordinator.tryBeginStop(mapping)) {
                 logger.debug("Skipping inactivity shutdown for {} because lifecycle work is active", serverName);
                 return;
