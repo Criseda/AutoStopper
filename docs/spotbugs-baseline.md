@@ -18,7 +18,7 @@ The issue #20 audit recorded eight findings on an earlier codebase, including pl
 | ---: | --- | --- |
 | 6 | `CT_CONSTRUCTOR_THROW` in `DockerManager`, `ProcessCommandRunner`, and `AutoStopperExecutor` constructor overloads | Made each implementation class `final`, eliminating the finalizer-attack surface while retaining constructor validation. |
 | 2 | `EI_EXPOSE_REP` from test-only `AutoStopperPlugin` accessors | Removed the mutable `config` and `activityTracker` accessors and their tests. |
-| 4 | `EI_EXPOSE_REP2` on adapter fields receiving shared lifecycle collaborators | Narrowly excluded by bug pattern, concrete class, and field in `config/spotbugs/exclude.xml`. These adapters intentionally share coordinator-owned state and do not expose the references. |
+| 3 | `EI_EXPOSE_REP2` on adapter fields receiving the shared activity tracker collaborator | Narrowly excluded by bug pattern, concrete class, and field in `config/spotbugs/exclude.xml`. `ConfigProvider` and `LifecycleTelemetry` interfaces eliminated other collaborator exclusions. |
 
 No default-encoding finding remains. Process output, the Minecraft status protocol, packaged descriptor verification, and relevant test byte conversions all use explicit UTF-8.
 

@@ -7,9 +7,15 @@ import com.velocitypowered.api.proxy.ServerConnection;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
+import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.server.ServerManager;
 import me.criseda.autostopper.readiness.ReadinessResult;
 import me.criseda.autostopper.readiness.MinecraftStatusProbe;
+import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
+import me.criseda.autostopper.telemetry.TelemetryOperationType;
+import me.criseda.autostopper.telemetry.TelemetryOrigin;
+import me.criseda.autostopper.telemetry.TelemetryOutcome;
+import me.criseda.autostopper.telemetry.TelemetrySnapshot;
 import net.kyori.adventure.text.Component;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -1081,6 +1087,111 @@ class ServerLifecycleCoordinatorTest {
 
         CompletableFuture<ManualRestartOutcome> restartFuture = coordinator.requestManualRestart(mapping);
         assertEquals(ManualRestartOutcome.RESTARTED_AND_READY, restartFuture.join());
+    }
+
+    @Test
+    void sharedStartup_RecordsOneStartupOperationAndIndividualWaiterOutcomes() {
+        CompletableFuture<Optional<ContainerStatus>> statusFuture = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(statusFuture);
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ReadinessResult.ready(1)));
+
+        PlayerHarness p1 = player("p1");
+        PlayerHarness p2 = player("p2");
+
+        CompletableFuture<ConnectionOutcome> f1 = coordinator.requestConnection(p1.player, targetServer, mapping);
+        CompletableFuture<ConnectionOutcome> f2 = coordinator.requestConnection(p2.player, targetServer, mapping);
+
+        statusFuture.complete(Optional.of(ContainerStatus.STOPPED));
+        p1.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        p2.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        assertEquals(ConnectionOutcome.CONNECTED, f1.join());
+        assertEquals(ConnectionOutcome.CONNECTED, f2.join());
+
+        TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
+        assertEquals(1, snapshot.operationCount(TelemetryOperationType.STARTUP));
+        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.STARTUP, TelemetryOutcome.READY));
+        assertEquals(2, snapshot.operationCount(TelemetryOperationType.CONNECTION_WAIT));
+        assertEquals(2, snapshot.outcomeCount(TelemetryOperationType.CONNECTION_WAIT, TelemetryOutcome.CONNECTED));
+    }
+
+    @Test
+    void manualLifecycleOperations_RecordTelemetryOutcomes() {
+        when(serverManager.getServer("survival")).thenReturn(Optional.of(targetServer));
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        when(serverManager.waitForServerReadyAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ReadinessResult.ready(1)));
+
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertEquals(ManualStartOutcome.READY, startFuture.join());
+
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+
+        CompletableFuture<ManualStopOutcome> stopFuture = coordinator.requestManualStop(mapping);
+        assertEquals(ManualStopOutcome.STOPPED, stopFuture.join());
+
+        CompletableFuture<ManualRestartOutcome> restartFuture = coordinator.requestManualRestart(mapping);
+        assertEquals(ManualRestartOutcome.RESTARTED_AND_READY, restartFuture.join());
+
+        TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
+        assertEquals(1, snapshot.operationCount(TelemetryOperationType.MANUAL_START));
+        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_START, TelemetryOutcome.READY));
+        assertEquals(1, snapshot.operationCount(TelemetryOperationType.MANUAL_STOP));
+        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.STOPPED));
+        assertEquals(1, snapshot.operationCount(TelemetryOperationType.MANUAL_RESTART));
+        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.RESTARTED_AND_READY));
+    }
+
+    @Test
+    void rejectedAdmissions_RecordTelemetryOutcomes() {
+        coordinator.shutdown();
+
+        PlayerHarness player = player("rejected");
+        CompletableFuture<ConnectionOutcome> connFuture = coordinator.requestConnection(player.player, targetServer, mapping);
+        assertEquals(ConnectionOutcome.PROXY_SHUTDOWN, connFuture.join());
+
+        CompletableFuture<ManualStartOutcome> startFuture = coordinator.requestManualStart(mapping);
+        assertEquals(ManualStartOutcome.PROXY_SHUTDOWN, startFuture.join());
+
+        CompletableFuture<ManualStopOutcome> stopFuture = coordinator.requestManualStop(mapping);
+        assertEquals(ManualStopOutcome.PROXY_SHUTDOWN, stopFuture.join());
+
+        CompletableFuture<ManualRestartOutcome> restartFuture = coordinator.requestManualRestart(mapping);
+        assertEquals(ManualRestartOutcome.PROXY_SHUTDOWN, restartFuture.join());
+
+        TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
+        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.CONNECTION_WAIT, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_START, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.PROXY_SHUTDOWN));
+    }
+
+    @Test
+    void telemetryObservationalSafety_CoordinatorCompletesNormallyEvenIfTelemetryFails() {
+        Logger brokenLogger = mock(Logger.class);
+        when(brokenLogger.isInfoEnabled()).thenThrow(new RuntimeException("logger failure"));
+        LifecycleTelemetryService telemetryService = new LifecycleTelemetryService(brokenLogger);
+
+        ServerLifecycleCoordinator brokenCoordinator = new ServerLifecycleCoordinator(
+                logger, serverManager, new ServerHoldRegistry(), new AutoStopperExecutor(),
+                System::nanoTime, telemetryService);
+
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        when(serverManager.waitForServerReadyAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ReadinessResult.ready(1)));
+        PlayerHarness player = player("safe");
+        CompletableFuture<ConnectionOutcome> future = brokenCoordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+
+        assertEquals(ConnectionOutcome.CONNECTED, future.join());
     }
 
     private PlayerHarness player(String name) {

@@ -12,6 +12,11 @@ import me.criseda.autostopper.config.StopRetrySettings;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
+import me.criseda.autostopper.telemetry.LifecycleTelemetry;
+import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
+import me.criseda.autostopper.telemetry.TelemetryOperationType;
+import me.criseda.autostopper.telemetry.TelemetryOrigin;
+import me.criseda.autostopper.telemetry.TelemetryOutcome;
 
 import org.slf4j.Logger;
 
@@ -21,6 +26,7 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -29,13 +35,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-public class ActivityTracker {
+public final class ActivityTracker implements ActivityTrackerService {
     private final ProxyServer server;
     private final Logger logger;
     private final AutoStopperConfig config;
     private final ServerManager serverManager;
     private final AutoStopperExecutor executor;
     private final ServerLifecycleCoordinator lifecycleCoordinator;
+    private final LifecycleTelemetry telemetry;
     private final Map<String, ActivityState> activity = new ConcurrentHashMap<>();
     private final AutoStopperPlugin plugin;
     private final AtomicBoolean inactivityScanActive = new AtomicBoolean(false);
@@ -46,13 +53,27 @@ public class ActivityTracker {
 
     public ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager,
             AutoStopperExecutor executor, AutoStopperPlugin plugin,
+            ServerLifecycleCoordinator lifecycleCoordinator, LifecycleTelemetry telemetry) {
+        this(server, logger, config, serverManager, executor, plugin, lifecycleCoordinator, telemetry, Clock.systemUTC());
+    }
+
+    public ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager,
+            AutoStopperExecutor executor, AutoStopperPlugin plugin,
             ServerLifecycleCoordinator lifecycleCoordinator) {
-        this(server, logger, config, serverManager, executor, plugin, lifecycleCoordinator, Clock.systemUTC());
+        this(server, logger, config, serverManager, executor, plugin, lifecycleCoordinator,
+                new LifecycleTelemetryService(logger), Clock.systemUTC());
     }
 
     ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager,
             AutoStopperExecutor executor, AutoStopperPlugin plugin,
             ServerLifecycleCoordinator lifecycleCoordinator, Clock clock) {
+        this(server, logger, config, serverManager, executor, plugin, lifecycleCoordinator,
+                new LifecycleTelemetryService(logger), clock);
+    }
+
+    ActivityTracker(ProxyServer server, Logger logger, AutoStopperConfig config, ServerManager serverManager,
+            AutoStopperExecutor executor, AutoStopperPlugin plugin,
+            ServerLifecycleCoordinator lifecycleCoordinator, LifecycleTelemetry telemetry, Clock clock) {
         this.server = server;
         this.logger = logger;
         this.config = config;
@@ -60,6 +81,7 @@ public class ActivityTracker {
         this.executor = executor;
         this.plugin = plugin;
         this.lifecycleCoordinator = lifecycleCoordinator;
+        this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
         this.clock = clock;
         initializeActivityTracking();
     }
@@ -204,21 +226,47 @@ public class ActivityTracker {
                 updateActivity(serverName);
                 lifecycleCoordinator.cancelStop(mapping);
                 logger.debug("Cancelled inactivity shutdown for {} because activity changed", serverName);
+                telemetry.recordOperation(
+                        TelemetryOperationType.AUTOMATIC_STOP,
+                        serverName,
+                        TelemetryOrigin.ACTIVITY_TRACKER,
+                        TelemetryOutcome.CANCELLED,
+                        Duration.ZERO,
+                        0);
                 return;
             }
             if (shutdown.get()) {
                 lifecycleCoordinator.cancelStop(mapping);
+                telemetry.recordOperation(
+                        TelemetryOperationType.AUTOMATIC_STOP,
+                        serverName,
+                        TelemetryOrigin.ACTIVITY_TRACKER,
+                        TelemetryOutcome.PROXY_SHUTDOWN,
+                        Duration.ZERO,
+                        0);
                 return;
             }
             logger.info("Server {} has been inactive for {} minutes; stop attempt {} of {}",
                     serverName, minutesInactive, observed.failedStopAttempts() + 1,
                     snapshot.stopRetry().maxAttempts());
+            long stopStartNanos = telemetry.currentNanos();
             ContainerStatus stopResult = ContainerStatus.FAILED;
             try {
                 stopResult = serverManager.stopServer(mapping);
             } finally {
                 lifecycleCoordinator.completeStop(mapping, stopResult);
             }
+            Duration stopElapsed = telemetry.elapsedSince(stopStartNanos);
+            TelemetryOutcome telemetryOutcome = stopResult == ContainerStatus.STOPPED
+                    ? TelemetryOutcome.STOPPED
+                    : TelemetryOutcome.from(stopResult);
+            telemetry.recordOperation(
+                    TelemetryOperationType.AUTOMATIC_STOP,
+                    serverName,
+                    TelemetryOrigin.ACTIVITY_TRACKER,
+                    telemetryOutcome,
+                    stopElapsed,
+                    0);
             if (stopResult == ContainerStatus.STOPPED) {
                 activity.remove(serverName, observed);
             } else {

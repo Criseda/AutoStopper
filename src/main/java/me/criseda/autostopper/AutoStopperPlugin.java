@@ -23,6 +23,8 @@ import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.operational.OperationalStatusService;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
+import me.criseda.autostopper.telemetry.LifecycleTelemetry;
+import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
 
 import org.slf4j.Logger;
 
@@ -44,6 +46,7 @@ public class AutoStopperPlugin {
     private ServerLifecycleCoordinator lifecycleCoordinator;
     private AutoStopperExecutor executor;
     private OperationalStatusService operationalStatus;
+    private LifecycleTelemetryService telemetry;
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
 
     @Inject
@@ -67,13 +70,14 @@ public class AutoStopperPlugin {
 		}
 	
 		// Initialize server management
+		this.telemetry = createTelemetryService();
 		this.executor = createExecutor();
 		this.serverManager = createServerManager(config, executor);
-		this.lifecycleCoordinator = createLifecycleCoordinator(serverManager, executor);
+		this.lifecycleCoordinator = createLifecycleCoordinator(serverManager, executor, telemetry);
 		this.operationalStatus = createOperationalStatusService(serverManager, lifecycleCoordinator);
 		
 		// Initialize activity tracking but DON'T start the inactivity check yet
-		this.activityTracker = createActivityTracker(config, serverManager, executor, lifecycleCoordinator);
+		this.activityTracker = createActivityTracker(config, serverManager, executor, lifecycleCoordinator, telemetry);
 	
 		// Register event listeners
 		server.getEventManager().register(this, new ConnectionListener(activityTracker, lifecycleCoordinator));
@@ -103,6 +107,9 @@ public class AutoStopperPlugin {
 		}
 		if (operationalStatus != null) {
 			operationalStatus.shutdown();
+		}
+		if (telemetry != null) {
+			telemetry.clear();
 		}
 		if (executor != null) {
             int timeoutSeconds = config == null
@@ -138,19 +145,35 @@ public class AutoStopperPlugin {
         return new AutoStopperExecutor();
     }
 
+    protected LifecycleTelemetryService createTelemetryService() {
+        return new LifecycleTelemetryService(logger);
+    }
+
     protected ServerManager createServerManager(AutoStopperConfig config, AutoStopperExecutor executor) {
         DockerManager dockerManager = new DockerManager(logger, new ProcessCommandRunner());
         return new ServerManager(server, logger, config, dockerManager, executor);
     }
 
     protected ActivityTracker createActivityTracker(AutoStopperConfig config, ServerManager serverManager,
+            AutoStopperExecutor executor, ServerLifecycleCoordinator lifecycleCoordinator,
+            LifecycleTelemetry telemetry) {
+        return new ActivityTracker(server, logger, config, serverManager, executor, this, lifecycleCoordinator, telemetry);
+    }
+
+    protected ActivityTracker createActivityTracker(AutoStopperConfig config, ServerManager serverManager,
             AutoStopperExecutor executor, ServerLifecycleCoordinator lifecycleCoordinator) {
-        return new ActivityTracker(server, logger, config, serverManager, executor, this, lifecycleCoordinator);
+        return createActivityTracker(config, serverManager, executor, lifecycleCoordinator, createTelemetryService());
+    }
+
+    protected ServerLifecycleCoordinator createLifecycleCoordinator(ServerManager serverManager,
+            AutoStopperExecutor executor, LifecycleTelemetry telemetry) {
+        return new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(), executor,
+                System::nanoTime, telemetry);
     }
 
     protected ServerLifecycleCoordinator createLifecycleCoordinator(ServerManager serverManager,
             AutoStopperExecutor executor) {
-        return new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(), executor);
+        return createLifecycleCoordinator(serverManager, executor, createTelemetryService());
     }
 
     protected ServerLifecycleCoordinator createLifecycleCoordinator(ServerManager serverManager) {

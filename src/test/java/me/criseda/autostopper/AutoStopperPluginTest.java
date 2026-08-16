@@ -147,11 +147,11 @@ public class AutoStopperPluginTest {
         doReturn(mockConfig).when(spyPlugin).createConfig();
         doReturn(mockExecutor).when(spyPlugin).createExecutor();
         doReturn(mockServerManager).when(spyPlugin).createServerManager(mockConfig, mockExecutor);
-        doReturn(mockLifecycleCoordinator).when(spyPlugin).createLifecycleCoordinator(mockServerManager, mockExecutor);
+        doReturn(mockLifecycleCoordinator).when(spyPlugin).createLifecycleCoordinator(eq(mockServerManager), eq(mockExecutor), any());
         doReturn(mockOperationalStatus).when(spyPlugin)
                 .createOperationalStatusService(mockServerManager, mockLifecycleCoordinator);
         doReturn(mockActivityTracker).when(spyPlugin)
-                .createActivityTracker(mockConfig, mockServerManager, mockExecutor, mockLifecycleCoordinator);
+                .createActivityTracker(eq(mockConfig), eq(mockServerManager), eq(mockExecutor), eq(mockLifecycleCoordinator), any());
         when(mockOperationalStatus.runPreflight(initialSnapshot, "startup"))
                 .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(
                         new PreflightSummary(0, 0)));

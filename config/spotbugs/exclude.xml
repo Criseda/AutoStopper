@@ -1,15 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <FindBugsFilter>
     <!--
-      These fields are shared lifecycle collaborators supplied by the plugin composition root.
+      These adapter fields receive the shared activity tracker collaborator from the composition root.
       The receiving adapters do not expose the references. Copying their mutable state would
-      split lifecycle ownership and violate the one-operation-per-server invariant.
+      split activity tracking and violate the one-operation-per-server invariant.
     -->
-    <Match>
-        <Bug pattern="EI_EXPOSE_REP2" />
-        <Class name="me.criseda.autostopper.commands.AutoStopperCommand" />
-        <Field name="config" />
-    </Match>
     <Match>
         <Bug pattern="EI_EXPOSE_REP2" />
         <Class name="me.criseda.autostopper.commands.AutoStopperCommand" />
