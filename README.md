@@ -37,7 +37,7 @@ readiness, simultaneous players share one lifecycle operation, and all Docker wo
 Velocity's event and command workers.
 
 > [!IMPORTANT]
-> These instructions describe **AutoStopper 2.0.0**. Download only from the project's GitHub or
+> These instructions describe **AutoStopper 2.1.0**. Download only from the project's GitHub or
 > Modrinth release pages and verify the published SHA-256 checksum before installation. Users of
 > 1.1.2 should follow the complete migration guide before replacing the artifact.
 
@@ -94,7 +94,7 @@ the backend containers in advance, and acceptance of the security boundary above
 1. Copy one complete support-line directory to the Docker host. Do not combine the Java 21 image
    from the legacy example with the Java 25 Velocity 4.x builds from the stable or preview
    examples.
-2. Download the 2.0.0 JAR from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) or
+2. Download the 2.1.0 JAR from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) or
    [Modrinth](https://modrinth.com/plugin/autostopper) after it is published. Put the unchanged JAR
    at `velocity_server/plugins/AutoStopper.jar` inside the copied example directory.
 3. Review the socket mount and entrypoint in `docker-compose.yml`, then start the stack:

@@ -33,7 +33,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-@Plugin(id = "autostopper", name = "AutoStopper", version = "2.0.0", authors = { "criseda" })
+@Plugin(id = "autostopper", name = "AutoStopper", version = "2.1.0", authors = { "criseda" })
 public class AutoStopperPlugin {
     private final ProxyServer server;
     private final Logger logger;
