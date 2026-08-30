@@ -52,7 +52,11 @@ class SystemTestSupportTest {
                 probeCommand("inspect"));
 
         assertEquals(0, result.exitCode());
-        assertTrue(result.output().contains("cwd=" + temporaryDirectory.toAbsolutePath().normalize()));
+        // On macOS /var is a symlink to /private/var; normalize() keeps /var while the subprocess's
+        // Path.of("").toAbsolutePath() is already resolved to /private/var by the OS.
+        Path expectedReal = temporaryDirectory.toRealPath();
+        assertTrue(result.output().contains("cwd=" + expectedReal)
+                || result.output().contains("cwd=" + temporaryDirectory.toAbsolutePath().normalize()));
         assertTrue(result.output().contains("env=candidate-value"));
         assertTrue(result.output().contains("stderr=merged"));
     }
