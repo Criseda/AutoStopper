@@ -40,7 +40,7 @@
         <maven.compiler.release>21</maven.compiler.release>
         <mockito.version>5.23.0</mockito.version>
         <snakeyaml.version>2.6</snakeyaml.version>
-        <spotbugs.maven.version>4.10.3.0</spotbugs.maven.version>
+        <spotbugs.maven.version>4.10.4.0</spotbugs.maven.version>
         <velocity.api.version>3.5.1</velocity.api.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
