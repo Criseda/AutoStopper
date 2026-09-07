@@ -37,6 +37,8 @@ public final class ReleaseCandidateE2EHarness {
     private static final Duration RETRY_STOP_TIMEOUT = Duration.ofSeconds(90);
     private static final Duration POLL_INTERVAL = Duration.ofMillis(750);
     private static final String VELOCITY_IMAGE = "itzg/mc-proxy:2026.8.0-java25";
+    private static final String PINNED_VELOCITY_VERSION = "4.0.0";
+    private static final String PINNED_VELOCITY_BUILD = "6";
     private static final String BACKEND_IMAGE = "itzg/minecraft-server:java21";
     private static final String CLIENT_IMAGE_PREFIX = "autostopper-release-candidate-client";
 
@@ -131,10 +133,32 @@ public final class ReleaseCandidateE2EHarness {
     }
 
     private void pullImages() throws Exception {
-        requireSuccess(command(IMAGE_TIMEOUT, "docker", "pull", VELOCITY_IMAGE),
+        requireSuccess(command(IMAGE_TIMEOUT, "docker", "pull", velocityImage()),
                 "Could not pull the pinned current proxy image");
         requireSuccess(command(IMAGE_TIMEOUT, "docker", "pull", BACKEND_IMAGE),
                 "Could not pull the pinned Minecraft backend image");
+    }
+
+    /**
+     * Compatibility-canary overrides (issue #62). Each defaults to the
+     * pinned release-candidate runtime so deterministic gates are
+     * unaffected unless the canary workflow exports them.
+     */
+    private static String canaryEnv(String key, String fallback) {
+        String value = System.getenv(key);
+        return value == null || value.isBlank() ? fallback : value.trim();
+    }
+
+    private static String velocityImage() {
+        return canaryEnv("E2E_VELOCITY_IMAGE", VELOCITY_IMAGE);
+    }
+
+    private static String velocityVersion() {
+        return canaryEnv("E2E_VELOCITY_VERSION", PINNED_VELOCITY_VERSION);
+    }
+
+    private static String velocityBuild() {
+        return canaryEnv("E2E_VELOCITY_BUILD_ID", PINNED_VELOCITY_BUILD);
     }
 
     private void buildClientImage() throws Exception {
@@ -443,6 +467,9 @@ public final class ReleaseCandidateE2EHarness {
         environment.put("E2E_ENTRYPOINT", composePath(entrypoint));
         environment.put("E2E_DOCKER_WRAPPER", composePath(wrapper));
         environment.put("E2E_CLIENT_IMAGE", clientImage);
+        environment.put("E2E_VELOCITY_IMAGE", velocityImage());
+        environment.put("E2E_VELOCITY_VERSION", velocityVersion());
+        environment.put("E2E_VELOCITY_BUILD_ID", velocityBuild());
         environment.put("E2E_FAIL_STOP_ONCE", Boolean.toString(scenario == Scenario.FAILED_STOP));
         environment.put("E2E_HOST_UID", hostIdentity("-u"));
         environment.put("E2E_HOST_GID", hostIdentity("-g"));
@@ -708,7 +735,7 @@ public final class ReleaseCandidateE2EHarness {
 
     private void captureImageEvidence() {
         captureBestEffort(evidenceDirectory.resolve("images.json"), () -> command(COMMAND_TIMEOUT,
-                "docker", "image", "inspect", VELOCITY_IMAGE, BACKEND_IMAGE, clientImage));
+                "docker", "image", "inspect", velocityImage(), BACKEND_IMAGE, clientImage));
     }
 
     private void writeCandidateManifest() throws Exception {
@@ -725,13 +752,14 @@ public final class ReleaseCandidateE2EHarness {
                   "size": %d,
                   "sha256": "%s",
                   "velocityImage": "%s",
-                  "velocityVersion": "4.0.0-6",
+                  "velocityVersion": "%s",
                   "backendImage": "%s",
                   "minecraftVersion": "1.21.4",
                   "purpurBuild": "2416"
                 }
                 """.formatted(json(commit), json(projectVersion), json(pluginArtifact.getFileName().toString()),
-                Files.size(pluginArtifact), candidateHash, VELOCITY_IMAGE, BACKEND_IMAGE);
+                Files.size(pluginArtifact), candidateHash, velocityImage(),
+                velocityVersion() + "-" + velocityBuild(), BACKEND_IMAGE);
         Files.writeString(evidenceDirectory.resolve("candidate-manifest.json"), manifest, StandardCharsets.UTF_8);
     }
 

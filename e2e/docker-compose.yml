@@ -28,13 +28,13 @@ services:
       - minecraft
 
   velocity:
-    image: itzg/mc-proxy:2026.8.0-java25
+    image: ${E2E_VELOCITY_IMAGE:-itzg/mc-proxy:2026.8.0-java25}
     container_name: ${E2E_VELOCITY_CONTAINER:?set E2E_VELOCITY_CONTAINER}
     environment:
       TYPE: "VELOCITY"
       ONLINE_MODE: "false"
-      VELOCITY_VERSION: "4.0.0"
-      VELOCITY_BUILD_ID: "6"
+      VELOCITY_VERSION: ${E2E_VELOCITY_VERSION:-4.0.0}
+      VELOCITY_BUILD_ID: ${E2E_VELOCITY_BUILD_ID:-6}
       REPLACE_ENV_VARIABLES: "true"
       AUTOSTOPPER_E2E_BACKEND_CONTAINER: ${E2E_BACKEND_CONTAINER}
       AUTOSTOPPER_E2E_FAIL_STOP_ONCE: ${E2E_FAIL_STOP_ONCE:-false}

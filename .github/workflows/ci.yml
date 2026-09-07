@@ -46,9 +46,11 @@ jobs:
       - name: Verify with Maven Wrapper
         run: ./mvnw --batch-mode --no-transfer-progress clean verify
 
-      - name: Test release tooling
+      - name: Test release and canary tooling
         if: matrix.java == '21'
-        run: python3 -m unittest discover -s scripts/release -p "test_*.py"
+        run: |
+          python3 -m unittest discover -s scripts/release -p "test_*.py"
+          python3 -m unittest discover -s scripts/canary -p "test_*.py"
 
       - name: Upload failure reports
         if: failure()
