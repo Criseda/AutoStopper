@@ -54,6 +54,13 @@ Startup and shutdown are bounded. Runtime logs are retained under
 `target/velocity-system-tests/logs/`; disposable fixture directories and test
 containers are removed even when an assertion fails.
 
+The weekly [Velocity compatibility canary](../.github/workflows/velocity-compatibility-canary.yml)
+reuses this harness in manifest mode (`-Dvelocity.system.manifest=<manifest>`,
+optionally `-Dvelocity.system.plugin=<jar>`) to run the same scenarios against
+newly resolved upstream builds without compiling new profiles into Java source.
+Manifest entries are validated (Fill `https://fill-data.papermc.io` URL,
+64-hex SHA-256, allowlisted `eclipse-temurin` image) before any container starts.
+
 These tests deliberately do not mount the Docker socket, start Minecraft, or
 exercise a real managed container. The live gate is the reusable
 `release-candidate-e2e.yml` workflow and Maven `release-candidate-e2e` profile; the protected

@@ -86,6 +86,17 @@ status request rather than backend-specific APIs, so it is compatible with Minec
 directly exercised. Other Velocity, Java, proxy-image, and backend combinations are not part of the
 tested matrix.
 
+### Compatibility canary
+
+AutoStopper is supported on the exact stable runtime lines listed above. Newer stable and preview
+Velocity builds are tested automatically by the weekly
+[Velocity compatibility canary](https://github.com/Criseda/AutoStopper/actions/workflows/velocity-compatibility-canary.yml)
+against both the latest public release JAR and a fresh `master` build. A green canary is evidence
+of observed compatibility, not a blanket guarantee for future versions. Preview/snapshot builds
+remain best-effort. Dated observations may be noted here by the maintainer after sustained green
+runs; a canary failure that needs a code change ships in a new AutoStopper release and never
+rewrites an existing one.
+
 ## Installation
 
 Prerequisites are Docker Engine with Linux containers and Docker Compose v2, enough access to create

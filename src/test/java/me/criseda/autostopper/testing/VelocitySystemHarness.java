@@ -15,9 +15,15 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import me.criseda.autostopper.testing.SystemTestSupport.CommandResult;
 
@@ -36,6 +42,14 @@ public final class VelocitySystemHarness {
     private static final Duration STARTUP_TIMEOUT = Duration.ofSeconds(90);
     private static final Duration SHUTDOWN_COMMAND_TIMEOUT = Duration.ofSeconds(40);
     private static final String USER_AGENT = "AutoStopper system harness (https://github.com/Criseda/AutoStopper)";
+    /**
+     * System property pointing at a canary runtime manifest (see
+     * {@code scripts/canary/}). When set, the harness runs the manifest's
+     * runtimes instead of its compiled-in pins; the manifest is validated
+     * before any container starts.
+     */
+    static final String MANIFEST_PROPERTY = "velocity.system.manifest";
+    private static final String MANIFEST_SCHEMA = "autostopper-velocity-canary/v1";
     private static final String VALID_CONFIG = """
             inactivity_timeout_seconds: 300
             shutdown_timeout_seconds: 10
@@ -139,6 +153,10 @@ public final class VelocitySystemHarness {
     }
 
     private List<RuntimeProfile> selectProfiles(String selection) {
+        String manifestProperty = System.getProperty(MANIFEST_PROPERTY, "").trim();
+        if (!manifestProperty.isEmpty()) {
+            return selectManifestProfiles(Path.of(manifestProperty), selection);
+        }
         if (selection.equalsIgnoreCase("all")) {
             return PROFILES;
         }
@@ -150,6 +168,102 @@ public final class VelocitySystemHarness {
             throw new IllegalArgumentException("Unknown Velocity system-test profile selection: " + selection);
         }
         return selected;
+    }
+
+    private List<RuntimeProfile> selectManifestProfiles(Path manifest, String selection) {
+        List<RuntimeProfile> runtimes = loadManifestRuntimes(manifest);
+        if (selection.equalsIgnoreCase("all") || selection.equalsIgnoreCase("canary")) {
+            return runtimes;
+        }
+        Set<String> requested = Set.of(selection.toLowerCase(Locale.ROOT).split(","));
+        List<RuntimeProfile> selected = runtimes.stream()
+                .filter(profile -> requested.contains(profile.name()))
+                .toList();
+        if (selected.size() != requested.size()) {
+            throw new IllegalArgumentException(
+                    "Unknown canary manifest profile selection: " + selection);
+        }
+        return selected;
+    }
+
+    /**
+     * Reads and validates a canary runtime manifest written by
+     * {@code scripts/canary/resolve_canary.py}. Package-visible for tests.
+     */
+    static List<RuntimeProfile> loadManifestRuntimes(Path manifest) {
+        Object document;
+        try (var reader = Files.newBufferedReader(manifest, StandardCharsets.UTF_8)) {
+            LoaderOptions options = new LoaderOptions();
+            document = new Yaml(new SafeConstructor(options)).load(reader);
+        } catch (IOException error) {
+            throw new IllegalStateException("Cannot read canary manifest " + manifest, error);
+        }
+        if (!(document instanceof Map<?, ?> root)) {
+            throw new IllegalStateException("Canary manifest must be a map: " + manifest);
+        }
+        if (!MANIFEST_SCHEMA.equals(root.get("schema"))) {
+            throw new IllegalStateException(
+                    "Canary manifest schema must be " + MANIFEST_SCHEMA + ": " + manifest);
+        }
+        if (!(root.get("runtimes") instanceof List<?> entries) || entries.isEmpty()) {
+            throw new IllegalStateException("Canary manifest has no runtimes: " + manifest);
+        }
+        List<RuntimeProfile> runtimes = new ArrayList<>();
+        Set<String> channels = new LinkedHashSet<>();
+        for (Object entry : entries) {
+            if (!(entry instanceof Map<?, ?> runtime)) {
+                throw new IllegalStateException("Canary manifest runtime must be a map");
+            }
+            String channel = stringField(runtime, "channel");
+            String version = stringField(runtime, "version");
+            String build = stringField(runtime, "build");
+            String downloadUrl = stringField(runtime, "downloadUrl");
+            String sha256 = stringField(runtime, "sha256");
+            String image = stringField(runtime, "image");
+            Object jvmValue = runtime.get("jvm");
+            if (!("stable".equals(channel) || "preview".equals(channel))) {
+                throw new IllegalStateException("Canary manifest has unknown channel: " + channel);
+            }
+            if (!channels.add(channel)) {
+                throw new IllegalStateException("Canary manifest repeats channel: " + channel);
+            }
+            if (!version.matches("\\d+\\.\\d+\\.\\d+(-\\S+)?")) {
+                throw new IllegalStateException("Canary manifest has bad version: " + version);
+            }
+            if (build.isBlank()) {
+                throw new IllegalStateException("Canary manifest runtime needs a build id");
+            }
+            if (!downloadUrl.startsWith("https://") || !downloadUrl.contains("fill-data.papermc.io")) {
+                throw new IllegalStateException(
+                        "Canary manifest downloadUrl must be an https fill-data.papermc.io URL");
+            }
+            if (!sha256.toLowerCase(Locale.ROOT).matches("[0-9a-f]{64}")) {
+                throw new IllegalStateException("Canary manifest runtime needs a 64-hex sha256");
+            }
+            if (!image.startsWith("eclipse-temurin:")) {
+                throw new IllegalStateException(
+                        "Canary manifest image must start with 'eclipse-temurin:'");
+            }
+            if (!(jvmValue instanceof Number jvm) || jvm.intValue() < 17 || jvm.intValue() > 30) {
+                throw new IllegalStateException("Canary manifest has bad jvm: " + jvmValue);
+            }
+            runtimes.add(new RuntimeProfile(
+                    channel,
+                    "Java " + jvm.intValue(),
+                    image,
+                    "Velocity " + version + " build " + build,
+                    URI.create(downloadUrl),
+                    sha256.toLowerCase(Locale.ROOT)));
+        }
+        return List.copyOf(runtimes);
+    }
+
+    private static String stringField(Map<?, ?> runtime, String key) {
+        Object value = runtime.get(key);
+        if (!(value instanceof String text) || text.isBlank()) {
+            throw new IllegalStateException("Canary manifest runtime needs '" + key + "'");
+        }
+        return text.trim();
     }
 
     private void runProfile(RuntimeProfile profile) throws Exception {
@@ -369,8 +483,7 @@ public final class VelocitySystemHarness {
                 + ProcessHandle.current().pid() + "-" + Long.toUnsignedString(System.nanoTime(), 36);
     }
 
-    private record RuntimeProfile(
-            String name,
+    record RuntimeProfile(            String name,
             String javaLabel,
             String image,
             String velocityLabel,

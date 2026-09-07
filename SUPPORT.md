@@ -43,6 +43,13 @@ Velocity 4.1 is supplied as a snapshot and is validated only as preview, not as 
 baseline. Other Velocity, Java, proxy-image, and backend combinations are not part of the tested
 matrix; issues on unsupported combinations may be closed without investigation.
 
+AutoStopper is supported on the exact stable runtime lines listed above. Newer stable and preview
+Velocity builds are tested automatically as compatibility canaries by the weekly
+[Velocity compatibility canary workflow](https://github.com/Criseda/AutoStopper/actions/workflows/velocity-compatibility-canary.yml),
+which exercises the latest public release JAR and a fresh `master` build. A green canary is
+evidence of observed compatibility, not a blanket guarantee for future versions.
+Preview/snapshot builds remain best-effort.
+
 ## What makes a report actionable
 
 A good bug report answers: exact AutoStopper version and download source, exact Velocity version

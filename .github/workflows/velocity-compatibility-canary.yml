@@ -1,0 +1,371 @@
+name: Velocity compatibility canary
+
+# Advisory forward-compatibility monitoring for issue #62. This workflow
+# resolves the latest stable and preview Velocity builds from PaperMC Fill,
+# exercises the unchanged latest release JAR and a fresh master build
+# against them, and reports. It never publishes, retags, or mutates pins.
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly; offset from the daily release-candidate E2E (43 2 * * *).
+    - cron: "17 3 * * 1"
+
+permissions: {}
+
+concurrency:
+  group: velocity-canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve latest Velocity builds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      needs_review: ${{ steps.resolve.outputs.needs_review }}
+      stable_version: ${{ steps.resolve.outputs.stable_version }}
+      stable_build: ${{ steps.resolve.outputs.stable_build }}
+      preview_version: ${{ steps.resolve.outputs.preview_version }}
+      preview_build: ${{ steps.resolve.outputs.preview_build }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve builds from PaperMC Fill
+        id: resolve
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/canary/resolve_canary.py \
+            --output canary-manifest.json \
+            --run-id "${GITHUB_RUN_ID}" | tee resolve.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if grep -q "canary needs review" resolve.log; then
+            echo "needs_review=true" >> "$GITHUB_OUTPUT"
+            echo "Unknown Velocity family; stopping for maintainer review."
+            exit 0
+          fi
+          if [[ $status -ne 0 ]]; then
+            echo "Fill resolution failed; see resolve.log."
+            exit $status
+          fi
+          echo "needs_review=false" >> "$GITHUB_OUTPUT"
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          manifest = json.load(open("canary-manifest.json", encoding="utf-8"))
+          for runtime in manifest["runtimes"]:
+              print(f"{runtime['channel']}_version={runtime['version']}")
+              print(f"{runtime['channel']}_build={runtime['build']}")
+          EOF
+
+      - name: Upload canary manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-manifest-${{ github.run_id }}
+          path: |
+            canary-manifest.json
+            resolve.log
+          if-no-files-found: error
+          retention-days: 30
+
+  canary-light:
+    name: Canary ${{ matrix.channel }} / load and shutdown
+    needs: resolve
+    if: needs.resolve.result == 'success' && needs.resolve.outputs.needs_review != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - stable
+          - preview
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21 build toolchain
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Download canary manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: canary-manifest-${{ github.run_id }}-*
+          path: .
+          merge-multiple: true
+
+      - name: Confirm Docker availability
+        run: docker info
+
+      - name: Fetch latest public release JAR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/canary-release
+          gh release download \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern 'AutoStopper-*.jar' \
+            --pattern 'AutoStopper-*.jar.sha256' \
+            --dir /tmp/canary-release \
+            --clobber
+          (cd /tmp/canary-release && sha256sum -c 'AutoStopper-*.jar.sha256')
+          gh attestation verify /tmp/canary-release/AutoStopper-*.jar \
+            --repo "${GITHUB_REPOSITORY}"
+
+      - name: Test master build on canary ${{ matrix.channel }}
+        run: >-
+          ./mvnw --batch-mode --no-transfer-progress clean verify
+          -Psystem-tests
+          -Dvelocity.system.profiles=${{ matrix.channel }}
+          -Dvelocity.system.manifest=${{ github.workspace }}/canary-manifest.json
+
+      - name: Test public release JAR on canary ${{ matrix.channel }}
+        run: |
+          set -euo pipefail
+          cp /tmp/canary-release/AutoStopper-*.jar target/canary-release.jar
+          ./mvnw --batch-mode --no-transfer-progress verify \
+            -Psystem-tests \
+            "-Dvelocity.system.profiles=${{ matrix.channel }}" \
+            "-Dvelocity.system.manifest=${{ github.workspace }}/canary-manifest.json" \
+            "-Dvelocity.system.plugin=${{ github.workspace }}/target/canary-release.jar"
+
+      - name: Upload canary failure logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-${{ matrix.channel }}-failure-${{ github.run_id }}
+          path: |
+            target/surefire-reports/
+            target/velocity-system-tests/logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  compile-canary:
+    name: Compile against latest Velocity API
+    needs: resolve
+    if: needs.resolve.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21 build toolchain
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Compile master against latest public Velocity API
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_version="$(python3 - <<'EOF'
+          import urllib.request
+          import xml.etree.ElementTree as ElementTree
+          url = ("https://repo.papermc.io/repository/maven-public/"
+                 "com/velocitypowered/velocity-api/maven-metadata.xml")
+          request = urllib.request.Request(url, headers={
+              "User-Agent": ("AutoStopper-compatibility-canary/2.1.0 "
+                             "(https://github.com/Criseda/AutoStopper)")})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              metadata = ElementTree.fromstring(response.read())
+          print(metadata.findtext("versioning/release"))
+          EOF
+          )"
+          test -n "$api_version"
+          echo "Latest Velocity API: $api_version (canonical floor stays 3.5.1)"
+          ./mvnw --batch-mode --no-transfer-progress \
+            "-Dvelocity.api.version=${api_version}" -DskipTests package
+
+  canary-full:
+    name: Full player flow on latest stable
+    needs:
+      - resolve
+      - canary-light
+    if: needs.resolve.result == 'success' && needs.canary-light.result == 'success' && needs.resolve.outputs.needs_review != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21 build toolchain
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: |
+            pom.xml
+            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Confirm Docker and Compose availability
+        run: |
+          docker info
+          docker compose version
+
+      - name: Download canary manifest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: canary-manifest-${{ github.run_id }}-*
+          path: .
+          merge-multiple: true
+
+      - name: Run player flow against canary stable
+        shell: bash
+        env:
+          E2E_VELOCITY_VERSION: ${{ needs.resolve.outputs.stable_version }}
+          E2E_VELOCITY_BUILD_ID: ${{ needs.resolve.outputs.stable_build }}
+        run: >-
+          ./mvnw --batch-mode --no-transfer-progress clean verify
+          -Prelease-candidate-e2e
+
+      - name: Upload E2E evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: canary-full-failure-${{ github.run_id }}
+          path: |
+            target/surefire-reports/
+            target/release-candidate-e2e/evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  report:
+    name: Summarize and surface canary result
+    needs:
+      - resolve
+      - canary-light
+      - compile-canary
+      - canary-full
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download canary manifest
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: canary-manifest-${{ github.run_id }}-*
+          path: .
+          merge-multiple: true
+
+      - name: Write job summary
+        shell: bash
+        env:
+          RESOLVE_RESULT: ${{ needs.resolve.result }}
+          LIGHT_RESULT: ${{ needs.canary-light.result }}
+          COMPILE_RESULT: ${{ needs.compile-canary.result }}
+          FULL_RESULT: ${{ needs.canary-full.result }}
+          NEEDS_REVIEW: ${{ needs.resolve.outputs.needs_review }}
+          STABLE_VERSION: ${{ needs.resolve.outputs.stable_version }}
+          STABLE_BUILD: ${{ needs.resolve.outputs.stable_build }}
+          PREVIEW_VERSION: ${{ needs.resolve.outputs.preview_version }}
+          PREVIEW_BUILD: ${{ needs.resolve.outputs.preview_build }}
+        run: |
+          {
+            echo "## Velocity compatibility canary (advisory)"
+            echo ""
+            if [[ -f canary-manifest.json ]]; then
+              python3 -c "import sys; sys.path.insert(0, 'scripts/canary'); \
+          from canary_lib import render_summary; \
+          print(render_summary(__import__('json').load(open('canary-manifest.json')), \
+          'latest public release JAR (checksum/attestation verified)', \
+          'master HEAD build'), end='')"
+            elif [[ "$NEEDS_REVIEW" == "true" ]]; then
+              echo "Upstream resolved an unknown Velocity family: maintainer review required."
+              echo "No runtime was started and no compatibility is inferred."
+            else
+              echo "Fill resolution did not produce a manifest (upstream unavailable?)."
+              echo "No runtime was started; rerun on schedule."
+            fi
+            echo ""
+            echo "| Job | Result |"
+            echo "|---|---|"
+            echo "| resolve | $RESOLVE_RESULT |"
+            echo "| canary-light | $LIGHT_RESULT |"
+            echo "| compile-canary | $COMPILE_RESULT |"
+            echo "| canary-full (stable ${STABLE_VERSION:-?} build ${STABLE_BUILD:-?}) | $FULL_RESULT |"
+            echo "| preview | ${PREVIEW_VERSION:-?} build ${PREVIEW_BUILD:-?} (load-only, best-effort) |"
+            echo ""
+            echo "> A green canary is observed compatibility, not a support guarantee."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: File or update the deduped compatibility issue
+        if: needs.resolve.outputs.needs_review == 'true' || needs.canary-light.result == 'failure' || needs.compile-canary.result == 'failure' || needs.canary-full.result == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NEEDS_REVIEW: ${{ needs.resolve.outputs.needs_review }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" \
+            --search "[canary] Velocity compatibility" --state open \
+            --json number --jq '.[0].number // empty')"
+          if [[ "$NEEDS_REVIEW" == "true" ]]; then
+            body="Fill resolved an unknown Velocity version family. Explicit maintainer review is required; no compatibility is inferred. Run: ${RUN_URL}"
+          else
+            body="Compatibility canary failed (resolve/light/compile/full, see run). This is advisory and blocks no release. Run: ${RUN_URL}"
+          fi
+          if [[ -z "$existing" ]]; then
+            gh issue create --repo "${GITHUB_REPOSITORY}" \
+              --title "[canary] Velocity compatibility needs attention" \
+              --body "$body"
+          else
+            gh issue comment --repo "${GITHUB_REPOSITORY}" "$existing" --body "$body"
+          fi
+
+      - name: Note recovery on the deduped issue
+        if: needs.resolve.result == 'success' && needs.resolve.outputs.needs_review != 'true' && needs.canary-light.result == 'success' && needs.compile-canary.result == 'success' && needs.canary-full.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" \
+            --search "[canary] Velocity compatibility" --state open \
+            --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing" ]]; then
+            gh issue comment --repo "${GITHUB_REPOSITORY}" "$existing" \
+              --body "Compatibility canary is green again. Run: ${RUN_URL}"
+          fi

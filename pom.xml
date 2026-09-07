@@ -42,6 +42,8 @@
         <snakeyaml.version>2.6</snakeyaml.version>
         <spotbugs.maven.version>4.10.4.0</spotbugs.maven.version>
         <velocity.api.version>3.5.1</velocity.api.version>
+        <velocity.system.manifest></velocity.system.manifest>
+        <velocity.system.plugin>${project.build.directory}/${project.build.finalName}.jar</velocity.system.plugin>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <project.build.outputTimestamp>2026-08-12T00:00:00Z</project.build.outputTimestamp>
@@ -381,8 +383,14 @@
                                 <configuration>
                                     <mainClass>me.criseda.autostopper.testing.VelocitySystemHarness</mainClass>
                                     <classpathScope>test</classpathScope>
+                                    <systemProperties>
+                                        <systemProperty>
+                                            <key>velocity.system.manifest</key>
+                                            <value>${velocity.system.manifest}</value>
+                                        </systemProperty>
+                                    </systemProperties>
                                     <arguments>
-                                        <argument>${project.build.directory}/${project.build.finalName}.jar</argument>
+                                        <argument>${velocity.system.plugin}</argument>
                                         <argument>${project.build.directory}/velocity-system-tests</argument>
                                         <argument>${project.version}</argument>
                                         <argument>${velocity.system.profiles}</argument>
