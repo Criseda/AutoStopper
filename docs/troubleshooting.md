@@ -95,6 +95,10 @@ container: Docker would restart it after AutoStopper successfully stops it.
 - AutoStopper does not implement a custom `/server` command. Players use Velocity's command and
   permissions. On failure the plugin may suggest retrying with `/server <name>`, but it does not own
   that command.
+- If a backend stops outside AutoStopper (a crash, an in-game `/stop`, or a manual `docker stop`),
+  the next inactivity scan (at most one minute) or the next refused connection attempt checks Docker
+  and marks the server stopped, so the following player connection starts it again. A refusal while
+  the container is still running, such as a whitelist or ban kick, does not change its state.
 
 ## Manual lifecycle commands and holds
 

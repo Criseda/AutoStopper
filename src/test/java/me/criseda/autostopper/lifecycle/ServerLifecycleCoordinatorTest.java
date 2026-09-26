@@ -398,6 +398,109 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
+    void refusalAfterPriorSuccessReconcilesExternalStopSoTheNextPlayerWakesTheServer() {
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(
+                CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)),
+                CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)),
+                CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        connectSuccessfully("first");
+
+        PlayerHarness refused = player("refused");
+        CompletableFuture<ConnectionOutcome> refusedOutcome =
+                coordinator.requestConnection(refused.player, targetServer, mapping);
+        refused.complete(ConnectionRequestBuilder.Status.SERVER_DISCONNECTED);
+
+        assertEquals(ConnectionOutcome.SERVER_DISCONNECTED, refusedOutcome.join());
+        assertEquals(Optional.of(ServerLifecycleState.STOPPED), coordinator.state("survival"));
+        verify(serverManager, times(2)).getServerStatusAsync(mapping);
+
+        PlayerHarness waking = player("waking");
+        CompletableFuture<ConnectionOutcome> wakingOutcome =
+                coordinator.requestConnection(waking.player, targetServer, mapping);
+        verify(serverManager).startServerAsync(mapping);
+        waking.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        assertEquals(ConnectionOutcome.CONNECTED, wakingOutcome.join());
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
+    void refusalFromStillRunningBackendAfterPriorSuccessKeepsReady() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        connectSuccessfully("first");
+
+        PlayerHarness kicked = player("kicked");
+        CompletableFuture<ConnectionOutcome> kickedOutcome =
+                coordinator.requestConnection(kicked.player, targetServer, mapping);
+        kicked.complete(ConnectionRequestBuilder.Status.SERVER_DISCONNECTED);
+
+        assertEquals(ConnectionOutcome.SERVER_DISCONNECTED, kickedOutcome.join());
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+        verify(serverManager, times(2)).getServerStatusAsync(mapping);
+        verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
+    }
+
+    @Test
+    void staleExternalStopObservationCannotOverwriteNewerLifecycleRevision() {
+        CompletableFuture<Optional<ContainerStatus>> verification = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(
+                CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)), verification);
+        connectSuccessfully("first");
+
+        PlayerHarness failed = player("failed");
+        coordinator.requestConnection(failed.player, targetServer, mapping);
+        failed.connection.completeExceptionally(new IllegalStateException("backend refused"));
+        connectSuccessfully("second");
+
+        verification.complete(Optional.of(ContainerStatus.STOPPED));
+
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
+    void failedOrSaturatedExternalStopVerificationKeepsReady() {
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(
+                CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)),
+                CompletableFuture.failedFuture(new AutoStopperExecutor.SaturationException("saturated", null)));
+        connectSuccessfully("first");
+
+        PlayerHarness refused = player("refused");
+        CompletableFuture<ConnectionOutcome> refusedOutcome =
+                coordinator.requestConnection(refused.player, targetServer, mapping);
+        refused.complete(ConnectionRequestBuilder.Status.SERVER_DISCONNECTED);
+
+        assertEquals(ConnectionOutcome.SERVER_DISCONNECTED, refusedOutcome.join());
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
+    void externalStopVerificationCompletingAfterShutdownIsIgnored() {
+        CompletableFuture<Optional<ContainerStatus>> verification = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(
+                CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)), verification);
+        connectSuccessfully("first");
+        PlayerHarness refused = player("refused");
+        coordinator.requestConnection(refused.player, targetServer, mapping);
+        refused.complete(ConnectionRequestBuilder.Status.SERVER_DISCONNECTED);
+
+        coordinator.shutdown();
+        verification.complete(Optional.of(ContainerStatus.STOPPED));
+
+        assertEquals(Optional.empty(), coordinator.state("survival"));
+    }
+
+    private void connectSuccessfully(String name) {
+        PlayerHarness player = player(name);
+        CompletableFuture<ConnectionOutcome> outcome =
+                coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        assertEquals(ConnectionOutcome.CONNECTED, outcome.join());
+        assertEquals(Optional.of(ServerLifecycleState.READY), coordinator.state("survival"));
+    }
+
+    @Test
     void stopCannotOverlapStartupOrPendingConnection() {
         CompletableFuture<Optional<ContainerStatus>> firstStatus = new CompletableFuture<>();
         when(serverManager.getServerStatusAsync(mapping))

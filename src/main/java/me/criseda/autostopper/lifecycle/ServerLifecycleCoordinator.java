@@ -1207,6 +1207,8 @@ public final class ServerLifecycleCoordinator {
         boolean owned;
         Duration elapsed = elapsed(waiter);
         int remainingWaiters;
+        boolean verifyContainer = false;
+        long verifiedRevision = 0;
         synchronized (entry) {
             owned = entry.waiters.remove(waiter.playerId, waiter);
             if (!owned) {
@@ -1225,12 +1227,18 @@ public final class ServerLifecycleCoordinator {
             } else if ((outcome == ConnectionOutcome.SERVER_DISCONNECTED
                     || outcome == ConnectionOutcome.CONNECTION_FAILED)
                     && entry.state == ServerLifecycleState.READY
-                    && entry.waiters.isEmpty()
-                    && !entry.readyConnectionSucceeded) {
-                transition(entry, ServerLifecycleState.FAILED);
-                entry.lastFailure = failure("player connection",
-                        "Velocity could not complete the backend connection: " + outcome,
-                        "Check the backend listener and Velocity server address, then retry.");
+                    && entry.waiters.isEmpty()) {
+                if (!entry.readyConnectionSucceeded) {
+                    transition(entry, ServerLifecycleState.FAILED);
+                    entry.lastFailure = failure("player connection",
+                            "Velocity could not complete the backend connection: " + outcome,
+                            "Check the backend listener and Velocity server address, then retry.");
+                } else if (!entry.retired) {
+                    // A backend that served players before may have been stopped outside AutoStopper.
+                    // A kick from a still-running backend must not demote READY, so ask Docker first.
+                    verifyContainer = true;
+                    verifiedRevision = entry.revision;
+                }
             }
         }
         telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT, entry.mapping.serverName(),
@@ -1247,6 +1255,33 @@ public final class ServerLifecycleCoordinator {
         waiter.future.complete(outcome);
         drainNotifications(waiter);
         cleanupRetired(entry.mapping.serverName(), entry);
+        if (verifyContainer) {
+            reconcileExternalStop(entry.mapping, verifiedRevision);
+        }
+    }
+
+    private void reconcileExternalStop(ServerMapping mapping, long expectedRevision) {
+        if (shutdown.get()) {
+            return;
+        }
+        CompletableFuture<Optional<ContainerStatus>> statusFuture;
+        try {
+            statusFuture = serverManager.getServerStatusAsync(mapping);
+        } catch (RuntimeException error) {
+            logger.debug("Could not schedule a container check for server {}", mapping.serverName(), error);
+            return;
+        }
+        if (statusFuture == null) {
+            return;
+        }
+        statusFuture.whenComplete((status, error) -> {
+            if (error != null || status == null || status.orElse(null) != ContainerStatus.STOPPED) {
+                return;
+            }
+            markStoppedIfUnchanged(mapping, expectedRevision).ifPresent(ignored -> logger.info(
+                    "Server {} was stopped outside AutoStopper; the next connection will start it",
+                    mapping.serverName()));
+        });
     }
 
     private void cleanupRetired(String serverName, LifecycleEntry expected) {

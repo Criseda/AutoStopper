@@ -179,6 +179,7 @@ public final class ActivityTracker implements ActivityTrackerService {
         }
 
         // If no players are connected, check if the server is actually running
+        long lifecycleRevision = lifecycleCoordinator.statusSnapshot(mapping).revision();
         Optional<ContainerStatus> status = serverManager.getServerStatus(mapping);
         if (status.isEmpty()) {
             removeActivityIfUnchanged(serverName, activityAtScanStart);
@@ -186,7 +187,13 @@ public final class ActivityTracker implements ActivityTrackerService {
         }
 
         switch (status.get()) {
-            case STOPPED, MISSING:
+            case STOPPED:
+                removeActivityIfUnchanged(serverName, activityAtScanStart);
+                // The container may have been stopped outside AutoStopper; a stale READY would
+                // otherwise send every player straight to a refused connection instead of a wake-up.
+                lifecycleCoordinator.markStoppedIfUnchanged(mapping, lifecycleRevision);
+                return;
+            case MISSING:
                 removeActivityIfUnchanged(serverName, activityAtScanStart);
                 return;
             case INACCESSIBLE, TIMED_OUT, FAILED:

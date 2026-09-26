@@ -12,8 +12,10 @@ import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.config.StopRetrySettings;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.lifecycle.LifecycleStatusSnapshot;
 import me.criseda.autostopper.lifecycle.ServerHoldRegistry;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
+import me.criseda.autostopper.lifecycle.ServerLifecycleState;
 import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
 import me.criseda.autostopper.telemetry.TelemetryOrigin;
@@ -78,7 +80,9 @@ public class ActivityTrackerTest {
         telemetry = new LifecycleTelemetryService(logger);
         lenient().when(lifecycleCoordinator.isHeld(anyString())).thenAnswer(inv -> holdRegistry.isHeld(inv.getArgument(0)));
         lenient().when(lifecycleCoordinator.tryBeginStop(any(ServerMapping.class))).thenReturn(true);
-        
+        lenient().when(lifecycleCoordinator.statusSnapshot(any(ServerMapping.class)))
+                .thenReturn(LifecycleStatusSnapshot.absent());
+
         executor = new AutoStopperExecutor();
         activityTracker = new ActivityTracker(
                 proxyServer, logger, config, serverManager, executor, plugin, lifecycleCoordinator, telemetry);
@@ -313,6 +317,41 @@ public class ActivityTrackerTest {
         // 2. The server was removed from tracking (Activity map should actully contain it initially from setup, but we want to verify removal)
         Instant activity = activityTracker.getLastActivity("server1");
         assertNull(activity, "Server should have been removed from tracking because it is stopped");
+    }
+
+    @Test
+    public void inactivityScanReconcilesExternallyStoppedServerAgainstPreInspectionRevision() throws Exception {
+        RegisteredServer server1 = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
+        when(proxyServer.getServer("server2")).thenReturn(Optional.empty());
+        when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
+        when(lifecycleCoordinator.statusSnapshot(mapping1)).thenReturn(new LifecycleStatusSnapshot(
+                Optional.of(ServerLifecycleState.READY), 0, Optional.empty(), 7));
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.STOPPED));
+
+        activityTracker.requestInactivityCheck().get(5, TimeUnit.SECONDS);
+
+        var order = inOrder(lifecycleCoordinator, serverManager);
+        order.verify(lifecycleCoordinator).statusSnapshot(mapping1);
+        order.verify(serverManager).getServerStatus(mapping1);
+        order.verify(lifecycleCoordinator).markStoppedIfUnchanged(mapping1, 7);
+        verify(serverManager, never()).stopServer(any(ServerMapping.class));
+    }
+
+    @Test
+    public void inactivityScanLeavesLifecycleAloneWhenContainerIsRunningOrMissing() throws Exception {
+        RegisteredServer server1 = mock(RegisteredServer.class);
+        RegisteredServer server2 = mock(RegisteredServer.class);
+        when(proxyServer.getServer("server1")).thenReturn(Optional.of(server1));
+        when(proxyServer.getServer("server2")).thenReturn(Optional.of(server2));
+        when(server1.getPlayersConnected()).thenReturn(Collections.emptySet());
+        when(server2.getPlayersConnected()).thenReturn(Collections.emptySet());
+        when(serverManager.getServerStatus(mapping1)).thenReturn(Optional.of(ContainerStatus.RUNNING));
+        when(serverManager.getServerStatus(mapping2)).thenReturn(Optional.of(ContainerStatus.MISSING));
+
+        activityTracker.requestInactivityCheck().get(5, TimeUnit.SECONDS);
+
+        verify(lifecycleCoordinator, never()).markStoppedIfUnchanged(any(ServerMapping.class), anyLong());
     }
 
     @Test
