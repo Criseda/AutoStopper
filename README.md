@@ -164,7 +164,8 @@ the backend containers in advance, and acceptance of the security boundary above
 
 Managed containers must already exist and use `restart: "no"` so Docker does not immediately undo
 an inactivity stop. Unmonitored hubs or lobbies are not intercepted or stopped by AutoStopper and
-may retain `restart: unless-stopped`.
+may retain `restart: unless-stopped`. AutoStopper honors each container's stop grace period, so give
+backends with large worlds enough time to save, for example `stop_grace_period: 60s`.
 
 ## Behavior
 
