@@ -2,7 +2,7 @@
 
 All notable AutoStopper changes are documented here.
 
-## [Unreleased]
+## [2.1.1] - Unreleased
 
 ### Fixed
 
