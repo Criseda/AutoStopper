@@ -2,6 +2,15 @@
 
 All notable AutoStopper changes are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- Servers whose container stops outside AutoStopper (backend crash, in-game `/stop`, manual
+  `docker stop`) no longer stay `READY` after a prior successful connection. The inactivity scan and
+  refused connection attempts now reconcile the stopped container through the revision-guarded
+  lifecycle path, so the next player connection wakes the server again (#93).
+
 ## [2.1.0] - 2026-08-16
 
 ### Added
