@@ -25,6 +25,11 @@ Maven invocation into an isolated runtime. Each profile must prove:
 - Velocity and AutoStopper complete a bounded graceful shutdown; and
 - the plugin inside the container has the same SHA-256 as the packaged artifact.
 
+Each profile starts Velocity with `smoke/<profile>/velocity.toml`. Keep each fixture's
+`config-version` at a value that Velocity itself has shipped, so newer Velocity builds (including
+the compatibility canary's latest stable and preview) apply their own config migrations instead of
+reading an old key layout as current.
+
 The normal `verify` lifecycle also inspects the shaded JAR for Java 21 class
 files, manifest and descriptor correctness, unique entries, relocated
 SnakeYAML, absent Velocity-provided libraries, and unexpected classes.
