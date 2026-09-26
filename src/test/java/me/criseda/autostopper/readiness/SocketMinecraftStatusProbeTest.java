@@ -8,6 +8,7 @@ import java.io.EOFException;
 import java.io.InputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -80,7 +81,7 @@ class SocketMinecraftStatusProbeTest {
             assertEquals(MinecraftStatusProbe.Outcome.TIMED_OUT, result.outcome());
             assertTrue(elapsedMillis < 1_000, "read timeout must remain bounded");
             releaseResponder.countDown();
-            responder.get(2, TimeUnit.SECONDS);
+            responder.get(5, TimeUnit.SECONDS);
         } finally {
             releaseResponder.countDown();
             shutdown(responderExecutor);
@@ -131,10 +132,17 @@ class SocketMinecraftStatusProbeTest {
     }
 
     private void acceptSilently(ServerSocket server, CountDownLatch releaseResponder) {
-        try (Socket ignored = server.accept()) {
-            if (!releaseResponder.await(2, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("silent fixture was not released");
+        try {
+            // On a loaded runner the probe's short connect deadline can expire before any connection
+            // is queued. The probe still reports TIMED_OUT, so the fixture must not wait forever.
+            server.setSoTimeout(1_000);
+            try (Socket ignored = server.accept()) {
+                if (!releaseResponder.await(2, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("silent fixture was not released");
+                }
             }
+        } catch (SocketTimeoutException noConnection) {
+            // No connection arrived; nothing to hold open.
         } catch (Exception error) {
             throw new RuntimeException(error);
         }
