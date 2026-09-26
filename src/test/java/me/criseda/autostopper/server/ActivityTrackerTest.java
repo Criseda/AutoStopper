@@ -584,20 +584,20 @@ public class ActivityTrackerTest {
                 ContainerStatus.TIMED_OUT, ContainerStatus.FAILED, ContainerStatus.STOPPED);
         tracker.setLastActivityForTest("server1", start.minusSeconds(61));
 
-        tracker.requestInactivityCheck().join();
+        runScan(tracker);
         assertEquals(1, tracker.getFailedStopAttemptsForTest("server1"));
-        tracker.requestInactivityCheck().join();
+        runScan(tracker);
         verify(serverManager, times(1)).stopServer(mapping1);
 
         clock.advance(Duration.ofSeconds(10));
-        tracker.requestInactivityCheck().join();
+        runScan(tracker);
         assertEquals(2, tracker.getFailedStopAttemptsForTest("server1"));
         clock.advance(Duration.ofSeconds(14));
-        tracker.requestInactivityCheck().join();
+        runScan(tracker);
         verify(serverManager, times(2)).stopServer(mapping1);
 
         clock.advance(Duration.ofSeconds(1));
-        tracker.requestInactivityCheck().join();
+        runScan(tracker);
         verify(serverManager, times(3)).stopServer(mapping1);
         assertNull(tracker.getLastActivity("server1"));
         verify(lifecycleCoordinator).completeStop(mapping1, ContainerStatus.TIMED_OUT);
@@ -662,10 +662,10 @@ public class ActivityTrackerTest {
         when(serverManager.stopServer(mapping1)).thenReturn(ContainerStatus.FAILED);
         tracker.setLastActivityForTest("server1", start.minusSeconds(61));
 
-        tracker.requestInactivityCheck().join();
+        runScan(tracker);
         clock.advance(Duration.ofSeconds(1));
-        tracker.requestInactivityCheck().join();
-        tracker.requestInactivityCheck().join();
+        runScan(tracker);
+        runScan(tracker);
 
         verify(serverManager, times(2)).stopServer(mapping1);
         assertEquals(start.plusSeconds(1), tracker.getLastActivity("server1"));
@@ -710,11 +710,25 @@ public class ActivityTrackerTest {
     }
 
     private void waitForScanCompletion() {
+        waitForScanCompletion(activityTracker);
+    }
+
+    /**
+     * Runs one scan and waits until the tracker accepts the next one. The scan future can complete
+     * before its bookkeeping callback clears the in-progress flag, so join() alone is not enough for
+     * back-to-back scans.
+     */
+    private void runScan(ActivityTracker tracker) {
+        tracker.requestInactivityCheck().join();
+        waitForScanCompletion(tracker);
+    }
+
+    private void waitForScanCompletion(ActivityTracker tracker) {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (isScanActive() && System.nanoTime() < deadline) {
+        while (isScanActive(tracker) && System.nanoTime() < deadline) {
             java.util.concurrent.locks.LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
         }
-        assertFalse(isScanActive(), "inactivity scan did not complete in time");
+        assertFalse(isScanActive(tracker), "inactivity scan did not complete in time");
     }
 
     @Test
@@ -734,11 +748,11 @@ public class ActivityTrackerTest {
         assertEquals(1, telemetry.outcomeCount(TelemetryOperationType.AUTOMATIC_STOP, TelemetryOutcome.STOPPED));
     }
 
-    private boolean isScanActive() {
+    private boolean isScanActive(ActivityTracker tracker) {
         try {
             var field = ActivityTracker.class.getDeclaredField("inactivityScanActive");
             field.setAccessible(true);
-            return ((java.util.concurrent.atomic.AtomicBoolean) field.get(activityTracker)).get();
+            return ((java.util.concurrent.atomic.AtomicBoolean) field.get(tracker)).get();
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e);
         }
