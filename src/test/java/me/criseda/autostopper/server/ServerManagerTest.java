@@ -5,10 +5,13 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigSnapshot;
+import me.criseda.autostopper.config.ReadinessSettings;
+import me.criseda.autostopper.config.ReadinessStrategy;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerManager;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.readiness.MinecraftStatusProbe;
 import me.criseda.autostopper.readiness.ReadinessResult;
 import me.criseda.autostopper.readiness.ServerReadinessChecker;
 import org.junit.jupiter.api.AfterEach;
@@ -19,6 +22,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.net.InetSocketAddress;
 import java.util.LinkedHashMap;
@@ -26,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -139,16 +144,50 @@ public class ServerManagerTest {
         when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         stubRegisteredTarget("server1", "127.0.0.1", 25565);
         ReadinessResult ready = ReadinessResult.ready(1);
-        when(readinessChecker.awaitReady(any(ServerMapping.class), any())).thenReturn(ready);
-        
+        when(readinessChecker.awaitReady(any(ServerMapping.class), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(ready));
+
         // Execute
-        ReadinessResult result = serverManager.waitForServerReady("server1");
-        
+        ReadinessResult result = serverManager.waitForServerReadyAsync("server1").join();
+
         // Verify
         assertSame(ready, result);
         verify(readinessChecker).awaitReady(
                 any(ServerMapping.class),
-                eq(new me.criseda.autostopper.config.ReadinessSettings.Target("127.0.0.1", 25565)));
+                eq(new me.criseda.autostopper.config.ReadinessSettings.Target("127.0.0.1", 25565)),
+                any());
+    }
+
+    @Test
+    public void testConcurrentReadinessWaitsDoNotHoldWorkersBetweenAttempts() throws InterruptedException {
+        AutoStopperExecutor singleWorker = new AutoStopperExecutor(1, 4);
+        try {
+            MinecraftStatusProbe neverReady = (host, port, connect, read, attempt) ->
+                    new MinecraftStatusProbe.ProbeResult(MinecraftStatusProbe.Outcome.UNREACHABLE);
+            ServerManager realReadiness = new ServerManager(proxyServer, logger, config, dockerManager, singleWorker,
+                    new ServerReadinessChecker(logger, dockerManager, neverReady));
+            lenient().when(dockerManager.getContainerStatus(anyString(), any())).thenReturn(ContainerStatus.RUNNING);
+            when(dockerManager.getContainerStatus("container3")).thenReturn(ContainerStatus.STOPPED);
+            ReadinessSettings slowStart = new ReadinessSettings(ReadinessStrategy.MINECRAFT_STATUS,
+                    "127.0.0.1", 25565, Duration.ofMillis(200), Duration.ofSeconds(30),
+                    Duration.ofMillis(100), Duration.ofMillis(100));
+
+            CompletableFuture<ReadinessResult> first = realReadiness.waitForServerReadyAsync(
+                    new ServerMapping("server1", "container1", slowStart));
+            CompletableFuture<ReadinessResult> second = realReadiness.waitForServerReadyAsync(
+                    new ServerMapping("server2", "container2", slowStart));
+
+            // With one worker, a blocking wait would hold it for the whole 30-second readiness window.
+            assertEquals(Optional.of(ContainerStatus.STOPPED), realReadiness.getServerStatusAsync(
+                    new ServerMapping("server3", "container3")).orTimeout(5, TimeUnit.SECONDS).join());
+            assertFalse(first.isDone());
+            assertFalse(second.isDone());
+
+            assertTrue(first.cancel(true));
+            assertTrue(second.cancel(true));
+        } finally {
+            singleWorker.shutdown();
+        }
     }
     
     @Test
@@ -184,7 +223,7 @@ public class ServerManagerTest {
         assertEquals(ContainerStatus.MISSING, serverManager.startServer("server2"));
         assertEquals(ContainerStatus.MISSING, serverManager.stopServer("server2"));
         assertEquals(ReadinessResult.Outcome.CONTAINER_MISSING,
-                serverManager.waitForServerReady("server2").outcome());
+                serverManager.waitForServerReadyAsync("server2").join().outcome());
         verify(dockerManager, never()).getContainerStatus(anyString());
         verify(dockerManager, never()).startContainer(anyString());
         verify(dockerManager, never()).stopContainer(anyString());
@@ -238,14 +277,27 @@ public class ServerManagerTest {
         when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         stubRegisteredTarget("server1", "127.0.0.1", 25565);
         ReadinessResult ready = ReadinessResult.ready(1);
-        when(readinessChecker.awaitReady(any(ServerMapping.class), any())).thenReturn(ready);
+        when(readinessChecker.awaitReady(any(ServerMapping.class), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(ready));
 
         // Execute
         ReadinessResult result = serverManager.waitForServerReadyAsync("server1").join();
 
         // Verify
         assertSame(ready, result);
-        verify(readinessChecker).awaitReady(any(ServerMapping.class), any());
+        verify(readinessChecker).awaitReady(any(ServerMapping.class), any(), any());
+    }
+
+    @Test
+    public void testWaitForServerReadyAsyncReportsTargetResolutionFailureAsFailedFuture() {
+        when(proxyServer.getServer("server1")).thenThrow(new IllegalStateException("registry unavailable"));
+
+        CompletableFuture<ReadinessResult> result = serverManager.waitForServerReadyAsync(
+                new ServerMapping("server1", "container1"));
+
+        CompletionException error = assertThrows(CompletionException.class, result::join);
+        assertInstanceOf(IllegalStateException.class, error.getCause());
+        verifyNoInteractions(readinessChecker);
     }
 
     @Test
@@ -308,14 +360,15 @@ public class ServerManagerTest {
         when(dockerManager.startContainer("old-container")).thenReturn(ContainerStatus.RUNNING);
         stubRegisteredTarget("server1", "127.0.0.1", 25565);
         ReadinessResult ready = ReadinessResult.ready(1);
-        when(readinessChecker.awaitReady(any(ServerMapping.class), any())).thenReturn(ready);
+        when(readinessChecker.awaitReady(any(ServerMapping.class), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(ready));
 
         ServerMapping captured = serverManager.getServerMapping("server1").orElseThrow();
         assertEquals("new-container", serverManager.getContainerName("server1"));
 
         assertEquals(Optional.of(ContainerStatus.STOPPED), serverManager.getServerStatus(captured));
         assertEquals(ContainerStatus.RUNNING, serverManager.startServer(captured));
-        assertSame(ready, serverManager.waitForServerReady(captured));
+        assertSame(ready, serverManager.waitForServerReadyAsync(captured).join());
         verify(dockerManager, never()).getContainerStatus("new-container");
         verify(dockerManager, never()).startContainer("new-container");
     }

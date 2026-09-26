@@ -2,6 +2,18 @@
 
 All notable AutoStopper changes are documented here.
 
+## [Unreleased]
+
+### Changed
+
+- Readiness checks no longer hold an AutoStopper worker for the whole readiness window. Each
+  attempt runs as a short, individually bounded task, and the probe interval between attempts waits
+  on a timer instead of a sleeping worker. Concurrent startups no longer delay other servers' status
+  checks, startups, stops, the inactivity scan, or `/autostopper status`. Readiness deadlines,
+  probe intervals, outcomes, cancellation, and shutdown are unchanged. If AutoStopper is saturated
+  before the first attempt, the startup still reports `OVERLOADED`; a later attempt skipped for
+  saturation is retried at the next interval within the same deadline (#95).
+
 ## [2.1.1] - 2026-09-26
 
 ### Fixed

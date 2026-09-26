@@ -98,19 +98,6 @@ public class ServerManager {
         return result;
     }
 
-    public ReadinessResult waitForServerReady(String serverName) {
-        Optional<ServerMapping> mapping = getServerMapping(serverName);
-        if (mapping.isEmpty()) {
-            logger.warn("No container mapped for server: {}", serverName);
-            return ReadinessResult.failure(ReadinessResult.Outcome.CONTAINER_MISSING, 0, null);
-        }
-        return waitForServerReady(mapping.get());
-    }
-
-    public ReadinessResult waitForServerReady(ServerMapping mapping) {
-        return readinessChecker.awaitReady(mapping, resolveReadinessTarget(mapping).orElse(null));
-    }
-
     public boolean isMonitoredServer(String serverName) {
         return config.snapshot().containsServer(serverName);
     }
@@ -148,11 +135,26 @@ public class ServerManager {
     }
 
     public CompletableFuture<ReadinessResult> waitForServerReadyAsync(String serverName) {
-        return executor.supply(() -> waitForServerReady(serverName));
+        Optional<ServerMapping> mapping = getServerMapping(serverName);
+        if (mapping.isEmpty()) {
+            logger.warn("No container mapped for server: {}", serverName);
+            return CompletableFuture.completedFuture(
+                    ReadinessResult.failure(ReadinessResult.Outcome.CONTAINER_MISSING, 0, null));
+        }
+        return waitForServerReadyAsync(mapping.get());
     }
 
+    /**
+     * Each readiness attempt runs as a short worker task; the probe interval between attempts holds no worker, so
+     * concurrent startups do not starve status checks, stops, or other startups.
+     */
     public CompletableFuture<ReadinessResult> waitForServerReadyAsync(ServerMapping mapping) {
-        return executor.supply(() -> waitForServerReady(mapping));
+        try {
+            return readinessChecker.awaitReady(
+                    mapping, resolveReadinessTarget(mapping).orElse(null), executor::supplyAfter);
+        } catch (RuntimeException error) {
+            return CompletableFuture.failedFuture(error);
+        }
     }
 
     public CompletableFuture<Map<String, Optional<ContainerStatus>>> getStatusesAsync(ConfigSnapshot snapshot) {
