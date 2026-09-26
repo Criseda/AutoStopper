@@ -2,7 +2,7 @@
 
 All notable AutoStopper changes are documented here.
 
-## [2.1.1] - Unreleased
+## [2.1.1] - 2026-09-26
 
 ### Fixed
 
@@ -127,6 +127,7 @@ mappings, pinned examples, and Docker security boundary all require operator rev
 
 - Last 1.x migration source and prototype release tag.
 
+[2.1.1]: https://github.com/Criseda/AutoStopper/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/Criseda/AutoStopper/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/Criseda/AutoStopper/compare/1.1.2...2.0.0
 [1.1.2]: https://github.com/Criseda/AutoStopper/releases/tag/1.1.2
