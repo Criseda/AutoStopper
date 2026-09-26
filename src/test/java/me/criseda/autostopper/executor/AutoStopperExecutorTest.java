@@ -227,6 +227,125 @@ public class AutoStopperExecutorTest {
     }
 
     @Test
+    public void testSupplyAfterRunsTaskOnWorkerOnceDelayElapses() {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        try {
+            long start = System.nanoTime();
+            CompletableFuture<String> future = executor.supplyAfter(Duration.ofMillis(50),
+                    () -> Thread.currentThread().getName());
+
+            String thread = future.join();
+            long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+            assertTrue(thread.startsWith("autostopper-worker-"), "delayed task ran on " + thread);
+            assertTrue(elapsedMillis >= 40, "delayed task ran after only " + elapsedMillis + "ms");
+            assertEquals("zero", executor.supplyAfter(Duration.ZERO, () -> "zero").join());
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testSupplyAfterHoldsNoWorkerWhileWaiting() {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        try {
+            CompletableFuture<String> delayed = executor.supplyAfter(Duration.ofSeconds(60), () -> "late");
+
+            CompletableFuture<String> immediate = executor.supply(() -> "immediate");
+
+            assertEquals("immediate", immediate.orTimeout(2, TimeUnit.SECONDS).join());
+            assertFalse(delayed.isDone());
+            assertTrue(delayed.cancel(false));
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testCancellingDelayedTaskBeforeItsDelayPreventsItRunning() {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        try {
+            AtomicInteger runs = new AtomicInteger();
+            CompletableFuture<Integer> cancelled = executor.supplyAfter(Duration.ofMillis(50),
+                    runs::incrementAndGet);
+
+            assertTrue(cancelled.cancel(false));
+            // The timer releases tasks in deadline order, so the later sentinel runs after the cancelled slot.
+            executor.supplyAfter(Duration.ofMillis(150), () -> "sentinel").join();
+
+            assertTrue(cancelled.isCancelled());
+            assertEquals(0, runs.get());
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testCancellingReleasedDelayedTaskInterruptsWorker() throws InterruptedException {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        try {
+            CompletableFuture<String> future = executor.supplyAfter(Duration.ofMillis(1), () -> {
+                started.countDown();
+                try {
+                    Thread.sleep(60_000);
+                } catch (InterruptedException e) {
+                    interrupted.countDown();
+                    Thread.currentThread().interrupt();
+                }
+                return "done";
+            });
+
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+            assertTrue(future.cancel(true));
+            assertTrue(interrupted.await(2, TimeUnit.SECONDS), "released task should be interrupted");
+            assertTrue(future.isCancelled());
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testSupplyAfterReportsSaturationWhenReleasedIntoFullExecutor() throws InterruptedException {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        CountDownLatch workerStarted = new CountDownLatch(1);
+        CountDownLatch blocked = new CountDownLatch(1);
+        try {
+            executor.supply(() -> {
+                workerStarted.countDown();
+                try {
+                    blocked.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return "blocked";
+            });
+            assertTrue(workerStarted.await(2, TimeUnit.SECONDS));
+            executor.supply(() -> "pending");
+
+            CompletableFuture<String> delayed = executor.supplyAfter(Duration.ofMillis(1), () -> "too many");
+
+            assertCompletesWith(delayed, AutoStopperExecutor.SaturationException.class, null);
+        } finally {
+            blocked.countDown();
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testShutdownFailsPendingDelayedTasksAndRejectsNewOnes() {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        CompletableFuture<String> pending = executor.supplyAfter(Duration.ofSeconds(60), () -> "never");
+
+        assertTrue(executor.shutdown(), "a pending delay must not hold up shutdown");
+
+        assertCompletesWith(pending, AutoStopperExecutor.ShutdownException.class, null);
+        assertCompletesWith(executor.supplyAfter(Duration.ofMillis(1), () -> "after-shutdown"),
+                AutoStopperExecutor.ShutdownException.class, null);
+    }
+
+    @Test
     public void testInvalidConfigurationRejected() {
         assertThrows(IllegalArgumentException.class, () -> new AutoStopperExecutor(0, 1));
         assertThrows(IllegalArgumentException.class, () -> new AutoStopperExecutor(1, 0));

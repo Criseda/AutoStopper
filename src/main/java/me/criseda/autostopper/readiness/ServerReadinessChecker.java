@@ -6,39 +6,48 @@ import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerHealth;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerManager;
+import me.criseda.autostopper.executor.AutoStopperExecutor;
 import org.slf4j.Logger;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 public final class ServerReadinessChecker {
     private final Logger logger;
     private final DockerManager dockerManager;
     private final MinecraftStatusProbe statusProbe;
     private final LongSupplier nanoTime;
-    private final Sleeper sleeper;
 
     public ServerReadinessChecker(Logger logger, DockerManager dockerManager, MinecraftStatusProbe statusProbe) {
-        this(logger, dockerManager, statusProbe, System::nanoTime,
-                nanos -> java.util.concurrent.TimeUnit.NANOSECONDS.sleep(nanos));
+        this(logger, dockerManager, statusProbe, System::nanoTime);
     }
 
     ServerReadinessChecker(Logger logger, DockerManager dockerManager, MinecraftStatusProbe statusProbe,
-            LongSupplier nanoTime, Sleeper sleeper) {
+            LongSupplier nanoTime) {
         this.logger = Objects.requireNonNull(logger, "logger");
         this.dockerManager = Objects.requireNonNull(dockerManager, "dockerManager");
         this.statusProbe = Objects.requireNonNull(statusProbe, "statusProbe");
         this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime");
-        this.sleeper = Objects.requireNonNull(sleeper, "sleeper");
     }
 
-    public ReadinessResult awaitReady(ServerMapping mapping, ReadinessSettings.Target target) {
+    /**
+     * Waits for the mapped server to pass its readiness check. Each attempt is a short, individually bounded task
+     * handed to {@code scheduler}, and no thread is held between attempts. Cancelling the returned future cancels
+     * the attempt in flight and schedules no further attempts.
+     */
+    public CompletableFuture<ReadinessResult> awaitReady(ServerMapping mapping, ReadinessSettings.Target target,
+            AttemptScheduler scheduler) {
+        Objects.requireNonNull(scheduler, "scheduler");
         ReadinessSettings settings = mapping.readiness();
         ReadinessStrategy strategy = settings.strategy();
         if (strategy.usesMinecraftStatus() && target == null) {
-            return finish(mapping, strategy,
-                    ReadinessResult.failure(ReadinessResult.Outcome.INVALID_TARGET, 0, null));
+            return CompletableFuture.completedFuture(finish(mapping, strategy,
+                    ReadinessResult.failure(ReadinessResult.Outcome.INVALID_TARGET, 0, null)));
         }
 
         logger.info("Waiting up to {}ms for server {} readiness using {}{}",
@@ -48,38 +57,121 @@ public final class ServerReadinessChecker {
                 target == null ? "" : " at " + target.host() + ":" + target.port());
 
         long deadline = saturatedAdd(nanoTime.getAsLong(), settings.timeout().toNanos());
-        MinecraftStatusProbe.Outcome lastProbe = null;
-        int attempts = 0;
-        while (true) {
+        ReadinessWait wait = new ReadinessWait(mapping, target, scheduler, deadline);
+        wait.schedule(Duration.ZERO);
+        return wait;
+    }
+
+    /**
+     * Runs one readiness attempt after a delay. {@link AutoStopperExecutor#supplyAfter} is the production
+     * implementation.
+     */
+    @FunctionalInterface
+    public interface AttemptScheduler {
+        CompletableFuture<ReadinessResult> schedule(Duration delay, Supplier<ReadinessResult> attempt);
+    }
+
+    private final class ReadinessWait extends CompletableFuture<ReadinessResult> {
+        private final ServerMapping mapping;
+        private final ReadinessSettings.Target target;
+        private final ReadinessSettings settings;
+        private final ReadinessStrategy strategy;
+        private final AttemptScheduler scheduler;
+        private final long deadline;
+        private final Object lock = new Object();
+        private CompletableFuture<ReadinessResult> inFlight;
+        // Attempts run one at a time, and each hand-off between them goes through a future completion.
+        private int attempts;
+        private MinecraftStatusProbe.Outcome lastProbe;
+
+        private ReadinessWait(ServerMapping mapping, ReadinessSettings.Target target, AttemptScheduler scheduler,
+                long deadline) {
+            this.mapping = mapping;
+            this.target = target;
+            this.settings = mapping.readiness();
+            this.strategy = settings.strategy();
+            this.scheduler = scheduler;
+            this.deadline = deadline;
+        }
+
+        private void schedule(Duration delay) {
+            CompletableFuture<ReadinessResult> next;
+            try {
+                next = scheduler.schedule(delay, this::attempt);
+            } catch (RuntimeException error) {
+                completeExceptionally(error);
+                return;
+            }
+            synchronized (lock) {
+                if (isDone()) {
+                    next.cancel(true);
+                    return;
+                }
+                inFlight = next;
+            }
+            next.whenComplete(this::attemptFinished);
+        }
+
+        private void attemptFinished(ReadinessResult result, Throwable error) {
+            if (isDone()) {
+                return;
+            }
+            if (error != null) {
+                Throwable cause = unwrap(error);
+                if (cause instanceof AutoStopperExecutor.SaturationException && attempts > 0) {
+                    // Workers are busy with other servers; the next interval retries while the deadline allows.
+                    logger.debug("Skipped a readiness attempt for server {} because AutoStopper is busy",
+                            mapping.serverName());
+                    scheduleNext();
+                } else {
+                    completeExceptionally(cause);
+                }
+                return;
+            }
+            if (result != null) {
+                complete(finish(mapping, strategy, result));
+                return;
+            }
+            scheduleNext();
+        }
+
+        private void scheduleNext() {
             long remaining = deadline - nanoTime.getAsLong();
             if (remaining <= 0) {
-                return finish(mapping, strategy,
-                        ReadinessResult.failure(ReadinessResult.Outcome.TIMED_OUT, attempts, lastProbe));
+                complete(finish(mapping, strategy,
+                        ReadinessResult.failure(ReadinessResult.Outcome.TIMED_OUT, attempts, lastProbe)));
+                return;
+            }
+            schedule(Duration.ofNanos(Math.min(settings.probeInterval().toNanos(), remaining)));
+        }
+
+        /** Returns the final result, or {@code null} when the server is not ready yet. */
+        private ReadinessResult attempt() {
+            long remaining = deadline - nanoTime.getAsLong();
+            if (remaining <= 0) {
+                return ReadinessResult.failure(ReadinessResult.Outcome.TIMED_OUT, attempts, lastProbe);
             }
             if (Thread.currentThread().isInterrupted()) {
-                return finish(mapping, strategy,
-                        ReadinessResult.failure(ReadinessResult.Outcome.INTERRUPTED, attempts, lastProbe));
+                return ReadinessResult.failure(ReadinessResult.Outcome.INTERRUPTED, attempts, lastProbe);
             }
 
             attempts++;
-            ContainerHealth health = null;
             if (strategy.usesDockerHealth()) {
-                health = dockerManager.getContainerHealth(
+                ContainerHealth health = dockerManager.getContainerHealth(
                         mapping.containerName(), positiveRemaining(remaining));
                 ReadinessResult terminal = healthResult(health, strategy, attempts, lastProbe);
                 if (terminal != null) {
-                    return finish(mapping, strategy, terminal);
+                    return terminal;
                 }
                 if (health == ContainerHealth.HEALTHY) {
-                    return finish(mapping, strategy, ReadinessResult.ready(attempts));
+                    return ReadinessResult.ready(attempts);
                 }
             }
 
             if (strategy.usesMinecraftStatus()) {
                 remaining = deadline - nanoTime.getAsLong();
                 if (remaining <= 0) {
-                    return finish(mapping, strategy,
-                            ReadinessResult.failure(ReadinessResult.Outcome.TIMED_OUT, attempts, lastProbe));
+                    return ReadinessResult.failure(ReadinessResult.Outcome.TIMED_OUT, attempts, lastProbe);
                 }
                 MinecraftStatusProbe.ProbeResult probe = statusProbe.probe(
                         target.host(),
@@ -89,7 +181,7 @@ public final class ServerReadinessChecker {
                         positiveRemaining(remaining));
                 lastProbe = probe.outcome();
                 if (probe.ready()) {
-                    return finish(mapping, strategy, ReadinessResult.ready(attempts));
+                    return ReadinessResult.ready(attempts);
                 }
 
                 if (!strategy.usesDockerHealth()) {
@@ -99,25 +191,27 @@ public final class ServerReadinessChecker {
                                 mapping.containerName(), positiveRemaining(remaining));
                         ReadinessResult terminal = statusResult(status, attempts, lastProbe);
                         if (terminal != null) {
-                            return finish(mapping, strategy, terminal);
+                            return terminal;
                         }
                     }
                 }
             }
+            return null;
+        }
 
-            remaining = deadline - nanoTime.getAsLong();
-            if (remaining <= 0) {
-                return finish(mapping, strategy,
-                        ReadinessResult.failure(ReadinessResult.Outcome.TIMED_OUT, attempts, lastProbe));
+        @Override
+        public boolean cancel(boolean mayInterruptIfRunning) {
+            boolean cancelled = super.cancel(mayInterruptIfRunning);
+            if (cancelled) {
+                CompletableFuture<ReadinessResult> attempt;
+                synchronized (lock) {
+                    attempt = inFlight;
+                }
+                if (attempt != null) {
+                    attempt.cancel(true);
+                }
             }
-            long sleepNanos = Math.min(settings.probeInterval().toNanos(), remaining);
-            try {
-                sleeper.sleep(sleepNanos);
-            } catch (InterruptedException error) {
-                Thread.currentThread().interrupt();
-                return finish(mapping, strategy,
-                        ReadinessResult.failure(ReadinessResult.Outcome.INTERRUPTED, attempts, lastProbe));
-            }
+            return cancelled;
         }
     }
 
@@ -171,8 +265,12 @@ public final class ServerReadinessChecker {
         return result;
     }
 
-    @FunctionalInterface
-    interface Sleeper {
-        void sleep(long nanos) throws InterruptedException;
+    private static Throwable unwrap(Throwable error) {
+        Throwable current = error;
+        while ((current instanceof CompletionException || current instanceof ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 }
