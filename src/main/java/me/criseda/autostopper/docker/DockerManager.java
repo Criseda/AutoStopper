@@ -8,6 +8,10 @@ import java.util.Locale;
 
 public final class DockerManager {
     private static final Duration DEFAULT_COMMAND_TIMEOUT = Duration.ofSeconds(10);
+    /** Docker's stop grace period when a container does not configure StopTimeout. */
+    static final Duration DEFAULT_STOP_GRACE_PERIOD = Duration.ofSeconds(10);
+    /** Upper bound on how long AutoStopper waits for a container's own stop grace period. */
+    static final Duration MAX_STOP_GRACE_PERIOD = Duration.ofMinutes(10);
     private final Logger logger;
     private final CommandRunner commandRunner;
     private final Duration commandTimeout;
@@ -211,12 +215,23 @@ public final class DockerManager {
     }
 
     public ContainerStatus stopContainer(String containerName) {
-        CommandOutput output = commandRunner.run(List.of("docker", "stop", containerName), commandTimeout);
+        // docker stop waits for the container's own StopTimeout before SIGKILL, so the CLI deadline
+        // must cover that grace period rather than cutting a graceful save short.
+        Duration gracePeriod = stopGracePeriod(containerName);
+        Duration stopDeadline = gracePeriod.plus(commandTimeout);
+        CommandOutput output = commandRunner.run(List.of("docker", "stop", containerName), stopDeadline);
 
         switch (output.outcome()) {
             case TIMED_OUT:
-                logger.error("Timed out after {}ms stopping container {}: {}",
-                        commandTimeout.toMillis(), containerName, output.stderr().trim());
+                if (!Thread.currentThread().isInterrupted()
+                        && getContainerStatus(containerName) == ContainerStatus.STOPPED) {
+                    logger.warn("docker stop for container {} exceeded {}ms, but the container is stopped",
+                            containerName, stopDeadline.toMillis());
+                    return ContainerStatus.STOPPED;
+                }
+                logger.error("Timed out after {}ms stopping container {} (stop grace period {}s): {}",
+                        stopDeadline.toMillis(), containerName, gracePeriod.toSeconds(),
+                        output.stderr().trim());
                 return ContainerStatus.TIMED_OUT;
             case SPAWN_FAILED:
                 logger.error("Could not execute docker stop for container {}: {}",
@@ -239,6 +254,34 @@ public final class DockerManager {
         logger.error("Failed to stop container {}: {} (Exit Code: {})",
                 containerName, output.stderr().trim(), output.exitCode());
         return ContainerStatus.FAILED;
+    }
+
+    private Duration stopGracePeriod(String containerName) {
+        CommandOutput output = commandRunner.run(List.of(
+                "docker", "inspect", "-f", "{{.Config.StopTimeout}}", containerName), commandTimeout);
+        if (output.outcome() != CommandOutput.Outcome.COMPLETED || output.exitCode() != 0) {
+            logger.debug("Could not read the stop grace period for container {}; assuming {}s: {}",
+                    containerName, DEFAULT_STOP_GRACE_PERIOD.toSeconds(), output.stderr().trim());
+            return DEFAULT_STOP_GRACE_PERIOD;
+        }
+        String value = output.stdout().trim();
+        if (value.isEmpty() || "<nil>".equals(value) || "<no value>".equals(value)) {
+            return DEFAULT_STOP_GRACE_PERIOD;
+        }
+        long seconds;
+        try {
+            seconds = Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            logger.warn("Unexpected stop grace period for container {}: {}; assuming {}s",
+                    containerName, value, DEFAULT_STOP_GRACE_PERIOD.toSeconds());
+            return DEFAULT_STOP_GRACE_PERIOD;
+        }
+        if (seconds < 0 || seconds > MAX_STOP_GRACE_PERIOD.toSeconds()) {
+            logger.warn("Stop grace period {}s for container {} is unbounded or too long; waiting at most {}s",
+                    seconds, containerName, MAX_STOP_GRACE_PERIOD.toSeconds());
+            return MAX_STOP_GRACE_PERIOD;
+        }
+        return Duration.ofSeconds(seconds);
     }
 
     private boolean isInaccessibleError(String stderr) {

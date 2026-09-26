@@ -75,6 +75,18 @@ Check the proxy log for `Stop attempt ... failed` and the last `ContainerStatus`
 container state, stop behavior, and host load. Do not add an automatic restart policy to a monitored
 container: Docker would restart it after AutoStopper successfully stops it.
 
+### Stop grace period
+
+`docker stop` sends `SIGTERM`, waits for the container's own stop grace period, then sends `SIGKILL`.
+AutoStopper does not override that policy: before each stop it reads the container's configured
+`StopTimeout` and waits for that period plus its normal 10-second Docker command timeout. Unset
+values use Docker's 10-second default; unbounded or longer values are capped at 10 minutes.
+
+Large or modded worlds can need more than 10 seconds to save. Give such backends a longer grace
+period in their deployment, for example `stop_grace_period: 60s` in Compose or
+`docker run --stop-timeout 60`. If the Docker CLI still exceeds the deadline, AutoStopper checks the
+container again and reports the stop as successful when it has already stopped.
+
 ## Connection behavior
 
 - AutoStopper intercepts only destinations present in `monitored_servers`. If a hub should remain

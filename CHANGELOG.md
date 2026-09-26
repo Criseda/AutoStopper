@@ -10,6 +10,13 @@ All notable AutoStopper changes are documented here.
   `docker stop`) no longer stay `READY` after a prior successful connection. The inactivity scan and
   refused connection attempts now reconcile the stopped container through the revision-guarded
   lifecycle path, so the next player connection wakes the server again (#93).
+- Stops now honor the container's own stop grace period (`StopTimeout`, Compose
+  `stop_grace_period`) instead of cutting `docker stop` off at a fixed 10-second deadline. The
+  deadline is the grace period plus the Docker command timeout, with Docker's 10-second default when
+  unset and a 10-minute cap. A stop whose CLI still times out is re-inspected and reported as
+  stopped when the container has already exited. The stop command remains `docker stop <container>`
+  (#94).
+- The examples give managed backends `stop_grace_period: 60s` so large worlds can finish saving.
 
 ## [2.1.0] - 2026-08-16
 

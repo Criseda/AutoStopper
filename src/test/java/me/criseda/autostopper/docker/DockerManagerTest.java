@@ -203,24 +203,94 @@ public class DockerManagerTest {
 
     @Test
     public void testStopContainer_Success() {
+        commandRunner.stage("inspect", completed(0, "<nil>", ""));
         commandRunner.stage("stop", completed(0, "test-container", ""));
 
         assertEquals(ContainerStatus.STOPPED, dockerManager.stopContainer("test-container"));
         verify(logger).info(contains("Stopped container"), anyString());
+        assertEquals(List.of(
+                        List.of("docker", "inspect", "-f", "{{.Config.StopTimeout}}", "test-container"),
+                        List.of("docker", "stop", "test-container")),
+                commandRunner.commands, "the stop command itself must not override the container policy");
     }
 
     @Test
     public void testStopContainer_Failed() {
+        commandRunner.stage("inspect", completed(0, "<nil>", ""));
         commandRunner.stage("stop", completed(1, "", "container error"));
 
         assertEquals(ContainerStatus.FAILED, dockerManager.stopContainer("test-container"));
     }
 
     @Test
-    public void testStopContainer_TimedOut() {
+    public void testStopContainer_TimedOutWhileStillRunning() {
+        commandRunner.stage("inspect", completed(0, "<nil>", ""));
         commandRunner.stage("stop", new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""));
+        commandRunner.stage("inspect", completed(0, "true", ""));
 
         assertEquals(ContainerStatus.TIMED_OUT, dockerManager.stopContainer("test-container"));
+    }
+
+    @Test
+    public void testStopContainer_TimedOutButAlreadyStoppedReportsStopped() {
+        commandRunner.stage("inspect", completed(0, "<nil>", ""));
+        commandRunner.stage("stop", new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""));
+        commandRunner.stage("inspect", completed(0, "false", ""));
+
+        assertEquals(ContainerStatus.STOPPED, dockerManager.stopContainer("test-container"));
+    }
+
+    @Test
+    public void testStopContainer_TimedOutWhenInterruptedSkipsReinspection() {
+        commandRunner.stage("inspect", completed(0, "<nil>", ""));
+        commandRunner.stage("stop", new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""));
+
+        Thread.currentThread().interrupt();
+        try {
+            assertEquals(ContainerStatus.TIMED_OUT, dockerManager.stopContainer("test-container"));
+        } finally {
+            Thread.interrupted();
+        }
+        assertEquals(2, commandRunner.commands.size());
+    }
+
+    @Test
+    public void testStopContainer_DeadlineCoversConfiguredGracePeriod() {
+        commandRunner.stage("inspect", completed(0, "60\n", ""));
+        commandRunner.stage("stop", completed(0, "test-container", ""));
+
+        assertEquals(ContainerStatus.STOPPED, dockerManager.stopContainer("test-container"));
+        assertEquals(List.of(Duration.ofSeconds(10), Duration.ofSeconds(70)), commandRunner.timeouts);
+    }
+
+    @Test
+    public void testStopContainer_DeadlineFallsBackToDockerDefaultGracePeriod() {
+        for (CommandOutput graceInspection : List.of(
+                completed(0, "<nil>", ""),
+                completed(0, "<no value>", ""),
+                completed(0, "", ""),
+                completed(0, "soon", ""),
+                completed(1, "", "No such object: test-container"),
+                new CommandOutput(CommandOutput.Outcome.TIMED_OUT, -1, "", ""))) {
+            commandRunner.stage("inspect", graceInspection);
+            commandRunner.stage("stop", completed(0, "test-container", ""));
+
+            dockerManager.stopContainer("test-container");
+
+            assertEquals(Duration.ofSeconds(20), commandRunner.lastTimeout, graceInspection.toString());
+        }
+    }
+
+    @Test
+    public void testStopContainer_DeadlineCapsUnboundedOrExcessiveGracePeriod() {
+        for (String configured : List.of("-1", "86400")) {
+            commandRunner.stage("inspect", completed(0, configured, ""));
+            commandRunner.stage("stop", completed(0, "test-container", ""));
+
+            dockerManager.stopContainer("test-container");
+
+            assertEquals(DockerManager.MAX_STOP_GRACE_PERIOD.plusSeconds(10), commandRunner.lastTimeout, configured);
+        }
     }
 
     @Test
@@ -275,6 +345,7 @@ public class DockerManagerTest {
     private static class FakeCommandRunner implements CommandRunner {
         private final Map<String, Queue<CommandOutput>> responses = new LinkedHashMap<>();
         private final List<List<String>> commands = new ArrayList<>();
+        private final List<Duration> timeouts = new ArrayList<>();
         private Duration lastTimeout;
 
         void stage(String command, CommandOutput output) {
@@ -284,6 +355,7 @@ public class DockerManagerTest {
         @Override
         public CommandOutput run(List<String> command, Duration timeout) {
             commands.add(command);
+            timeouts.add(timeout);
             lastTimeout = timeout;
             Queue<CommandOutput> queue = responses.get(command.get(1));
             if (queue == null || queue.isEmpty()) {

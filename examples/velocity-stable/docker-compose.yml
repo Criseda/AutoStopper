@@ -40,6 +40,7 @@ services:
     networks:
       - mc-network
     restart: "no"  # Important: Let AutoStopper manage the container lifecycle
+    stop_grace_period: 60s  # Time to save the world; AutoStopper waits for this period
 
   fabric:
     image: itzg/minecraft-server:java21
@@ -54,6 +55,7 @@ services:
     networks:
       - mc-network
     restart: "no"  # Important: Let AutoStopper manage the container lifecycle
+    stop_grace_period: 60s  # Time to save the world; AutoStopper waits for this period
 
 networks:
   mc-network:
