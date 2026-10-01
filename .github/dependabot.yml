@@ -18,25 +18,30 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
+    # Dependabot assigns each dependency to the first group it matches, so the
+    # runtime catch-all must stay last. Major updates stay as individual PRs.
     groups:
-      junit:
+      test-dependencies:
         patterns:
           - "org.junit:*"
           - "org.junit.jupiter:*"
           - "org.junit.platform:*"
-        update-types:
-          - minor
-          - patch
-      mockito:
-        patterns:
           - "org.mockito:*"
         update-types:
           - minor
           - patch
-      maven-build-plugins:
+      build-plugins:
         patterns:
           - "org.apache.maven.plugins:*"
           - "org.codehaus.mojo:*"
+          - "org.jacoco:*"
+          - "com.github.spotbugs:*"
+        update-types:
+          - minor
+          - patch
+      runtime-dependencies:
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
