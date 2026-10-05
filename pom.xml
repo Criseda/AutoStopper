@@ -154,8 +154,8 @@
                             <failFast>true</failFast>
                             <rules>
                                 <requireMavenVersion>
-                                    <version>[3.9.16]</version>
-                                    <message>AutoStopper must be built with the pinned Maven 3.9.16 Wrapper. Use ./mvnw verify or mvnw.cmd verify.</message>
+                                    <version>[3.10.0]</version>
+                                    <message>AutoStopper must be built with the pinned Maven 3.10.0 Wrapper. Use ./mvnw verify or mvnw.cmd verify.</message>
                                 </requireMavenVersion>
                                 <requireJavaVersion>
                                     <version>[21,26)</version>
