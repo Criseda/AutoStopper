@@ -53,16 +53,16 @@ final class WaiterConnector {
         if (runtime.isShutdown() || waiter.isFinished()) {
             return;
         }
-        if (!isPlayerActive(waiter.player)) {
+        if (!isPlayerActive(waiter.player())) {
             finishWaiter(entry, waiter, ConnectionOutcome.PLAYER_DISCONNECTED);
             return;
         }
 
         String serverName = entry.mapping().serverName();
-        LifecycleRuntime.ReconnectPermit permit = runtime.grantReconnect(waiter.playerId, serverName);
+        LifecycleRuntime.ReconnectPermit permit = runtime.grantReconnect(waiter.playerId(), serverName);
         CompletableFuture<ConnectionRequestBuilder.Result> connection;
         try {
-            connection = waiter.player.createConnectionRequest(waiter.targetServer).connect();
+            connection = waiter.player().createConnectionRequest(waiter.targetServer()).connect();
         } catch (RuntimeException error) {
             runtime.revokeReconnect(permit);
             logger.error("Error creating connection request for server {}", serverName, error);
@@ -152,7 +152,7 @@ final class WaiterConnector {
                     AutoStopperMessages.lifecycleFailed(
                             LifecycleMessages.connectionFailure(serverName, outcome), elapsed(waiter)), false);
         }
-        waiter.future.complete(outcome);
+        waiter.complete(outcome);
         drainNotifications(waiter);
         runtime.cleanupRetired(serverName, entry);
         if (verifyContainer) {
@@ -166,8 +166,8 @@ final class WaiterConnector {
      */
     void failStartupWaiter(ConnectionWaiter waiter, String serverName, StartupOutcome outcome,
             ReadinessResult readinessFailure) {
-        boolean active = isPlayerActive(waiter.player);
-        boolean initialConnection = active && isInitialConnection(waiter.player);
+        boolean active = isPlayerActive(waiter.player());
+        boolean initialConnection = active && isInitialConnection(waiter.player());
         if (active) {
             Component failureMessage = AutoStopperMessages.lifecycleFailed(
                     LifecycleMessages.startupFailure(serverName, outcome, readinessFailure),
@@ -180,11 +180,11 @@ final class WaiterConnector {
         telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT, serverName,
                 TelemetryOrigin.PLAYER_CONNECTION, TelemetryOutcome.from(waiterOutcome),
                 elapsed(waiter), 0);
-        waiter.future.complete(waiterOutcome);
+        waiter.complete(waiterOutcome);
         drainNotifications(waiter);
         if (active && !initialConnection && (outcome == StartupOutcome.NOT_READY
                 || outcome == StartupOutcome.READINESS_ERROR)) {
-            send(waiter.player, AutoStopperMessages.retryServerCommand(serverName));
+            send(waiter.player(), AutoStopperMessages.retryServerCommand(serverName));
         }
     }
 
@@ -193,9 +193,9 @@ final class WaiterConnector {
      * or the proxy is shutting down. No notifications are delivered.
      */
     void abandon(ConnectionWaiter waiter, ConnectionOutcome outcome) {
-        telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT, waiter.serverName,
+        telemetry.recordOperation(TelemetryOperationType.CONNECTION_WAIT, waiter.serverName(),
                 TelemetryOrigin.PLAYER_CONNECTION, TelemetryOutcome.from(outcome), elapsed(waiter), 0);
-        waiter.future.complete(outcome);
+        waiter.complete(outcome);
     }
 
     private void reconcileExternalStop(ServerMapping mapping, long expectedRevision) {
@@ -233,20 +233,20 @@ final class WaiterConnector {
     }
 
     private void deliverNotification(ConnectionWaiter waiter, ConnectionWaiter.WaiterNotification notification) {
-        if (runtime.isShutdown() || waiter.isDiscarded() || !isPlayerActive(waiter.player)) {
+        if (runtime.isShutdown() || waiter.isDiscarded() || !isPlayerActive(waiter.player())) {
             return;
         }
         if (notification.disconnectInitial()) {
             try {
-                if (waiter.player.getCurrentServer().isEmpty()) {
-                    waiter.player.disconnect(notification.message());
+                if (waiter.player().getCurrentServer().isEmpty()) {
+                    waiter.player().disconnect(notification.message());
                     return;
                 }
             } catch (RuntimeException error) {
                 logger.debug("Could not inspect or disconnect an initial lifecycle waiter", error);
             }
         }
-        send(waiter.player, notification.message());
+        send(waiter.player(), notification.message());
     }
 
     /** Sends a lifecycle message, unless the proxy is shutting down or the player has left. */
@@ -271,7 +271,7 @@ final class WaiterConnector {
     }
 
     private Duration elapsed(ConnectionWaiter waiter) {
-        return runtime.elapsedSince(waiter.startNanos);
+        return runtime.elapsedSince(waiter.startNanos());
     }
 
     private boolean isInitialConnection(Player player) {

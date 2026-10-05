@@ -21,12 +21,12 @@ import java.util.function.Consumer;
  * the owning {@link LifecycleEntry}'s monitor.
  */
 final class ConnectionWaiter {
-    final UUID playerId;
-    final Player player;
-    final RegisteredServer targetServer;
-    final String serverName;
-    final CompletableFuture<ConnectionOutcome> future = new CompletableFuture<>();
-    final long startNanos;
+    private final UUID playerId;
+    private final Player player;
+    private final RegisteredServer targetServer;
+    private final String serverName;
+    private final CompletableFuture<ConnectionOutcome> outcome = new CompletableFuture<>();
+    private final long startNanos;
     private final ArrayDeque<WaiterNotification> notifications = new ArrayDeque<>();
     private final Set<ConnectionLifecycleStage> queuedStages =
             EnumSet.noneOf(ConnectionLifecycleStage.class);
@@ -47,6 +47,36 @@ final class ConnectionWaiter {
         this.startNanos = startNanos;
     }
 
+    UUID playerId() {
+        return playerId;
+    }
+
+    Player player() {
+        return player;
+    }
+
+    RegisteredServer targetServer() {
+        return targetServer;
+    }
+
+    String serverName() {
+        return serverName;
+    }
+
+    long startNanos() {
+        return startNanos;
+    }
+
+    /** The future handed back to whoever asked for this connection. */
+    CompletableFuture<ConnectionOutcome> outcome() {
+        return outcome;
+    }
+
+    /** Ends this waiter's request. Only {@link WaiterConnector} does this; later calls have no effect. */
+    void complete(ConnectionOutcome result) {
+        outcome.complete(result);
+    }
+
     /** Marks the waiter as no longer wanted (player left or proxy shutting down); nothing more is delivered. */
     void discard() {
         discarded = true;
@@ -58,7 +88,7 @@ final class ConnectionWaiter {
 
     /** Whether this waiter needs no further work: discarded, or its outcome already decided. */
     boolean isFinished() {
-        return discarded || future.isDone();
+        return discarded || outcome.isDone();
     }
 
     /** Caller must hold the owning entry's monitor. */

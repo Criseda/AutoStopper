@@ -87,7 +87,7 @@ final class StartupPipeline {
             return;
         }
         if (future == null) {
-            failStage(entry, mapping, operation, stage.telemetryType, stage.missingResultTelemetry,
+            recordStageFailure(entry, mapping, operation, stage.telemetryType, stage.missingResultTelemetry,
                     stage.errorOutcome, runtime.elapsedSince(stageStart));
             return;
         }
@@ -112,12 +112,12 @@ final class StartupPipeline {
             Optional<ContainerStatus> status, Duration elapsed) {
         TelemetryOperationType type = Stage.STATUS.telemetryType;
         if (status == null) {
-            failStage(entry, mapping, operation, type, TelemetryOutcome.STATUS_FAILED,
+            recordStageFailure(entry, mapping, operation, type, TelemetryOutcome.STATUS_FAILED,
                     StartupOutcome.STATUS_ERROR, elapsed);
             return;
         }
         if (status.isEmpty()) {
-            failStage(entry, mapping, operation, type, TelemetryOutcome.NO_MAPPING,
+            recordStageFailure(entry, mapping, operation, type, TelemetryOutcome.NO_MAPPING,
                     StartupOutcome.STATUS_NO_MAPPING, elapsed);
             return;
         }
@@ -137,7 +137,7 @@ final class StartupPipeline {
             ContainerStatus result, Duration elapsed) {
         TelemetryOperationType type = Stage.START.telemetryType;
         if (result == null) {
-            failStage(entry, mapping, operation, type, TelemetryOutcome.START_FAILED,
+            recordStageFailure(entry, mapping, operation, type, TelemetryOutcome.START_FAILED,
                     StartupOutcome.START_ERROR, elapsed);
             return;
         }
@@ -167,6 +167,7 @@ final class StartupPipeline {
         }
     }
 
+    /** Fails startup because a stage's future failed: classifies {@code error}, logging unexpected ones. */
     private void failStage(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation,
             Stage stage, Throwable error, Duration elapsed) {
         StartupOutcome outcome = AutoStopperExecutor.classify(error,
@@ -175,11 +176,13 @@ final class StartupPipeline {
             logger.error("Lifecycle {} operation failed for server {}",
                     stage.name().toLowerCase(), mapping.serverName(), AutoStopperExecutor.rootCause(error));
         }
-        failStage(entry, mapping, operation, stage.telemetryType, outcome.toTelemetryOutcome(), outcome, elapsed);
+        recordStageFailure(entry, mapping, operation, stage.telemetryType, outcome.toTelemetryOutcome(), outcome, elapsed);
     }
 
-    private void failStage(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation,
-            TelemetryOperationType type, TelemetryOutcome stageOutcome, StartupOutcome outcome, Duration elapsed) {
+    /** Records a failed stage's telemetry and fails startup with {@code outcome}. */
+    private void recordStageFailure(LifecycleEntry entry, ServerMapping mapping,
+            CompletableFuture<StartupOutcome> operation, TelemetryOperationType type, TelemetryOutcome stageOutcome,
+            StartupOutcome outcome, Duration elapsed) {
         telemetry.recordStage(type, mapping.serverName(), stageOutcome, elapsed);
         completeStartup(entry, mapping, operation, outcome, null);
     }

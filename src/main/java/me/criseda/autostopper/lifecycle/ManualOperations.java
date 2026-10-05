@@ -105,13 +105,22 @@ final class ManualOperations {
         recordWhenDone(TelemetryOperationType.MANUAL_STOP, mapping, startNanos, stop,
                 ManualStopOutcome.STOP_FAILED, TelemetryOutcome::from);
         if (admission.rejected() == null) {
-            stopOnWorker(admission.entry(), mapping, registeredServer, stop, null);
+            runStop(admission.entry(), mapping, registeredServer, stop);
         }
         return stop;
     }
 
     // --- Restart ---
 
+    /**
+     * The restart future is completed in exactly one of three places:
+     * <ol>
+     *   <li>here, when admission rejects it;</li>
+     *   <li>here, when its stop ends any way but STOPPED;</li>
+     *   <li>in {@link #completeRestart}, when the startup that follows ends. That startup is opened
+     *       by {@link #runStopThenStart}, or here when the server was already stopped.</li>
+     * </ol>
+     */
     CompletableFuture<ManualRestartOutcome> requestRestart(ServerMapping mapping, RegisteredServer registeredServer) {
         long startNanos = runtime.now();
         RestartAdmission admission = runtime.admit(mapping,
@@ -144,7 +153,6 @@ final class ManualOperations {
             completeRestart(restart, admission.startup());
             return restart;
         }
-        // A stop that ends in anything but STOPPED ends the restart too.
         admission.stop().whenComplete((stopOutcome, error) -> {
             if (error != null) {
                 restart.completeExceptionally(error);
@@ -152,7 +160,7 @@ final class ManualOperations {
                 restart.complete(restartOutcome(stopOutcome));
             }
         });
-        stopOnWorker(admission.entry(), mapping, registeredServer, admission.stop(), restart);
+        runStopThenStart(admission.entry(), mapping, registeredServer, admission.stop(), restart);
         return restart;
     }
 
@@ -161,7 +169,7 @@ final class ManualOperations {
         startup.whenComplete((outcome, error) -> {
             if (error != null) {
                 restart.complete(AutoStopperExecutor.classify(error, ManualRestartOutcome.OVERLOADED,
-                        ManualRestartOutcome.CANCELLED, ManualRestartOutcome.STOP_FAILED));
+                        ManualRestartOutcome.CANCELLED, ManualRestartOutcome.START_FAILED));
             } else if (outcome == null) {
                 restart.complete(ManualRestartOutcome.START_FAILED);
             } else {
@@ -200,25 +208,46 @@ final class ManualOperations {
         return stop;
     }
 
+    /** Stops the container on a worker and completes {@code stop} with how it ended. */
+    private void runStop(LifecycleEntry entry, ServerMapping mapping, RegisteredServer registeredServer,
+            CompletableFuture<ManualStopOutcome> stop) {
+        onWorker(entry, stop, () -> {
+            if (mayStillStop(entry, registeredServer, stop)) {
+                finishManualStop(entry, stop, serverManager.stopServer(mapping), "manual stop");
+            }
+        });
+    }
+
     /**
-     * Runs an admitted stop on a worker: re-checks that it may still proceed, stops the container,
-     * and completes {@code stop} with how it ended. For a restart ({@code restart} not null) whose
-     * container stopped, the entry goes straight from STOPPING to STARTING under the same lock,
-     * so no player connection can slip in between, and the container start is launched.
+     * Stops the container on a worker like {@link #runStop}, then, if it stopped, starts it again.
+     * The entry goes from STOPPING to STARTING under one lock, so no player connection can slip in
+     * between.
      */
-    private void stopOnWorker(LifecycleEntry entry, ServerMapping mapping, RegisteredServer registeredServer,
+    private void runStopThenStart(LifecycleEntry entry, ServerMapping mapping, RegisteredServer registeredServer,
             CompletableFuture<ManualStopOutcome> stop, CompletableFuture<ManualRestartOutcome> restart) {
+        onWorker(entry, stop, () -> {
+            if (!mayStillStop(entry, registeredServer, stop)) {
+                return;
+            }
+            ContainerStatus result = serverManager.stopServer(mapping);
+            CompletableFuture<StartupOutcome> startup;
+            synchronized (entry) {
+                if (!finishManualStop(entry, stop, result, "container stop during restart")
+                        || result != ContainerStatus.STOPPED) {
+                    return;
+                }
+                startup = entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0);
+            }
+            pipeline.launchStart(entry, mapping, startup);
+            completeRestart(restart, startup);
+        });
+    }
+
+    /** Runs {@code work} on a worker; if it cannot be scheduled or throws, the stop is aborted. */
+    private void onWorker(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop, Runnable work) {
         try {
             executor.supply(() -> {
-                if (!mayStillStop(entry, registeredServer, stop)) {
-                    return null;
-                }
-                ContainerStatus result = serverManager.stopServer(mapping);
-                CompletableFuture<StartupOutcome> startup = settleStop(entry, stop, result, restart != null);
-                if (startup != null) {
-                    pipeline.launchStart(entry, mapping, startup);
-                    completeRestart(restart, startup);
-                }
+                work.run();
                 return null;
             }).exceptionally(error -> {
                 abortStop(entry, stop, stopFailure(error));
@@ -236,16 +265,7 @@ final class ManualOperations {
     private boolean mayStillStop(LifecycleEntry entry, RegisteredServer registeredServer,
             CompletableFuture<ManualStopOutcome> stop) {
         synchronized (entry) {
-            ManualStopOutcome blocked = null;
-            if (runtime.isShutdown()) {
-                blocked = ManualStopOutcome.PROXY_SHUTDOWN;
-            } else if (!entry.ownsOperation(stop) || !entry.is(ServerLifecycleState.STOPPING)) {
-                blocked = ManualStopOutcome.CANCELLED;
-            } else if (hasPlayers(registeredServer)) {
-                blocked = ManualStopOutcome.PLAYERS_CONNECTED;
-            } else if (entry.hasWaiters()) {
-                blocked = ManualStopOutcome.WAITERS_PRESENT;
-            }
+            ManualStopOutcome blocked = lateStopBlocker(entry, registeredServer, stop);
             if (blocked == null) {
                 return true;
             }
@@ -254,29 +274,58 @@ final class ManualOperations {
         }
     }
 
+    /** Like {@link #stopBlocker}, for an admitted stop about to call Docker. Caller holds the entry lock. */
+    private ManualStopOutcome lateStopBlocker(LifecycleEntry entry, RegisteredServer registeredServer,
+            CompletableFuture<ManualStopOutcome> stop) {
+        ManualStopOutcome lost = lostOwnership(entry, stop);
+        if (lost != null) {
+            return lost;
+        }
+        if (hasPlayers(registeredServer)) {
+            return ManualStopOutcome.PLAYERS_CONNECTED;
+        }
+        if (entry.hasWaiters()) {
+            return ManualStopOutcome.WAITERS_PRESENT;
+        }
+        return null;
+    }
+
     /**
-     * Applies the Docker stop result. Returns the restart's new startup when {@code thenStart} is
-     * set and the container stopped, otherwise {@code null}.
+     * Applies the Docker stop result and completes {@code stop} with how it ended.
+     *
+     * @return whether {@code stop} still owned the entry. When it did not, the result is only
+     *         applied to the state, so the entry still matches the container.
      */
-    private CompletableFuture<StartupOutcome> settleStop(LifecycleEntry entry,
-            CompletableFuture<ManualStopOutcome> stop, ContainerStatus result, boolean thenStart) {
+    private boolean finishManualStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop,
+            ContainerStatus result, String failureContext) {
         synchronized (entry) {
-            if (runtime.isShutdown() || !entry.ownsOperation(stop) || !entry.is(ServerLifecycleState.STOPPING)) {
-                entry.settleStop(result);
-                stop.complete(ManualStopOutcome.PROXY_SHUTDOWN);
-                return null;
+            ManualStopOutcome lost = lostOwnership(entry, stop);
+            if (lost != null) {
+                entry.applyStopResult(result);
+                stop.complete(lost);
+                return false;
             }
             entry.detachOperation(stop);
-            entry.finishStop(result, () -> new OperationalFailure(Instant.now(),
-                    thenStart ? "container stop during restart" : "manual stop",
+            entry.finishStop(result, () -> new OperationalFailure(Instant.now(), failureContext,
                     "container stop failed with " + result,
                     "Check Docker access and container state, then retry."));
             stop.complete(stopOutcome(result));
-            if (!thenStart || result != ContainerStatus.STOPPED) {
-                return null;
-            }
-            return entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0);
+            return true;
         }
+    }
+
+    /**
+     * Why {@code stop} no longer owns the entry, or {@code null} if it still does: the proxy is
+     * shutting down, or something else took the entry out of STOPPING. Caller holds the entry lock.
+     */
+    private ManualStopOutcome lostOwnership(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop) {
+        if (runtime.isShutdown()) {
+            return ManualStopOutcome.PROXY_SHUTDOWN;
+        }
+        if (!entry.ownsOperation(stop) || !entry.is(ServerLifecycleState.STOPPING)) {
+            return ManualStopOutcome.CANCELLED;
+        }
+        return null;
     }
 
     /** Gives up an admitted stop: the server goes back to READY and {@code stop} ends with {@code outcome}. */

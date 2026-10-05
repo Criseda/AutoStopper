@@ -125,7 +125,7 @@ final class LifecycleEntry {
     }
 
     void addWaiter(ConnectionWaiter waiter) {
-        waiters.put(waiter.playerId, waiter);
+        waiters.put(waiter.playerId(), waiter);
         touch();
     }
 
@@ -138,7 +138,7 @@ final class LifecycleEntry {
     }
 
     boolean removeWaiter(ConnectionWaiter waiter) {
-        boolean removed = waiters.remove(waiter.playerId, waiter);
+        boolean removed = waiters.remove(waiter.playerId(), waiter);
         if (removed) {
             touch();
         }
@@ -237,14 +237,14 @@ final class LifecycleEntry {
         transition(ServerLifecycleState.STOPPING);
     }
 
-    /** Applies a Docker stop result without touching the recorded failure. */
-    void settleStop(ContainerStatus result) {
+    /** Moves to STOPPED or FAILED to match what Docker did, without touching the recorded failure. */
+    void applyStopResult(ContainerStatus result) {
         transition(result == ContainerStatus.STOPPED ? ServerLifecycleState.STOPPED : ServerLifecycleState.FAILED);
     }
 
     /** Applies a Docker stop result and records {@code failure} unless the container stopped. */
     void finishStop(ContainerStatus result, Supplier<OperationalFailure> failure) {
-        settleStop(result);
+        applyStopResult(result);
         lastFailure = result == ContainerStatus.STOPPED ? null : failure.get();
     }
 

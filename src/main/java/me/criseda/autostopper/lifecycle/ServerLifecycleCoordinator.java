@@ -31,7 +31,8 @@ import java.util.function.LongSupplier;
  * Public entry point for server lifecycle management: player connection admission, automatic
  * stop bookkeeping, configuration reconciliation, status queries, and shutdown.
  *
- * <p>Collaborators, all package-private and sharing one {@link LifecycleRuntime}:
+ * <p>Shared state (the per-server entries, permits, shutdown flag, and lock order) lives in
+ * {@link LifecycleRuntime}. The package-private collaborators:
  * <ul>
  *   <li>{@link LifecycleEntry} - the per-server state machine; every state change goes through it.</li>
  *   <li>{@link StartupPipeline} - status, start, and readiness for the single shared startup.</li>
@@ -136,7 +137,7 @@ public final class ServerLifecycleCoordinator {
             }
         }
         connector.drainNotifications(admission.waiter());
-        return admission.waiter().future;
+        return admission.waiter().outcome();
     }
 
     /** Runs with the entry lock held, from {@link LifecycleRuntime#admit}. */

@@ -22,9 +22,18 @@ import java.util.function.Predicate;
  * The lifecycle state shared by {@link ServerLifecycleCoordinator} and its collaborators: one
  * {@link LifecycleEntry} per server, reconnect permits, the shutdown flag, and the clock.
  *
- * <p>Locking: admission and shutdown hold the shutdown lock, then the map's per-key lock, then
- * the entry monitor, then (briefly) a waiter monitor. Asynchronous callbacks take only the entry
- * monitor. Every method here that hands out an entry does so with its monitor held.
+ * <p>Locking. Locks are always taken in this order, each one optional:
+ * <ol>
+ *   <li>the shutdown lock ({@link #admit}, {@link #tryBeginStop}, and {@link #shutdown} only),</li>
+ *   <li>the map's per-key lock (every method here that changes the map),</li>
+ *   <li>the entry monitor,</li>
+ *   <li>a waiter monitor, briefly, to queue a notification.</li>
+ * </ol>
+ * The rule that follows: while holding an entry monitor, never call a method here that touches
+ * the map ({@link #admit}, {@link #tryBeginStop}, {@link #update}, {@link #updateAll},
+ * {@link #cleanupRetired}, {@link #markStoppedIfUnchanged}, {@link #shutdown}). The shutdown flag,
+ * clock, and reconnect-permit methods take no lock and are safe anywhere. Every method here that
+ * hands out an entry does so with its monitor held.
  */
 final class LifecycleRuntime {
     private final Logger logger;
