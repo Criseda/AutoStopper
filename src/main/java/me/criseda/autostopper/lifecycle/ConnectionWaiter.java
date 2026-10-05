@@ -17,8 +17,8 @@ import java.util.function.Consumer;
 /**
  * One player's pending connection to a managed server. The notification queue is guarded by the
  * waiter's own monitor so that each lifecycle stage is delivered at most once and in order, even
- * when several threads queue stages concurrently. {@link #connectionFuture} is guarded by the
- * owning {@link LifecycleEntry}.
+ * when several threads queue stages concurrently. The in-flight connection request is guarded by
+ * the owning {@link LifecycleEntry}'s monitor.
  */
 final class ConnectionWaiter {
     final UUID playerId;
@@ -32,11 +32,11 @@ final class ConnectionWaiter {
             EnumSet.noneOf(ConnectionLifecycleStage.class);
     private final Set<ConnectionLifecycleStage> deliveredStages =
             EnumSet.noneOf(ConnectionLifecycleStage.class);
-    volatile boolean discarded;
+    private volatile boolean discarded;
     private boolean notificationsSuppressed;
     private boolean deliveringNotifications;
     private int lastWaitingCountReported;
-    CompletableFuture<ConnectionRequestBuilder.Result> connectionFuture;
+    private CompletableFuture<ConnectionRequestBuilder.Result> connection;
 
     ConnectionWaiter(UUID playerId, Player player, RegisteredServer targetServer,
             String serverName, long startNanos) {
@@ -45,6 +45,35 @@ final class ConnectionWaiter {
         this.targetServer = targetServer;
         this.serverName = serverName;
         this.startNanos = startNanos;
+    }
+
+    /** Marks the waiter as no longer wanted (player left or proxy shutting down); nothing more is delivered. */
+    void discard() {
+        discarded = true;
+    }
+
+    boolean isDiscarded() {
+        return discarded;
+    }
+
+    /** Whether this waiter needs no further work: discarded, or its outcome already decided. */
+    boolean isFinished() {
+        return discarded || future.isDone();
+    }
+
+    /** Caller must hold the owning entry's monitor. */
+    void attachConnection(CompletableFuture<ConnectionRequestBuilder.Result> request) {
+        connection = request;
+    }
+
+    /**
+     * Forgets the in-flight connection request and returns it, or {@code null} if there was none.
+     * Caller must hold the owning entry's monitor.
+     */
+    CompletableFuture<ConnectionRequestBuilder.Result> detachConnection() {
+        CompletableFuture<ConnectionRequestBuilder.Result> request = connection;
+        connection = null;
+        return request;
     }
 
     synchronized void queueStage(ConnectionLifecycleStage stage, Component message, boolean disconnectInitial) {

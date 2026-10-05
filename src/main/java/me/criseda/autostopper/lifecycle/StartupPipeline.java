@@ -2,13 +2,19 @@ package me.criseda.autostopper.lifecycle;
 
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
+import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.readiness.ReadinessResult;
+import me.criseda.autostopper.server.ServerManager;
+import me.criseda.autostopper.telemetry.LifecycleTelemetry;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
 import me.criseda.autostopper.telemetry.TelemetryOrigin;
 import me.criseda.autostopper.telemetry.TelemetryOutcome;
 import net.kyori.adventure.text.Component;
+import org.slf4j.Logger;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -23,30 +29,37 @@ import java.util.function.Supplier;
 final class StartupPipeline {
     private final LifecycleRuntime runtime;
     private final WaiterConnector connector;
+    private final ServerManager serverManager;
+    private final LifecycleTelemetry telemetry;
+    private final Logger logger;
 
-    StartupPipeline(LifecycleRuntime runtime, WaiterConnector connector) {
+    StartupPipeline(LifecycleRuntime runtime, WaiterConnector connector, ServerManager serverManager,
+            LifecycleTelemetry telemetry, Logger logger) {
         this.runtime = runtime;
         this.connector = connector;
+        this.serverManager = serverManager;
+        this.telemetry = telemetry;
+        this.logger = logger;
     }
 
     /** Starts the pipeline at the status check. */
     void launch(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation) {
         runStage(entry, mapping, operation, Stage.STATUS,
-                () -> runtime.serverManager.getServerStatusAsync(mapping),
+                () -> serverManager.getServerStatusAsync(mapping),
                 (status, elapsed) -> onStatus(entry, mapping, operation, status, elapsed));
     }
 
     /** Starts the pipeline at the container start, skipping the status check. */
     void launchStart(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation) {
         runStage(entry, mapping, operation, Stage.START,
-                () -> runtime.serverManager.startServerAsync(mapping),
+                () -> serverManager.startServerAsync(mapping),
                 (result, elapsed) -> onStarted(entry, mapping, operation, result, elapsed));
     }
 
     private void launchReadiness(LifecycleEntry entry, ServerMapping mapping,
             CompletableFuture<StartupOutcome> operation, boolean startedContainer) {
         runStage(entry, mapping, operation, Stage.READINESS,
-                () -> runtime.serverManager.waitForServerReadyAsync(mapping),
+                () -> serverManager.waitForServerReadyAsync(mapping),
                 (ready, elapsed) -> onReadiness(entry, mapping, operation, startedContainer, ready, elapsed));
     }
 
@@ -109,7 +122,7 @@ final class StartupPipeline {
             return;
         }
         ContainerStatus containerStatus = status.get();
-        runtime.telemetry.recordStage(type, mapping.serverName(), TelemetryOutcome.from(containerStatus), elapsed);
+        telemetry.recordStage(type, mapping.serverName(), TelemetryOutcome.from(containerStatus), elapsed);
         switch (containerStatus) {
             case RUNNING -> launchReadiness(entry, mapping, operation, false);
             case STOPPED -> launchStart(entry, mapping, operation);
@@ -128,7 +141,7 @@ final class StartupPipeline {
                     StartupOutcome.START_ERROR, elapsed);
             return;
         }
-        runtime.telemetry.recordStage(type, mapping.serverName(), TelemetryOutcome.from(result), elapsed);
+        telemetry.recordStage(type, mapping.serverName(), TelemetryOutcome.from(result), elapsed);
         switch (result) {
             case RUNNING -> launchReadiness(entry, mapping, operation, true);
             case MISSING -> completeStartup(entry, mapping, operation, StartupOutcome.START_MISSING, null);
@@ -142,32 +155,32 @@ final class StartupPipeline {
             boolean startedContainer, ReadinessResult ready, Duration elapsed) {
         TelemetryOperationType type = Stage.READINESS.telemetryType;
         if (ready != null && ready.ready()) {
-            runtime.telemetry.recordStage(type, mapping.serverName(), TelemetryOutcome.READY, elapsed);
+            telemetry.recordStage(type, mapping.serverName(), TelemetryOutcome.READY, elapsed);
             completeStartup(entry, mapping, operation,
                     startedContainer ? StartupOutcome.READY_AFTER_START : StartupOutcome.READY_RUNNING, null);
         } else {
             TelemetryOutcome stageOutcome = ready == null
                     ? TelemetryOutcome.SERVER_NOT_READY
                     : TelemetryOutcome.from(ready.outcome());
-            runtime.telemetry.recordStage(type, mapping.serverName(), stageOutcome, elapsed);
+            telemetry.recordStage(type, mapping.serverName(), stageOutcome, elapsed);
             completeStartup(entry, mapping, operation, StartupOutcome.NOT_READY, ready);
         }
     }
 
     private void failStage(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation,
             Stage stage, Throwable error, Duration elapsed) {
-        StartupOutcome outcome = LifecycleRuntime.classifyFailure(error,
+        StartupOutcome outcome = AutoStopperExecutor.classify(error,
                 StartupOutcome.OVERLOADED, StartupOutcome.CANCELLED, stage.errorOutcome);
         if (outcome == stage.errorOutcome) {
-            runtime.logger.error("Lifecycle {} operation failed for server {}",
-                    stage.name().toLowerCase(), mapping.serverName(), LifecycleRuntime.unwrap(error));
+            logger.error("Lifecycle {} operation failed for server {}",
+                    stage.name().toLowerCase(), mapping.serverName(), AutoStopperExecutor.rootCause(error));
         }
         failStage(entry, mapping, operation, stage.telemetryType, outcome.toTelemetryOutcome(), outcome, elapsed);
     }
 
     private void failStage(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation,
             TelemetryOperationType type, TelemetryOutcome stageOutcome, StartupOutcome outcome, Duration elapsed) {
-        runtime.telemetry.recordStage(type, mapping.serverName(), stageOutcome, elapsed);
+        telemetry.recordStage(type, mapping.serverName(), stageOutcome, elapsed);
         completeStartup(entry, mapping, operation, outcome, null);
     }
 
@@ -181,11 +194,12 @@ final class StartupPipeline {
             }
             if (entry.claimStartupTelemetry()) {
                 TelemetryOutcome teleOutcome = outcome.isReady() ? TelemetryOutcome.READY : outcome.toTelemetryOutcome();
-                runtime.telemetry.recordOperation(TelemetryOperationType.STARTUP, mapping.serverName(),
+                telemetry.recordOperation(TelemetryOperationType.STARTUP, mapping.serverName(),
                         TelemetryOrigin.PLAYER_CONNECTION, teleOutcome,
                         runtime.elapsedSince(entry.startupStartNanos()), entry.startupWaiterCount());
             }
-            waiters = entry.finishStartup(outcome, outcome.isReady() ? null : runtime.failure("server startup",
+            waiters = entry.finishStartup(outcome, outcome.isReady() ? null : new OperationalFailure(Instant.now(),
+                    "server startup",
                     readinessFailure == null ? outcome.failureDetail() : readinessFailure.playerDetail(),
                     outcome.remediation()));
             if (outcome.isReady()) {

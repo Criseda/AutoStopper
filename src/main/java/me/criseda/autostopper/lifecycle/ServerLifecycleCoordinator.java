@@ -17,6 +17,7 @@ import me.criseda.autostopper.telemetry.TelemetrySnapshot;
 import org.slf4j.Logger;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -56,10 +57,10 @@ public final class ServerLifecycleCoordinator {
         Objects.requireNonNull(executor, "executor");
         Objects.requireNonNull(nanoTime, "nanoTime");
         this.telemetry = Objects.requireNonNull(telemetry, "telemetry");
-        this.runtime = new LifecycleRuntime(logger, serverManager, executor, nanoTime, telemetry);
-        this.connector = new WaiterConnector(runtime);
-        this.pipeline = new StartupPipeline(runtime, connector);
-        this.manual = new ManualOperations(runtime, pipeline);
+        this.runtime = new LifecycleRuntime(logger, nanoTime);
+        this.connector = new WaiterConnector(runtime, serverManager, telemetry, logger);
+        this.pipeline = new StartupPipeline(runtime, connector, serverManager, telemetry, logger);
+        this.manual = new ManualOperations(runtime, pipeline, serverManager, executor, telemetry);
     }
 
     public ServerLifecycleCoordinator(Logger logger, ServerManager serverManager,
@@ -114,25 +115,16 @@ public final class ServerLifecycleCoordinator {
         Objects.requireNonNull(player, "player");
         Objects.requireNonNull(targetServer, "targetServer");
         Objects.requireNonNull(mapping, "mapping");
-        if (runtime.isShutdown()) {
-            recordConnectionRejected(mapping, TelemetryOutcome.PROXY_SHUTDOWN);
-            return CompletableFuture.completedFuture(ConnectionOutcome.PROXY_SHUTDOWN);
-        }
-
         String serverName = mapping.serverName();
         ConnectionAdmission admission = runtime.admit(mapping,
                 ConnectionAdmission.rejected(ConnectionOutcome.PROXY_SHUTDOWN),
                 ConnectionAdmission.rejected(ConnectionOutcome.MAPPING_CHANGED),
                 entry -> admitConnection(entry, player, targetServer, serverName));
 
-        if (admission == null) {
-            recordConnectionRejected(mapping, TelemetryOutcome.START_FAILED);
-            return CompletableFuture.completedFuture(ConnectionOutcome.START_FAILED);
-        }
         if (admission.rejected() != null) {
             recordConnectionRejected(mapping, TelemetryOutcome.from(admission.rejected()));
             if (admission.rejected() != ConnectionOutcome.PROXY_SHUTDOWN) {
-                runtime.safeSend(player, LifecycleMessages.rejected(serverName, admission.rejected()));
+                connector.send(player, LifecycleMessages.rejected(serverName, admission.rejected()));
             }
             return CompletableFuture.completedFuture(admission.rejected());
         }
@@ -197,7 +189,7 @@ public final class ServerLifecycleCoordinator {
         runtime.updateAll(entry -> {
             ConnectionWaiter waiter = entry.removeWaiter(playerId);
             if (waiter != null) {
-                waiter.discarded = true;
+                waiter.discard();
                 discarded.add(waiter);
             }
             return !entry.isDisposable();
@@ -256,7 +248,7 @@ public final class ServerLifecycleCoordinator {
             if (!entry.matches(mapping) || !entry.is(ServerLifecycleState.STOPPING)) {
                 return true;
             }
-            entry.finishStop(result, () -> runtime.failure("container stop",
+            entry.finishStop(result, () -> new OperationalFailure(Instant.now(), "container stop",
                     "container stop failed with " + result,
                     "Check Docker access and container state, then allow the bounded retry or retry manually."));
             return !entry.isDisposable();

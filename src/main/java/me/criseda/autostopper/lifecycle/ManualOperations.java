@@ -5,48 +5,55 @@ import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.operational.OperationalFailure;
+import me.criseda.autostopper.server.ServerManager;
+import me.criseda.autostopper.telemetry.LifecycleTelemetry;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
 import me.criseda.autostopper.telemetry.TelemetryOrigin;
 import me.criseda.autostopper.telemetry.TelemetryOutcome;
 
-import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Supplier;
+import java.util.function.Function;
 
 /**
  * Operator-initiated start, stop, and restart. Admission shares the lifecycle locks with player
  * connections, so a manual operation never overlaps a startup, a stop, or pending waiters.
+ *
+ * <p>Restart is a manual stop followed by a container start: it runs the same stop code and
+ * reports stop failures as their {@link ManualRestartOutcome} equivalents.
  */
 final class ManualOperations {
     private final LifecycleRuntime runtime;
     private final StartupPipeline pipeline;
+    private final ServerManager serverManager;
+    private final AutoStopperExecutor executor;
+    private final LifecycleTelemetry telemetry;
 
-    ManualOperations(LifecycleRuntime runtime, StartupPipeline pipeline) {
+    ManualOperations(LifecycleRuntime runtime, StartupPipeline pipeline, ServerManager serverManager,
+            AutoStopperExecutor executor, LifecycleTelemetry telemetry) {
         this.runtime = runtime;
         this.pipeline = pipeline;
+        this.serverManager = serverManager;
+        this.executor = executor;
+        this.telemetry = telemetry;
     }
 
     // --- Start ---
 
     CompletableFuture<ManualStartOutcome> requestStart(ServerMapping mapping) {
         long startNanos = runtime.now();
-        if (runtime.isShutdown()) {
-            record(TelemetryOperationType.MANUAL_START, mapping, TelemetryOutcome.PROXY_SHUTDOWN, Duration.ZERO);
-            return CompletableFuture.completedFuture(ManualStartOutcome.PROXY_SHUTDOWN);
-        }
-
         StartAdmission admission = runtime.admit(mapping,
-                StartAdmission.done(ManualStartOutcome.PROXY_SHUTDOWN),
-                StartAdmission.done(ManualStartOutcome.MAPPING_CHANGED),
+                StartAdmission.rejected(ManualStartOutcome.PROXY_SHUTDOWN),
+                StartAdmission.rejected(ManualStartOutcome.MAPPING_CHANGED),
                 entry -> {
                     if (entry.isRetired()) {
-                        return StartAdmission.done(ManualStartOutcome.MAPPING_CHANGED);
+                        return StartAdmission.rejected(ManualStartOutcome.MAPPING_CHANGED);
                     }
                     if (entry.is(ServerLifecycleState.STOPPING)) {
-                        return StartAdmission.done(ManualStartOutcome.SERVER_STOPPING);
+                        return StartAdmission.rejected(ManualStartOutcome.SERVER_STOPPING);
                     }
                     if (entry.is(ServerLifecycleState.READY)) {
-                        return StartAdmission.done(ManualStartOutcome.ALREADY_READY);
+                        return StartAdmission.rejected(ManualStartOutcome.ALREADY_READY);
                     }
                     if (entry.is(ServerLifecycleState.STARTING) && entry.startupFuture().isPresent()) {
                         return new StartAdmission(null, entry.startupFuture().get(), null);
@@ -55,308 +62,244 @@ final class ManualOperations {
                             ConnectionLifecycleStage.INSPECTING, runtime.now(), 0), null);
                 });
 
-        ManualStartOutcome immediate = admission == null ? ManualStartOutcome.START_FAILED : admission.immediate();
-        if (immediate != null) {
-            record(TelemetryOperationType.MANUAL_START, mapping, TelemetryOutcome.from(immediate),
-                    runtime.elapsedSince(startNanos));
-            return CompletableFuture.completedFuture(immediate);
+        CompletableFuture<ManualStartOutcome> result;
+        if (admission.rejected() != null) {
+            result = CompletableFuture.completedFuture(admission.rejected());
+        } else {
+            if (admission.launch() != null) {
+                pipeline.launch(admission.launch(), mapping, admission.startup());
+            }
+            result = admission.startup()
+                    .thenApply(outcome -> outcome == null
+                            ? ManualStartOutcome.START_FAILED
+                            : outcome.toManualStartOutcome())
+                    .exceptionally(error -> AutoStopperExecutor.classify(error,
+                            ManualStartOutcome.OVERLOADED, ManualStartOutcome.CANCELLED,
+                            ManualStartOutcome.START_FAILED));
         }
-        if (admission.launch() != null) {
-            pipeline.launch(admission.launch(), mapping, admission.startup());
-        }
-        CompletableFuture<ManualStartOutcome> resultFuture = admission.startup()
-                .thenApply(outcome -> outcome == null ? ManualStartOutcome.START_FAILED : outcome.toManualStartOutcome())
-                .exceptionally(error -> LifecycleRuntime.classifyFailure(error,
-                        ManualStartOutcome.OVERLOADED, ManualStartOutcome.CANCELLED, ManualStartOutcome.START_FAILED));
-        resultFuture.whenComplete((outcome, error) -> {
-            ManualStartOutcome result = outcome != null ? outcome : ManualStartOutcome.START_FAILED;
-            record(TelemetryOperationType.MANUAL_START, mapping, TelemetryOutcome.from(result),
-                    runtime.elapsedSince(startNanos));
-        });
-        return resultFuture;
+        return recordWhenDone(TelemetryOperationType.MANUAL_START, mapping, startNanos, result,
+                ManualStartOutcome.START_FAILED, TelemetryOutcome::from);
     }
 
     // --- Stop ---
 
     CompletableFuture<ManualStopOutcome> requestStop(ServerMapping mapping, RegisteredServer registeredServer) {
         long startNanos = runtime.now();
-        if (runtime.isShutdown()) {
-            record(TelemetryOperationType.MANUAL_STOP, mapping, TelemetryOutcome.PROXY_SHUTDOWN, Duration.ZERO);
-            return CompletableFuture.completedFuture(ManualStopOutcome.PROXY_SHUTDOWN);
-        }
-
         StopAdmission admission = runtime.admit(mapping,
-                StopAdmission.done(ManualStopOutcome.PROXY_SHUTDOWN),
-                StopAdmission.done(ManualStopOutcome.MAPPING_CHANGED),
+                StopAdmission.rejected(ManualStopOutcome.PROXY_SHUTDOWN),
+                StopAdmission.rejected(ManualStopOutcome.MAPPING_CHANGED),
                 entry -> {
-                    if (entry.isRetired()) {
-                        return StopAdmission.done(ManualStopOutcome.MAPPING_CHANGED);
-                    }
-                    if (hasPlayers(registeredServer)) {
-                        return StopAdmission.done(ManualStopOutcome.PLAYERS_CONNECTED);
-                    }
-                    if (entry.hasWaiters()) {
-                        return StopAdmission.done(ManualStopOutcome.WAITERS_PRESENT);
-                    }
-                    if (entry.is(ServerLifecycleState.STARTING)) {
-                        return StopAdmission.done(ManualStopOutcome.SERVER_STARTING);
-                    }
-                    if (entry.is(ServerLifecycleState.STOPPING)) {
-                        return StopAdmission.done(ManualStopOutcome.SERVER_STOPPING);
+                    ManualStopOutcome blocked = stopBlocker(entry, registeredServer);
+                    if (blocked != null) {
+                        return StopAdmission.rejected(blocked);
                     }
                     if (entry.is(ServerLifecycleState.STOPPED)) {
-                        return StopAdmission.done(ManualStopOutcome.ALREADY_STOPPED);
+                        return StopAdmission.rejected(ManualStopOutcome.ALREADY_STOPPED);
                     }
-                    entry.beginStop();
-                    CompletableFuture<ManualStopOutcome> operation = new CompletableFuture<>();
-                    entry.attachOperation(operation);
-                    return new StopAdmission(entry, operation, null);
+                    return new StopAdmission(entry, beginStop(entry), null);
                 });
 
-        ManualStopOutcome immediate = admission == null ? ManualStopOutcome.STOP_FAILED : admission.immediate();
-        if (immediate != null) {
-            record(TelemetryOperationType.MANUAL_STOP, mapping, TelemetryOutcome.from(immediate),
-                    runtime.elapsedSince(startNanos));
-            return CompletableFuture.completedFuture(immediate);
+        CompletableFuture<ManualStopOutcome> stop = admission.rejected() != null
+                ? CompletableFuture.completedFuture(admission.rejected())
+                : admission.stop();
+        recordWhenDone(TelemetryOperationType.MANUAL_STOP, mapping, startNanos, stop,
+                ManualStopOutcome.STOP_FAILED, TelemetryOutcome::from);
+        if (admission.rejected() == null) {
+            stopOnWorker(admission.entry(), mapping, registeredServer, stop, null);
         }
-
-        CompletableFuture<ManualStopOutcome> stopFuture = admission.operation();
-        stopFuture.whenComplete((outcome, error) -> {
-            ManualStopOutcome result = outcome != null ? outcome : ManualStopOutcome.STOP_FAILED;
-            record(TelemetryOperationType.MANUAL_STOP, mapping, TelemetryOutcome.from(result),
-                    runtime.elapsedSince(startNanos));
-        });
-        executeStop(admission.entry(), mapping, registeredServer, stopFuture);
-        return stopFuture;
-    }
-
-    private void executeStop(LifecycleEntry entry, ServerMapping mapping,
-            RegisteredServer registeredServer, CompletableFuture<ManualStopOutcome> stopFuture) {
-        try {
-            runtime.executor.supply(() -> {
-                synchronized (entry) {
-                    ManualStopOutcome aborted = stopPrecondition(entry, registeredServer, stopFuture,
-                            ManualStopOutcome.PROXY_SHUTDOWN, ManualStopOutcome.CANCELLED,
-                            ManualStopOutcome.PLAYERS_CONNECTED, ManualStopOutcome.WAITERS_PRESENT);
-                    if (aborted != null) {
-                        abortStop(entry, stopFuture, aborted);
-                        return aborted;
-                    }
-                }
-
-                ContainerStatus result = runtime.serverManager.stopServer(mapping);
-                return completeStop(entry, stopFuture, result);
-            }).exceptionally(error -> {
-                synchronized (entry) {
-                    abortStop(entry, stopFuture, LifecycleRuntime.classifyFailure(error,
-                            ManualStopOutcome.OVERLOADED, ManualStopOutcome.CANCELLED, ManualStopOutcome.STOP_FAILED));
-                }
-                return null;
-            });
-        } catch (AutoStopperExecutor.SaturationException e) {
-            synchronized (entry) {
-                abortStop(entry, stopFuture, ManualStopOutcome.OVERLOADED);
-            }
-        } catch (RuntimeException e) {
-            synchronized (entry) {
-                abortStop(entry, stopFuture, ManualStopOutcome.STOP_FAILED);
-            }
-        }
-    }
-
-    private ManualStopOutcome completeStop(LifecycleEntry entry,
-            CompletableFuture<ManualStopOutcome> operation, ContainerStatus result) {
-        synchronized (entry) {
-            if (runtime.isShutdown() || !entry.ownsOperation(operation) || !entry.is(ServerLifecycleState.STOPPING)) {
-                entry.settleStop(result);
-                operation.complete(ManualStopOutcome.PROXY_SHUTDOWN);
-                return ManualStopOutcome.PROXY_SHUTDOWN;
-            }
-            entry.detachOperation(operation);
-            entry.finishStop(result, stopFailure("manual stop", result));
-            ManualStopOutcome outcome = toManualStopOutcome(result);
-            operation.complete(outcome);
-            return outcome;
-        }
+        return stop;
     }
 
     // --- Restart ---
 
     CompletableFuture<ManualRestartOutcome> requestRestart(ServerMapping mapping, RegisteredServer registeredServer) {
         long startNanos = runtime.now();
-        if (runtime.isShutdown()) {
-            record(TelemetryOperationType.MANUAL_RESTART, mapping, TelemetryOutcome.PROXY_SHUTDOWN, Duration.ZERO);
-            return CompletableFuture.completedFuture(ManualRestartOutcome.PROXY_SHUTDOWN);
-        }
-
         RestartAdmission admission = runtime.admit(mapping,
-                RestartAdmission.done(ManualRestartOutcome.PROXY_SHUTDOWN),
-                RestartAdmission.done(ManualRestartOutcome.MAPPING_CHANGED),
+                RestartAdmission.rejected(ManualRestartOutcome.PROXY_SHUTDOWN),
+                RestartAdmission.rejected(ManualRestartOutcome.MAPPING_CHANGED),
                 entry -> {
-                    if (entry.isRetired()) {
-                        return RestartAdmission.done(ManualRestartOutcome.MAPPING_CHANGED);
+                    ManualStopOutcome blocked = stopBlocker(entry, registeredServer);
+                    if (blocked != null) {
+                        return RestartAdmission.rejected(restartOutcome(blocked));
                     }
-                    if (hasPlayers(registeredServer)) {
-                        return RestartAdmission.done(ManualRestartOutcome.PLAYERS_CONNECTED);
-                    }
-                    if (entry.hasWaiters()) {
-                        return RestartAdmission.done(ManualRestartOutcome.WAITERS_PRESENT);
-                    }
-                    if (entry.is(ServerLifecycleState.STARTING)) {
-                        return RestartAdmission.done(ManualRestartOutcome.SERVER_STARTING);
-                    }
-                    if (entry.is(ServerLifecycleState.STOPPING)) {
-                        return RestartAdmission.done(ManualRestartOutcome.SERVER_STOPPING);
-                    }
-
-                    CompletableFuture<ManualRestartOutcome> operation = new CompletableFuture<>();
-                    entry.attachOperation(operation);
                     if (entry.is(ServerLifecycleState.STOPPED)) {
-                        // Nothing to stop: join the shared startup path directly.
-                        return new RestartAdmission(entry, operation, entry.beginStartup(
+                        // Nothing to stop: go straight to the shared startup.
+                        return new RestartAdmission(entry, null, entry.beginStartup(
                                 ConnectionLifecycleStage.INSPECTING, runtime.now(), 0), null);
                     }
-                    entry.beginStop();
-                    return new RestartAdmission(entry, operation, null, null);
+                    return new RestartAdmission(entry, beginStop(entry), null, null);
                 });
 
-        ManualRestartOutcome immediate = admission == null ? ManualRestartOutcome.STOP_FAILED : admission.rejected();
-        if (immediate != null) {
-            record(TelemetryOperationType.MANUAL_RESTART, mapping, TelemetryOutcome.from(immediate),
-                    runtime.elapsedSince(startNanos));
-            return CompletableFuture.completedFuture(immediate);
+        CompletableFuture<ManualRestartOutcome> restart = admission.rejected() != null
+                ? CompletableFuture.completedFuture(admission.rejected())
+                : new CompletableFuture<>();
+        recordWhenDone(TelemetryOperationType.MANUAL_RESTART, mapping, startNanos, restart,
+                ManualRestartOutcome.STOP_FAILED, TelemetryOutcome::from);
+        if (admission.rejected() != null) {
+            return restart;
         }
-
-        CompletableFuture<ManualRestartOutcome> restartFuture = admission.operation();
-        restartFuture.whenComplete((outcome, error) -> {
-            ManualRestartOutcome result = outcome != null ? outcome : ManualRestartOutcome.STOP_FAILED;
-            record(TelemetryOperationType.MANUAL_RESTART, mapping, TelemetryOutcome.from(result),
-                    runtime.elapsedSince(startNanos));
-        });
 
         if (admission.startup() != null) {
             pipeline.launch(admission.entry(), mapping, admission.startup());
-            completeRestartAfterStartup(admission.entry(), admission.startup(), restartFuture);
-        } else {
-            executeRestart(admission.entry(), mapping, registeredServer, restartFuture);
+            completeRestart(restart, admission.startup());
+            return restart;
         }
-        return restartFuture;
-    }
-
-    private void executeRestart(LifecycleEntry entry, ServerMapping mapping,
-            RegisteredServer registeredServer, CompletableFuture<ManualRestartOutcome> restartFuture) {
-        try {
-            runtime.executor.supply(() -> {
-                synchronized (entry) {
-                    ManualRestartOutcome aborted = stopPrecondition(entry, registeredServer, restartFuture,
-                            ManualRestartOutcome.PROXY_SHUTDOWN, ManualRestartOutcome.CANCELLED,
-                            ManualRestartOutcome.PLAYERS_CONNECTED, ManualRestartOutcome.WAITERS_PRESENT);
-                    if (aborted != null) {
-                        abortStop(entry, restartFuture, aborted);
-                        return null;
-                    }
-                }
-
-                ContainerStatus stopResult = runtime.serverManager.stopServer(mapping);
-                CompletableFuture<StartupOutcome> startupFuture;
-                synchronized (entry) {
-                    if (runtime.isShutdown() || !entry.ownsOperation(restartFuture)) {
-                        entry.settleStop(stopResult);
-                        restartFuture.complete(ManualRestartOutcome.PROXY_SHUTDOWN);
-                        return null;
-                    }
-                    if (stopResult != ContainerStatus.STOPPED) {
-                        entry.finishStop(stopResult, stopFailure("container stop during restart", stopResult));
-                        entry.detachOperation(restartFuture);
-                        restartFuture.complete(toRestartStopFailure(stopResult));
-                        return null;
-                    }
-                    entry.settleStop(stopResult);
-                    startupFuture = entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0);
-                }
-
-                pipeline.launchStart(entry, mapping, startupFuture);
-                completeRestartAfterStartup(entry, startupFuture, restartFuture);
-                return null;
-            }).exceptionally(error -> {
-                synchronized (entry) {
-                    abortStop(entry, restartFuture, LifecycleRuntime.classifyFailure(error,
-                            ManualRestartOutcome.OVERLOADED, ManualRestartOutcome.CANCELLED,
-                            ManualRestartOutcome.STOP_FAILED));
-                }
-                return null;
-            });
-        } catch (AutoStopperExecutor.SaturationException e) {
-            synchronized (entry) {
-                abortStop(entry, restartFuture, ManualRestartOutcome.OVERLOADED);
-            }
-        } catch (RuntimeException e) {
-            synchronized (entry) {
-                abortStop(entry, restartFuture, ManualRestartOutcome.STOP_FAILED);
-            }
-        }
-    }
-
-    private void completeRestartAfterStartup(LifecycleEntry entry,
-            CompletableFuture<StartupOutcome> startupFuture, CompletableFuture<ManualRestartOutcome> restartFuture) {
-        startupFuture.whenComplete((outcome, error) -> {
-            synchronized (entry) {
-                entry.detachOperation(restartFuture);
-            }
+        // A stop that ends in anything but STOPPED ends the restart too.
+        admission.stop().whenComplete((stopOutcome, error) -> {
             if (error != null) {
-                restartFuture.complete(LifecycleRuntime.classifyFailure(error,
-                        ManualRestartOutcome.OVERLOADED, ManualRestartOutcome.CANCELLED,
-                        ManualRestartOutcome.STOP_FAILED));
+                restart.completeExceptionally(error);
+            } else if (stopOutcome != ManualStopOutcome.STOPPED) {
+                restart.complete(restartOutcome(stopOutcome));
+            }
+        });
+        stopOnWorker(admission.entry(), mapping, registeredServer, admission.stop(), restart);
+        return restart;
+    }
+
+    private static void completeRestart(CompletableFuture<ManualRestartOutcome> restart,
+            CompletableFuture<StartupOutcome> startup) {
+        startup.whenComplete((outcome, error) -> {
+            if (error != null) {
+                restart.complete(AutoStopperExecutor.classify(error, ManualRestartOutcome.OVERLOADED,
+                        ManualRestartOutcome.CANCELLED, ManualRestartOutcome.STOP_FAILED));
             } else if (outcome == null) {
-                restartFuture.complete(ManualRestartOutcome.START_FAILED);
+                restart.complete(ManualRestartOutcome.START_FAILED);
             } else {
-                restartFuture.complete(outcome.toManualRestartOutcome());
+                restart.complete(outcome.toManualRestartOutcome());
             }
         });
     }
 
-    // --- Shared stop helpers ---
+    // --- Stop work shared by stop and restart ---
 
-    /**
-     * Re-checks, on the worker thread and under the entry lock, that a stop admitted earlier may
-     * still proceed. Returns the abort outcome, or {@code null} to continue.
-     */
-    private <T> T stopPrecondition(LifecycleEntry entry, RegisteredServer registeredServer,
-            CompletableFuture<T> operation, T shutdownOutcome, T cancelledOutcome,
-            T playersOutcome, T waitersOutcome) {
-        if (runtime.isShutdown()) {
-            return shutdownOutcome;
-        }
-        if (!entry.ownsOperation(operation) || !entry.is(ServerLifecycleState.STOPPING)) {
-            return cancelledOutcome;
+    /** Why a stop or restart cannot begin right now, or {@code null} if it can. Caller holds the entry lock. */
+    private static ManualStopOutcome stopBlocker(LifecycleEntry entry, RegisteredServer registeredServer) {
+        if (entry.isRetired()) {
+            return ManualStopOutcome.MAPPING_CHANGED;
         }
         if (hasPlayers(registeredServer)) {
-            return playersOutcome;
+            return ManualStopOutcome.PLAYERS_CONNECTED;
         }
         if (entry.hasWaiters()) {
-            return waitersOutcome;
+            return ManualStopOutcome.WAITERS_PRESENT;
+        }
+        if (entry.is(ServerLifecycleState.STARTING)) {
+            return ManualStopOutcome.SERVER_STARTING;
+        }
+        if (entry.is(ServerLifecycleState.STOPPING)) {
+            return ManualStopOutcome.SERVER_STOPPING;
         }
         return null;
     }
 
-    /** Caller must hold the entry lock. */
-    private <T> void abortStop(LifecycleEntry entry, CompletableFuture<T> operation, T outcome) {
-        entry.cancelStop();
-        entry.detachOperation(operation);
-        operation.complete(outcome);
+    /** Moves the entry to STOPPING, owned by the returned operation. Caller holds the entry lock. */
+    private static CompletableFuture<ManualStopOutcome> beginStop(LifecycleEntry entry) {
+        entry.beginStop();
+        CompletableFuture<ManualStopOutcome> stop = new CompletableFuture<>();
+        entry.attachOperation(stop);
+        return stop;
     }
 
-    private Supplier<OperationalFailure> stopFailure(String context, ContainerStatus result) {
-        return () -> runtime.failure(context, "container stop failed with " + result,
-                "Check Docker access and container state, then retry.");
+    /**
+     * Runs an admitted stop on a worker: re-checks that it may still proceed, stops the container,
+     * and completes {@code stop} with how it ended. For a restart ({@code restart} not null) whose
+     * container stopped, the entry goes straight from STOPPING to STARTING under the same lock,
+     * so no player connection can slip in between, and the container start is launched.
+     */
+    private void stopOnWorker(LifecycleEntry entry, ServerMapping mapping, RegisteredServer registeredServer,
+            CompletableFuture<ManualStopOutcome> stop, CompletableFuture<ManualRestartOutcome> restart) {
+        try {
+            executor.supply(() -> {
+                if (!mayStillStop(entry, registeredServer, stop)) {
+                    return null;
+                }
+                ContainerStatus result = serverManager.stopServer(mapping);
+                CompletableFuture<StartupOutcome> startup = settleStop(entry, stop, result, restart != null);
+                if (startup != null) {
+                    pipeline.launchStart(entry, mapping, startup);
+                    completeRestart(restart, startup);
+                }
+                return null;
+            }).exceptionally(error -> {
+                abortStop(entry, stop, stopFailure(error));
+                return null;
+            });
+        } catch (RuntimeException error) {
+            abortStop(entry, stop, stopFailure(error));
+        }
+    }
+
+    /**
+     * Re-checks on the worker, just before Docker is called, whatever may have changed since
+     * admission, and aborts the stop if it must not go ahead.
+     */
+    private boolean mayStillStop(LifecycleEntry entry, RegisteredServer registeredServer,
+            CompletableFuture<ManualStopOutcome> stop) {
+        synchronized (entry) {
+            ManualStopOutcome blocked = null;
+            if (runtime.isShutdown()) {
+                blocked = ManualStopOutcome.PROXY_SHUTDOWN;
+            } else if (!entry.ownsOperation(stop) || !entry.is(ServerLifecycleState.STOPPING)) {
+                blocked = ManualStopOutcome.CANCELLED;
+            } else if (hasPlayers(registeredServer)) {
+                blocked = ManualStopOutcome.PLAYERS_CONNECTED;
+            } else if (entry.hasWaiters()) {
+                blocked = ManualStopOutcome.WAITERS_PRESENT;
+            }
+            if (blocked == null) {
+                return true;
+            }
+            abortStop(entry, stop, blocked);
+            return false;
+        }
+    }
+
+    /**
+     * Applies the Docker stop result. Returns the restart's new startup when {@code thenStart} is
+     * set and the container stopped, otherwise {@code null}.
+     */
+    private CompletableFuture<StartupOutcome> settleStop(LifecycleEntry entry,
+            CompletableFuture<ManualStopOutcome> stop, ContainerStatus result, boolean thenStart) {
+        synchronized (entry) {
+            if (runtime.isShutdown() || !entry.ownsOperation(stop) || !entry.is(ServerLifecycleState.STOPPING)) {
+                entry.settleStop(result);
+                stop.complete(ManualStopOutcome.PROXY_SHUTDOWN);
+                return null;
+            }
+            entry.detachOperation(stop);
+            entry.finishStop(result, () -> new OperationalFailure(Instant.now(),
+                    thenStart ? "container stop during restart" : "manual stop",
+                    "container stop failed with " + result,
+                    "Check Docker access and container state, then retry."));
+            stop.complete(stopOutcome(result));
+            if (!thenStart || result != ContainerStatus.STOPPED) {
+                return null;
+            }
+            return entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0);
+        }
+    }
+
+    /** Gives up an admitted stop: the server goes back to READY and {@code stop} ends with {@code outcome}. */
+    private static void abortStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop,
+            ManualStopOutcome outcome) {
+        synchronized (entry) {
+            entry.cancelStop();
+            entry.detachOperation(stop);
+            stop.complete(outcome);
+        }
+    }
+
+    private static ManualStopOutcome stopFailure(Throwable error) {
+        return AutoStopperExecutor.classify(error,
+                ManualStopOutcome.OVERLOADED, ManualStopOutcome.CANCELLED, ManualStopOutcome.STOP_FAILED);
     }
 
     private static boolean hasPlayers(RegisteredServer registeredServer) {
         return registeredServer != null && !registeredServer.getPlayersConnected().isEmpty();
     }
 
-    private static ManualStopOutcome toManualStopOutcome(ContainerStatus status) {
-        return switch (status) {
+    private static ManualStopOutcome stopOutcome(ContainerStatus result) {
+        return switch (result) {
             case STOPPED -> ManualStopOutcome.STOPPED;
             case MISSING -> ManualStopOutcome.CONTAINER_MISSING;
             case INACCESSIBLE -> ManualStopOutcome.DOCKER_INACCESSIBLE;
@@ -365,46 +308,58 @@ final class ManualOperations {
         };
     }
 
-    private static ManualRestartOutcome toRestartStopFailure(ContainerStatus status) {
-        return switch (status) {
-            case STOPPED -> throw new IllegalArgumentException("stopped is not a failure");
-            case MISSING -> ManualRestartOutcome.CONTAINER_MISSING;
-            case INACCESSIBLE -> ManualRestartOutcome.DOCKER_INACCESSIBLE;
-            case TIMED_OUT -> ManualRestartOutcome.STOP_TIMED_OUT;
-            case RUNNING, FAILED -> ManualRestartOutcome.STOP_FAILED;
+    /** How a restart reports a stop that did not end with the container stopped. */
+    private static ManualRestartOutcome restartOutcome(ManualStopOutcome stopOutcome) {
+        return switch (stopOutcome) {
+            case STOPPED, ALREADY_STOPPED -> throw new IllegalArgumentException("not a restart failure: " + stopOutcome);
+            case PLAYERS_CONNECTED -> ManualRestartOutcome.PLAYERS_CONNECTED;
+            case WAITERS_PRESENT -> ManualRestartOutcome.WAITERS_PRESENT;
+            case SERVER_STARTING -> ManualRestartOutcome.SERVER_STARTING;
+            case SERVER_STOPPING -> ManualRestartOutcome.SERVER_STOPPING;
+            case MAPPING_CHANGED -> ManualRestartOutcome.MAPPING_CHANGED;
+            case CONTAINER_MISSING -> ManualRestartOutcome.CONTAINER_MISSING;
+            case DOCKER_INACCESSIBLE -> ManualRestartOutcome.DOCKER_INACCESSIBLE;
+            case STOP_TIMED_OUT -> ManualRestartOutcome.STOP_TIMED_OUT;
+            case STOP_FAILED -> ManualRestartOutcome.STOP_FAILED;
+            case OVERLOADED -> ManualRestartOutcome.OVERLOADED;
+            case CANCELLED -> ManualRestartOutcome.CANCELLED;
+            case PROXY_SHUTDOWN -> ManualRestartOutcome.PROXY_SHUTDOWN;
         };
     }
 
-    private void record(TelemetryOperationType type, ServerMapping mapping, TelemetryOutcome outcome,
-            Duration elapsed) {
-        runtime.telemetry.recordOperation(type, mapping.serverName(), TelemetryOrigin.MANUAL_COMMAND,
-                outcome, elapsed, 0);
+    /** Records the operation's telemetry once {@code result} completes. */
+    private <T> CompletableFuture<T> recordWhenDone(TelemetryOperationType type, ServerMapping mapping,
+            long startNanos, CompletableFuture<T> result, T fallback, Function<T, TelemetryOutcome> toTelemetry) {
+        result.whenComplete((outcome, error) -> telemetry.recordOperation(type, mapping.serverName(),
+                TelemetryOrigin.MANUAL_COMMAND, toTelemetry.apply(outcome != null ? outcome : fallback),
+                runtime.elapsedSince(startNanos), 0));
+        return result;
     }
 
     // --- Admission decisions, taken under the lifecycle locks and acted on after release ---
 
     /**
-     * Either an immediate outcome, or a startup to follow; {@code launch} is set only when this
-     * request opened the startup and must start the pipeline.
+     * Either a rejection, or a startup to follow; {@code launch} is set only when this request
+     * opened the startup and must start the pipeline.
      */
     private record StartAdmission(LifecycleEntry launch, CompletableFuture<StartupOutcome> startup,
-            ManualStartOutcome immediate) {
-        static StartAdmission done(ManualStartOutcome outcome) {
+            ManualStartOutcome rejected) {
+        static StartAdmission rejected(ManualStartOutcome outcome) {
             return new StartAdmission(null, null, outcome);
         }
     }
 
-    private record StopAdmission(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> operation,
-            ManualStopOutcome immediate) {
-        static StopAdmission done(ManualStopOutcome outcome) {
+    private record StopAdmission(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop,
+            ManualStopOutcome rejected) {
+        static StopAdmission rejected(ManualStopOutcome outcome) {
             return new StopAdmission(null, null, outcome);
         }
     }
 
-    /** {@code startup} is set when the server was already stopped and restart only starts it. */
-    private record RestartAdmission(LifecycleEntry entry, CompletableFuture<ManualRestartOutcome> operation,
+    /** Unless rejected, exactly one of {@code stop} (stop, then start) or {@code startup} (already stopped) is set. */
+    private record RestartAdmission(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop,
             CompletableFuture<StartupOutcome> startup, ManualRestartOutcome rejected) {
-        static RestartAdmission done(ManualRestartOutcome outcome) {
+        static RestartAdmission rejected(ManualRestartOutcome outcome) {
             return new RestartAdmission(null, null, null, outcome);
         }
     }

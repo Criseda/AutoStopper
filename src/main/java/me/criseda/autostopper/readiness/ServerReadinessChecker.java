@@ -12,8 +12,6 @@ import org.slf4j.Logger;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
-import java.util.concurrent.ExecutionException;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
@@ -117,7 +115,7 @@ public final class ServerReadinessChecker {
                 return;
             }
             if (error != null) {
-                Throwable cause = unwrap(error);
+                Throwable cause = AutoStopperExecutor.rootCause(error);
                 if (cause instanceof AutoStopperExecutor.SaturationException && attempts > 0) {
                     // Workers are busy with other servers; the next interval retries while the deadline allows.
                     logger.debug("Skipped a readiness attempt for server {} because AutoStopper is busy",
@@ -263,14 +261,5 @@ public final class ServerReadinessChecker {
             return Long.MAX_VALUE;
         }
         return result;
-    }
-
-    private static Throwable unwrap(Throwable error) {
-        Throwable current = error;
-        while ((current instanceof CompletionException || current instanceof ExecutionException)
-                && current.getCause() != null) {
-            current = current.getCause();
-        }
-        return current;
     }
 }

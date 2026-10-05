@@ -1,25 +1,15 @@
 package me.criseda.autostopper.lifecycle;
 
-import com.velocitypowered.api.proxy.Player;
 import me.criseda.autostopper.config.ServerMapping;
-import me.criseda.autostopper.executor.AutoStopperExecutor;
-import me.criseda.autostopper.operational.OperationalFailure;
-import me.criseda.autostopper.server.ServerManager;
-import me.criseda.autostopper.telemetry.LifecycleTelemetry;
-import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CancellationException;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -29,18 +19,15 @@ import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 
 /**
- * The lifecycle map, reconnect permits, and shutdown flag shared by
- * {@link ServerLifecycleCoordinator} and its collaborators, plus the dependencies they all use.
+ * The lifecycle state shared by {@link ServerLifecycleCoordinator} and its collaborators: one
+ * {@link LifecycleEntry} per server, reconnect permits, the shutdown flag, and the clock.
  *
  * <p>Locking: admission and shutdown hold the shutdown lock, then the map's per-key lock, then
  * the entry monitor, then (briefly) a waiter monitor. Asynchronous callbacks take only the entry
  * monitor. Every method here that hands out an entry does so with its monitor held.
  */
 final class LifecycleRuntime {
-    final Logger logger;
-    final ServerManager serverManager;
-    final AutoStopperExecutor executor;
-    final LifecycleTelemetry telemetry;
+    private final Logger logger;
     private final LongSupplier nanoTime;
     private final Map<String, LifecycleEntry> lifecycles = new ConcurrentHashMap<>();
     private final Set<ReconnectPermit> reconnectPermits = ConcurrentHashMap.newKeySet();
@@ -48,13 +35,9 @@ final class LifecycleRuntime {
     private final AtomicLong lifecycleRevision = new AtomicLong();
     private final Object shutdownLock = new Object();
 
-    LifecycleRuntime(Logger logger, ServerManager serverManager, AutoStopperExecutor executor,
-            LongSupplier nanoTime, LifecycleTelemetry telemetry) {
+    LifecycleRuntime(Logger logger, LongSupplier nanoTime) {
         this.logger = logger;
-        this.serverManager = serverManager;
-        this.executor = executor;
         this.nanoTime = nanoTime;
-        this.telemetry = telemetry;
     }
 
     // --- Lifecycle map ---
@@ -251,7 +234,7 @@ final class LifecycleRuntime {
         }
     }
 
-    // --- Shared helpers ---
+    // --- Clock ---
 
     long now() {
         return nanoTime.getAsLong();
@@ -259,58 +242,6 @@ final class LifecycleRuntime {
 
     Duration elapsedSince(long startNanos) {
         return Duration.ofNanos(Math.max(0, nanoTime.getAsLong() - startNanos));
-    }
-
-    Duration elapsed(ConnectionWaiter waiter) {
-        return elapsedSince(waiter.startNanos);
-    }
-
-    OperationalFailure failure(String context, String detail, String remediation) {
-        return new OperationalFailure(Instant.now(), context, detail, remediation);
-    }
-
-    void safeSend(Player player, Component message) {
-        if (shutdown.get() || !isPlayerActive(player)) {
-            return;
-        }
-        try {
-            player.sendMessage(message);
-        } catch (RuntimeException error) {
-            logger.debug("Could not send lifecycle message to a player", error);
-        }
-    }
-
-    boolean isPlayerActive(Player player) {
-        try {
-            return player.isActive();
-        } catch (RuntimeException error) {
-            logger.debug("Could not check whether a lifecycle waiter is active", error);
-            return false;
-        }
-    }
-
-    static Throwable unwrap(Throwable error) {
-        Throwable current = error;
-        while ((current instanceof CompletionException || current instanceof ExecutionException)
-                && current.getCause() != null) {
-            current = current.getCause();
-        }
-        return current;
-    }
-
-    /**
-     * Classifies an asynchronous failure: worker saturation, cancellation (including executor
-     * shutdown), or anything else.
-     */
-    static <T> T classifyFailure(Throwable error, T overloaded, T cancelled, T failed) {
-        Throwable cause = unwrap(error);
-        if (cause instanceof AutoStopperExecutor.SaturationException) {
-            return overloaded;
-        }
-        if (cause instanceof CancellationException || cause instanceof AutoStopperExecutor.ShutdownException) {
-            return cancelled;
-        }
-        return failed;
     }
 
     record ReconnectPermit(UUID playerId, String serverName) {

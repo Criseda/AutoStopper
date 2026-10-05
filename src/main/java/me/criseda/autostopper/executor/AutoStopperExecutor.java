@@ -4,8 +4,11 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -128,6 +131,31 @@ public final class AutoStopperExecutor implements AutoCloseable {
     @Override
     public void close() {
         shutdown();
+    }
+
+    /** Strips the {@link CompletionException} and {@link ExecutionException} wrappers from a future's failure. */
+    public static Throwable rootCause(Throwable error) {
+        Throwable current = error;
+        while ((current instanceof CompletionException || current instanceof ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    /**
+     * Maps a failed future's error to a caller outcome: {@code saturated} when the workers were busy,
+     * {@code cancelled} when the work was cancelled or the executor shut down, and {@code failed} otherwise.
+     */
+    public static <T> T classify(Throwable error, T saturated, T cancelled, T failed) {
+        Throwable cause = rootCause(error);
+        if (cause instanceof SaturationException) {
+            return saturated;
+        }
+        if (cause instanceof CancellationException || cause instanceof ShutdownException) {
+            return cancelled;
+        }
+        return failed;
     }
 
     public static class SaturationException extends RuntimeException {

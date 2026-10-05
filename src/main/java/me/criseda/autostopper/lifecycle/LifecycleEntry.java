@@ -342,10 +342,10 @@ final class LifecycleEntry {
             startupFuture = null;
         }
         for (ConnectionWaiter waiter : waiters.values()) {
-            waiter.discarded = true;
-            if (waiter.connectionFuture != null) {
-                operations.add(waiter.connectionFuture);
-                waiter.connectionFuture = null;
+            waiter.discard();
+            CompletableFuture<?> connection = waiter.detachConnection();
+            if (connection != null) {
+                operations.add(connection);
             }
             stranded.add(waiter);
         }
