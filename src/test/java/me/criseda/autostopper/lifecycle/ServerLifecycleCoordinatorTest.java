@@ -8,6 +8,7 @@ import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
+import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.server.ServerManager;
 import me.criseda.autostopper.readiness.ReadinessResult;
 import me.criseda.autostopper.readiness.MinecraftStatusProbe;
@@ -35,6 +36,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static me.criseda.autostopper.testing.ComponentTestUtils.plainText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -1025,6 +1027,100 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
+    void manualRestart_SuccessfulStopClearsPreviousFailureBeforeStarting() {
+        readyServerWithoutPlayers();
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.INACCESSIBLE, ContainerStatus.STOPPED);
+        assertEquals(ManualStopOutcome.DOCKER_INACCESSIBLE,
+                coordinator.requestManualStop(mapping, targetServer).join());
+        assertTrue(coordinator.lastFailure("survival").isPresent());
+        AtomicReference<Optional<OperationalFailure>> failureWhenStarting = new AtomicReference<>();
+        when(serverManager.startServerAsync(mapping)).thenAnswer(invocation -> {
+            failureWhenStarting.set(coordinator.lastFailure("survival"));
+            return CompletableFuture.completedFuture(ContainerStatus.RUNNING);
+        });
+
+        assertEquals(ManualRestartOutcome.RESTARTED_AND_READY,
+                coordinator.requestManualRestart(mapping, targetServer).join());
+        assertEquals(Optional.empty(), failureWhenStarting.get());
+    }
+
+    @Test
+    void manualStop_CancelledWhileDockerStops_EndsCancelledAndRecordsStoppedContainer() {
+        readyServerWithoutPlayers();
+        when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
+            coordinator.cancelStop(mapping);
+            return ContainerStatus.STOPPED;
+        });
+
+        assertEquals(ManualStopOutcome.CANCELLED, coordinator.requestManualStop(mapping, targetServer).join());
+        assertEquals(Optional.of(ServerLifecycleState.STOPPED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualRestart_CancelledWhileDockerStops_EndsCancelledWithoutStarting() {
+        readyServerWithoutPlayers();
+        when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
+            coordinator.cancelStop(mapping);
+            return ContainerStatus.STOPPED;
+        });
+
+        assertEquals(ManualRestartOutcome.CANCELLED, coordinator.requestManualRestart(mapping, targetServer).join());
+        verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
+        assertEquals(Optional.of(ServerLifecycleState.STOPPED), coordinator.state("survival"));
+    }
+
+    @Test
+    void manualStop_ShutdownWhileDockerStops_CancelsStopAndIgnoresLateResult() {
+        try (AutoStopperExecutor executor = singleWorkerCoordinator()) {
+            readyServerWithoutPlayers();
+            when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
+                coordinator.shutdown();
+                return ContainerStatus.STOPPED;
+            });
+
+            CompletableFuture<ManualStopOutcome> stop = coordinator.requestManualStop(mapping, targetServer);
+            awaitQueuedWork(executor);
+
+            // Shutdown cancels the in-flight stop instead of reporting PROXY_SHUTDOWN (#114).
+            assertTrue(stop.isCancelled());
+            assertEquals(Optional.empty(), coordinator.state("survival"));
+        }
+    }
+
+    @Test
+    void manualRestart_ShutdownWhileDockerStops_NeverStartsContainer() {
+        try (AutoStopperExecutor executor = singleWorkerCoordinator()) {
+            readyServerWithoutPlayers();
+            when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
+                coordinator.shutdown();
+                return ContainerStatus.STOPPED;
+            });
+
+            CompletableFuture<ManualRestartOutcome> restart =
+                    coordinator.requestManualRestart(mapping, targetServer);
+            awaitQueuedWork(executor);
+
+            // Shutdown cancels the in-flight restart instead of reporting PROXY_SHUTDOWN (#114).
+            assertTrue(restart.isCancelled());
+            verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
+        }
+    }
+
+    @Test
+    void manualRestart_ShutdownAfterStopSucceeds_EndsCancelledAndCancelsStart() {
+        readyServerWithoutPlayers();
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+        CompletableFuture<ContainerStatus> start = new CompletableFuture<>();
+        when(serverManager.startServerAsync(mapping)).thenAnswer(invocation -> {
+            coordinator.shutdown();
+            return start;
+        });
+
+        assertEquals(ManualRestartOutcome.CANCELLED, coordinator.requestManualRestart(mapping, targetServer).join());
+        assertTrue(start.isCancelled());
+    }
+
+    @Test
     void manualStart_ContainerMissing() {
         when(serverManager.getServerStatusAsync(mapping))
                 .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.MISSING)));
@@ -1295,6 +1391,28 @@ class ServerLifecycleCoordinatorTest {
         player.complete(ConnectionRequestBuilder.Status.SUCCESS);
 
         assertEquals(ConnectionOutcome.CONNECTED, future.join());
+    }
+
+    /** Brings the server to READY through one successful connection, with nobody left on it. */
+    private void readyServerWithoutPlayers() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("ready-player");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        when(targetServer.getPlayersConnected()).thenReturn(List.of());
+    }
+
+    /** Replaces the coordinator with one whose executor has a single worker, so queued work runs in order. */
+    private AutoStopperExecutor singleWorkerCoordinator() {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 8);
+        coordinator = new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(), executor);
+        return executor;
+    }
+
+    /** Waits until every task queued on the single worker so far has finished. */
+    private static void awaitQueuedWork(AutoStopperExecutor executor) {
+        executor.supply(() -> null).join();
     }
 
     private PlayerHarness player(String name) {

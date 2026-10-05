@@ -6,8 +6,11 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -401,5 +404,27 @@ public class AutoStopperExecutorTest {
                         "unexpected message: " + cause.getMessage());
             }
         }
+    }
+
+    @Test
+    public void testRootCauseStripsFutureWrappers() {
+        IllegalStateException cause = new IllegalStateException("boom");
+
+        assertSame(cause, AutoStopperExecutor.rootCause(
+                new CompletionException(new ExecutionException(cause))));
+        assertSame(cause, AutoStopperExecutor.rootCause(cause));
+    }
+
+    @Test
+    public void testClassifyMapsExecutorFailuresToOutcomes() {
+        assertEquals("saturated", classify(new CompletionException(
+                new AutoStopperExecutor.SaturationException("busy", null))));
+        assertEquals("cancelled", classify(new CancellationException()));
+        assertEquals("cancelled", classify(new AutoStopperExecutor.ShutdownException("down", null)));
+        assertEquals("failed", classify(new CompletionException(new IllegalStateException("boom"))));
+    }
+
+    private static String classify(Throwable error) {
+        return AutoStopperExecutor.classify(error, "saturated", "cancelled", "failed");
     }
 }
