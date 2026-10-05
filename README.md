@@ -216,7 +216,7 @@ operations route strictly through the shared coordinator and validate empty-serv
 
 ## Building and verification
 
-Builds require JDK 21 through 25. The committed Maven Wrapper pins Maven 3.9.16 and is the canonical
+Builds require JDK 21 through 25. The committed Maven Wrapper pins Maven 3.10.0 and is the canonical
 entry point:
 
 ```sh

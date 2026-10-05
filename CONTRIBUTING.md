@@ -10,7 +10,7 @@ All participants are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md
 ## Development setup
 
 A clean checkout needs only JDK 21 through 25 and network access to Maven Central on the first
-build. The committed Maven Wrapper pins Maven 3.9.16 and is the canonical entry point; there is no
+build. The committed Maven Wrapper pins Maven 3.10.0 and is the canonical entry point; there is no
 assumption that a system Maven installation is present or up to date.
 
 ```sh

@@ -13,6 +13,9 @@ All notable AutoStopper changes are documented here.
   probe intervals, outcomes, cancellation, and shutdown are unchanged. If AutoStopper is saturated
   before the first attempt, the startup still reports `OVERLOADED`; a later attempt skipped for
   saturation is retried at the next interval within the same deadline (#95).
+- The canonical build is the checksummed Maven 3.10.0 Wrapper. Maven's auto-discovered repository
+  prefix filter is disabled in `.mvn/maven.config` because the PaperMC repository can publish a
+  prefix file that omits `com.velocitypowered`, which blocks Velocity API resolution.
 
 ## [2.1.1] - 2026-09-26
 
