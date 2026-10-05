@@ -1071,38 +1071,39 @@ class ServerLifecycleCoordinatorTest {
 
     @Test
     void manualStop_ShutdownWhileDockerStops_CancelsStopAndIgnoresLateResult() {
-        AutoStopperExecutor executor = singleWorkerCoordinator();
-        readyServerWithoutPlayers();
-        when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
-            coordinator.shutdown();
-            return ContainerStatus.STOPPED;
-        });
+        try (AutoStopperExecutor executor = singleWorkerCoordinator()) {
+            readyServerWithoutPlayers();
+            when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
+                coordinator.shutdown();
+                return ContainerStatus.STOPPED;
+            });
 
-        CompletableFuture<ManualStopOutcome> stop = coordinator.requestManualStop(mapping, targetServer);
-        awaitQueuedWork(executor);
+            CompletableFuture<ManualStopOutcome> stop = coordinator.requestManualStop(mapping, targetServer);
+            awaitQueuedWork(executor);
 
-        // Shutdown cancels the in-flight stop instead of reporting PROXY_SHUTDOWN (#114).
-        assertTrue(stop.isCancelled());
-        assertEquals(Optional.empty(), coordinator.state("survival"));
-        executor.close();
+            // Shutdown cancels the in-flight stop instead of reporting PROXY_SHUTDOWN (#114).
+            assertTrue(stop.isCancelled());
+            assertEquals(Optional.empty(), coordinator.state("survival"));
+        }
     }
 
     @Test
     void manualRestart_ShutdownWhileDockerStops_NeverStartsContainer() {
-        AutoStopperExecutor executor = singleWorkerCoordinator();
-        readyServerWithoutPlayers();
-        when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
-            coordinator.shutdown();
-            return ContainerStatus.STOPPED;
-        });
+        try (AutoStopperExecutor executor = singleWorkerCoordinator()) {
+            readyServerWithoutPlayers();
+            when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
+                coordinator.shutdown();
+                return ContainerStatus.STOPPED;
+            });
 
-        CompletableFuture<ManualRestartOutcome> restart = coordinator.requestManualRestart(mapping, targetServer);
-        awaitQueuedWork(executor);
+            CompletableFuture<ManualRestartOutcome> restart =
+                    coordinator.requestManualRestart(mapping, targetServer);
+            awaitQueuedWork(executor);
 
-        // Shutdown cancels the in-flight restart instead of reporting PROXY_SHUTDOWN (#114).
-        assertTrue(restart.isCancelled());
-        verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
-        executor.close();
+            // Shutdown cancels the in-flight restart instead of reporting PROXY_SHUTDOWN (#114).
+            assertTrue(restart.isCancelled());
+            verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
+        }
     }
 
     @Test
