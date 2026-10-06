@@ -173,6 +173,18 @@ class LifecycleEntryTest {
     }
 
     @Test
+    void manualStopOwnershipIsByIdentity() {
+        CompletableFuture<ManualStopOutcome> stop = new CompletableFuture<>();
+        entry.attachManualStop(stop);
+
+        assertTrue(entry.ownsManualStop(stop));
+        entry.detachManualStop(new CompletableFuture<>());
+        assertTrue(entry.ownsManualStop(stop));
+        entry.detachManualStop(stop);
+        assertFalse(entry.ownsManualStop(stop));
+    }
+
+    @Test
     void markReadyRecoversFromStoppedOrFailedAndClearsFailure() {
         entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 0, 0);
         entry.finishStartup(StartupOutcome.START_FAILED, FAILURE);
@@ -305,7 +317,7 @@ class LifecycleEntryTest {
 
         List<CompletableFuture<?>> operations = new ArrayList<>();
         List<ConnectionWaiter> stranded = new ArrayList<>();
-        boolean interrupted = entry.drainForShutdown(operations, stranded);
+        boolean interrupted = entry.drainForShutdown(operations, new ArrayList<>(), stranded);
 
         assertTrue(interrupted);
         assertFalse(startup.isDone(), "the caller cancels the startup outside the entry lock");
@@ -322,7 +334,24 @@ class LifecycleEntryTest {
         entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 0, 0);
         entry.claimStartupTelemetry();
 
-        assertFalse(entry.drainForShutdown(new ArrayList<>(), new ArrayList<>()));
+        assertFalse(entry.drainForShutdown(new ArrayList<>(), new ArrayList<>(), new ArrayList<>()));
+    }
+
+    @Test
+    void drainForShutdownHandsBackManualStopSeparatelyFromCancellableOperations() {
+        readyEntry();
+        entry.beginStop();
+        CompletableFuture<ManualStopOutcome> stop = new CompletableFuture<>();
+        entry.attachManualStop(stop);
+
+        List<CompletableFuture<?>> operations = new ArrayList<>();
+        List<CompletableFuture<ManualStopOutcome>> manualStops = new ArrayList<>();
+        entry.drainForShutdown(operations, manualStops, new ArrayList<>());
+
+        assertEquals(List.of(), operations);
+        assertEquals(List.of(stop), manualStops);
+        assertFalse(stop.isDone(), "the caller completes the stop outside the entry lock");
+        assertFalse(entry.ownsManualStop(stop));
     }
 
     private void readyEntry() {

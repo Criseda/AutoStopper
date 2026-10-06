@@ -32,6 +32,7 @@ final class LifecycleEntry {
     private ConnectionLifecycleStage progressStage;
     private CompletableFuture<StartupOutcome> startupFuture;
     private CompletableFuture<?> activeOperation;
+    private CompletableFuture<ManualStopOutcome> manualStop;
     private ConnectionOutcome lastConnectionOutcome;
     private OperationalFailure lastFailure;
     private boolean readyConnectionSucceeded;
@@ -215,7 +216,7 @@ final class LifecycleEntry {
         return finished;
     }
 
-    // --- Operations (Docker calls and manual commands) ---
+    // --- Operations (Docker and readiness calls, cancelled at shutdown) ---
 
     void attachOperation(CompletableFuture<?> operation) {
         activeOperation = operation;
@@ -235,6 +236,21 @@ final class LifecycleEntry {
 
     void beginStop() {
         transition(ServerLifecycleState.STOPPING);
+    }
+
+    /** Hands the current stop to an operator command, which shutdown completes with PROXY_SHUTDOWN. */
+    void attachManualStop(CompletableFuture<ManualStopOutcome> stop) {
+        manualStop = stop;
+    }
+
+    boolean ownsManualStop(CompletableFuture<ManualStopOutcome> stop) {
+        return manualStop == stop;
+    }
+
+    void detachManualStop(CompletableFuture<ManualStopOutcome> stop) {
+        if (manualStop == stop) {
+            manualStop = null;
+        }
     }
 
     /** Moves to STOPPED or FAILED to match what Docker did, without touching the recorded failure. */
@@ -325,16 +341,21 @@ final class LifecycleEntry {
     // --- Shutdown ---
 
     /**
-     * Detaches everything still in flight, including the startup future, so the caller can cancel
-     * or complete it outside the lock.
+     * Detaches everything still in flight so the caller can end it outside the lock: operations
+     * and the startup future to cancel, and the manual stop to complete with PROXY_SHUTDOWN.
      *
      * @return whether a startup was interrupted before recording its telemetry
      */
-    boolean drainForShutdown(List<CompletableFuture<?>> operations, List<ConnectionWaiter> stranded) {
+    boolean drainForShutdown(List<CompletableFuture<?>> operations,
+            List<CompletableFuture<ManualStopOutcome>> manualStops, List<ConnectionWaiter> stranded) {
         boolean interruptedStartup = false;
         if (activeOperation != null) {
             operations.add(activeOperation);
             activeOperation = null;
+        }
+        if (manualStop != null) {
+            manualStops.add(manualStop);
+            manualStop = null;
         }
         if (startupFuture != null) {
             interruptedStartup = claimStartupTelemetry();
