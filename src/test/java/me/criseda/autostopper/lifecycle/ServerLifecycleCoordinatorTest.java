@@ -1232,6 +1232,39 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
+    void shutdownCancelsInFlightWorkBeforeEndingManualStart() {
+        CompletableFuture<Optional<ContainerStatus>> status = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(status);
+
+        CompletableFuture<Boolean> statusCancelledWhenStartEnded = coordinator.requestManualStart(mapping)
+                .thenApply(ignored -> status.isCancelled());
+        coordinator.shutdown();
+
+        assertTrue(statusCancelledWhenStartEnded.join());
+    }
+
+    @Test
+    void manualStart_StatusWithoutMapping_EndsMappingChanged() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
+
+        assertEquals(ManualStartOutcome.MAPPING_CHANGED, coordinator.requestManualStart(mapping).join());
+        assertEquals(1, coordinator.snapshotTelemetry()
+                .outcomeCount(TelemetryOperationType.MANUAL_START, TelemetryOutcome.MAPPING_CHANGED));
+    }
+
+    @Test
+    void manualRestart_OfStoppedServer_StatusWithoutMapping_EndsMappingChanged() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
+
+        assertEquals(ManualRestartOutcome.MAPPING_CHANGED,
+                coordinator.requestManualRestart(mapping, targetServer).join());
+        assertEquals(1, coordinator.snapshotTelemetry()
+                .outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.MAPPING_CHANGED));
+    }
+
+    @Test
     void manualStart_JoiningPlayerStartup_ShutdownEndsWithProxyShutdown() {
         when(serverManager.getServerStatusAsync(mapping)).thenReturn(new CompletableFuture<>());
         PlayerHarness player = player("joined-startup");

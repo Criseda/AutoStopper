@@ -342,38 +342,36 @@ final class LifecycleEntry {
     // --- Shutdown ---
 
     /**
-     * Detaches everything still in flight so the caller can end it outside the lock: operations
-     * to cancel, and the startup and manual stop to complete with PROXY_SHUTDOWN.
-     *
-     * @return whether a startup was interrupted before recording its telemetry
+     * Detaches everything still in flight into {@code drain}, so the caller can end it outside the
+     * lock: operations to cancel, the startup and manual stop to complete with PROXY_SHUTDOWN, and
+     * the stranded waiters. A startup that has not recorded its telemetry is reported as interrupted.
      */
-    boolean drainForShutdown(List<CompletableFuture<?>> operations, List<CompletableFuture<StartupOutcome>> startups,
-            List<CompletableFuture<ManualStopOutcome>> manualStops, List<ConnectionWaiter> stranded) {
-        boolean interruptedStartup = false;
+    void drainForShutdown(ShutdownDrain drain) {
         if (activeOperation != null) {
-            operations.add(activeOperation);
+            drain.addOperation(activeOperation);
             activeOperation = null;
         }
         if (manualStop != null) {
-            manualStops.add(manualStop);
+            drain.addManualStop(manualStop);
             manualStop = null;
         }
         if (startupFuture != null) {
-            interruptedStartup = claimStartupTelemetry();
-            startups.add(startupFuture);
+            if (claimStartupTelemetry()) {
+                drain.addInterruptedStartup(mapping.serverName(), startupStartNanos);
+            }
+            drain.addStartup(startupFuture);
             startupFuture = null;
         }
         for (ConnectionWaiter waiter : waiters.values()) {
             waiter.discard();
             CompletableFuture<?> connection = waiter.detachConnection();
             if (connection != null) {
-                operations.add(connection);
+                drain.addOperation(connection);
             }
-            stranded.add(waiter);
+            drain.addWaiter(waiter);
         }
         waiters.clear();
         lastConnectionOutcome = ConnectionOutcome.PROXY_SHUTDOWN;
-        return interruptedStartup;
     }
 
     private void transition(ServerLifecycleState next) {

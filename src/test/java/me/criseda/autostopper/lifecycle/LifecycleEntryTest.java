@@ -323,23 +323,22 @@ class LifecycleEntryTest {
 
     @Test
     void drainForShutdownDetachesEverythingInFlight() {
-        CompletableFuture<StartupOutcome> startup = entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 0, 1);
+        CompletableFuture<StartupOutcome> startup = entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 42, 1);
         CompletableFuture<Void> operation = new CompletableFuture<>();
         entry.attachOperation(operation);
         ConnectionWaiter waiter = waiter();
         entry.addWaiter(waiter);
 
-        List<CompletableFuture<?>> operations = new ArrayList<>();
-        List<CompletableFuture<StartupOutcome>> startups = new ArrayList<>();
-        List<ConnectionWaiter> stranded = new ArrayList<>();
-        boolean interrupted = entry.drainForShutdown(operations, startups, new ArrayList<>(), stranded);
+        ShutdownDrain drain = new ShutdownDrain();
+        entry.drainForShutdown(drain);
 
-        assertTrue(interrupted);
+        assertEquals(List.of(new ShutdownDrain.InterruptedStartup(entry.mapping().serverName(), 42)),
+                drain.interruptedStartups());
         assertFalse(startup.isDone(), "the caller completes the startup outside the entry lock");
-        assertEquals(List.of(operation), operations);
-        assertEquals(List.of(startup), startups);
+        assertEquals(List.of(operation), drain.operations());
+        assertEquals(List.of(startup), drain.startups());
         assertFalse(entry.ownsStartup(startup));
-        assertEquals(List.of(waiter), stranded);
+        assertEquals(List.of(waiter), drain.waiters());
         assertTrue(waiter.isDiscarded());
         assertFalse(entry.hasWaiters());
         assertFalse(entry.ownsOperation(operation));
@@ -348,10 +347,14 @@ class LifecycleEntryTest {
 
     @Test
     void drainForShutdownDoesNotReportStartupWhoseTelemetryWasRecorded() {
-        entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 0, 0);
+        CompletableFuture<StartupOutcome> startup = entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 0, 0);
         entry.claimStartupTelemetry();
 
-        assertFalse(entry.drainForShutdown(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()));
+        ShutdownDrain drain = new ShutdownDrain();
+        entry.drainForShutdown(drain);
+
+        assertEquals(List.of(), drain.interruptedStartups());
+        assertEquals(List.of(startup), drain.startups());
     }
 
     @Test
@@ -361,12 +364,11 @@ class LifecycleEntryTest {
         CompletableFuture<ManualStopOutcome> stop = new CompletableFuture<>();
         entry.attachManualStop(stop);
 
-        List<CompletableFuture<?>> operations = new ArrayList<>();
-        List<CompletableFuture<ManualStopOutcome>> manualStops = new ArrayList<>();
-        entry.drainForShutdown(operations, new ArrayList<>(), manualStops, new ArrayList<>());
+        ShutdownDrain drain = new ShutdownDrain();
+        entry.drainForShutdown(drain);
 
-        assertEquals(List.of(), operations);
-        assertEquals(List.of(stop), manualStops);
+        assertEquals(List.of(), drain.operations());
+        assertEquals(List.of(stop), drain.manualStops());
         assertFalse(stop.isDone(), "the caller completes the stop outside the entry lock");
         assertFalse(entry.ownsManualStop(stop));
     }

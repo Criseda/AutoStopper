@@ -20,7 +20,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -343,38 +342,31 @@ public final class ServerLifecycleCoordinator {
     // --- Shutdown ---
 
     public void shutdown() {
-        List<CompletableFuture<?>> operations = new ArrayList<>();
-        List<CompletableFuture<StartupOutcome>> startups = new ArrayList<>();
-        List<CompletableFuture<ManualStopOutcome>> manualStops = new ArrayList<>();
-        List<ConnectionWaiter> waiters = new ArrayList<>();
-        List<Map.Entry<String, Long>> interruptedStartups = new ArrayList<>();
-        boolean initiated = runtime.shutdown(entry -> {
-            if (entry.drainForShutdown(operations, startups, manualStops, waiters)) {
-                interruptedStartups.add(Map.entry(entry.mapping().serverName(), entry.startupStartNanos()));
-            }
-        });
-        if (!initiated) {
+        ShutdownDrain drain = new ShutdownDrain();
+        if (!runtime.shutdown(entry -> entry.drainForShutdown(drain))) {
             return;
         }
         holdRegistry.clear();
 
-        for (Map.Entry<String, Long> startup : interruptedStartups) {
-            telemetry.recordOperation(TelemetryOperationType.STARTUP, startup.getKey(),
-                    TelemetryOrigin.INTERNAL, TelemetryOutcome.PROXY_SHUTDOWN,
-                    runtime.elapsedSince(startup.getValue()), 0);
+        // Cancel Docker, readiness, and connection work first so shutdown stays bounded; their
+        // callbacks see the shutdown flag and do nothing.
+        for (CompletableFuture<?> operation : drain.operations()) {
+            operation.cancel(true);
         }
-        for (ConnectionWaiter waiter : waiters) {
+        for (ShutdownDrain.InterruptedStartup startup : drain.interruptedStartups()) {
+            telemetry.recordOperation(TelemetryOperationType.STARTUP, startup.serverName(),
+                    TelemetryOrigin.INTERNAL, TelemetryOutcome.PROXY_SHUTDOWN,
+                    runtime.elapsedSince(startup.startNanos()), 0);
+        }
+        for (ConnectionWaiter waiter : drain.waiters()) {
             connector.abandon(waiter, ConnectionOutcome.PROXY_SHUTDOWN);
         }
         // A manual start or restart follows its stop or startup, so it ends with PROXY_SHUTDOWN too.
-        for (CompletableFuture<ManualStopOutcome> manualStop : manualStops) {
+        for (CompletableFuture<ManualStopOutcome> manualStop : drain.manualStops()) {
             manualStop.complete(ManualStopOutcome.PROXY_SHUTDOWN);
         }
-        for (CompletableFuture<StartupOutcome> startup : startups) {
+        for (CompletableFuture<StartupOutcome> startup : drain.startups()) {
             startup.complete(StartupOutcome.PROXY_SHUTDOWN);
-        }
-        for (CompletableFuture<?> operation : operations) {
-            operation.cancel(true);
         }
     }
 
