@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.stubbing.Answer;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -31,12 +32,15 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 import static me.criseda.autostopper.testing.ComponentTestUtils.plainText;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -362,6 +366,23 @@ class ServerLifecycleCoordinatorTest {
 
         assertEquals(ConnectionOutcome.PLAYER_DISCONNECTED, outcome.join());
         assertEquals(0, coordinator.waitingCount("survival"));
+    }
+
+    @Test
+    void disconnectWhileConnectionIsCreatedCancelsTheConnection() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("disconnect-while-connecting");
+        when(player.player.createConnectionRequest(targetServer).connect()).thenAnswer(invocation -> {
+            coordinator.discardPlayer(player.player);
+            return player.connection;
+        });
+
+        CompletableFuture<ConnectionOutcome> outcome =
+                coordinator.requestConnection(player.player, targetServer, mapping);
+
+        assertEquals(ConnectionOutcome.PLAYER_DISCONNECTED, outcome.join());
+        assertTrue(player.connection.isCancelled());
     }
 
     @Test
@@ -1121,6 +1142,93 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
+    void manualStopCallbackCanCallBackIntoCoordinator() {
+        assertStopCallbackCanCallBack(invocation -> ContainerStatus.STOPPED,
+                ManualStopOutcome.STOPPED, ServerLifecycleState.STOPPED);
+    }
+
+    @Test
+    void failedManualStopWorkerCallbackCanCallBackIntoCoordinator() {
+        assertStopCallbackCanCallBack(invocation -> {
+            throw new IllegalStateException("stop worker failed");
+        }, ManualStopOutcome.STOP_FAILED, ServerLifecycleState.READY);
+    }
+
+    /** Registers a callback on a manual stop before Docker answers with {@code dockerStop}. */
+    private void assertStopCallbackCanCallBack(Answer<ContainerStatus> dockerStop,
+            ManualStopOutcome expectedOutcome, ServerLifecycleState expectedState) {
+        readyServerWithoutPlayers();
+        CountDownLatch callbackRegistered = new CountDownLatch(1);
+        when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
+            awaitLatch(callbackRegistered);
+            return dockerStop.answer(invocation);
+        });
+
+        CompletableFuture<ManualStopOutcome> stop = coordinator.requestManualStop(mapping, targetServer);
+        CompletableFuture<Optional<ServerLifecycleState>> seenByCallback =
+                stop.thenApply(ignored -> fromAnotherThread(() -> coordinator.state(mapping)));
+        callbackRegistered.countDown();
+
+        assertEquals(expectedOutcome, stop.join());
+        assertEquals(Optional.of(expectedState), seenByCallback.join());
+    }
+
+    @Test
+    void abortedManualStopCallbackCanCallBackIntoCoordinator() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("p1");
+        coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        CountDownLatch callbackRegistered = new CountDownLatch(1);
+        when(targetServer.getPlayersConnected())
+                .thenReturn(List.of())
+                .thenAnswer(invocation -> {
+                    awaitLatch(callbackRegistered);
+                    return List.of(player.player);
+                });
+
+        CompletableFuture<ManualStopOutcome> stop = coordinator.requestManualStop(mapping, targetServer);
+        CompletableFuture<Optional<ServerLifecycleState>> seenByCallback =
+                stop.thenApply(ignored -> fromAnotherThread(() -> coordinator.state(mapping)));
+        callbackRegistered.countDown();
+
+        assertEquals(ManualStopOutcome.PLAYERS_CONNECTED, stop.join());
+        assertEquals(Optional.of(ServerLifecycleState.READY), seenByCallback.join());
+    }
+
+    @Test
+    void manualRestartCallbackCanCallBackIntoCoordinatorWhenStopFails() {
+        readyServerWithoutPlayers();
+        CountDownLatch callbackRegistered = new CountDownLatch(1);
+        when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
+            awaitLatch(callbackRegistered);
+            return ContainerStatus.INACCESSIBLE;
+        });
+
+        CompletableFuture<ManualRestartOutcome> restart = coordinator.requestManualRestart(mapping, targetServer);
+        CompletableFuture<Optional<ServerLifecycleState>> seenByCallback =
+                restart.thenApply(ignored -> fromAnotherThread(() -> coordinator.state(mapping)));
+        callbackRegistered.countDown();
+
+        assertEquals(ManualRestartOutcome.DOCKER_INACCESSIBLE, restart.join());
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), seenByCallback.join());
+    }
+
+    @Test
+    void manualStartCallbackCanCallBackIntoCoordinatorWhenShutdownCancelsStartup() {
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(new CompletableFuture<>());
+
+        CompletableFuture<ManualStartOutcome> start = coordinator.requestManualStart(mapping);
+        CompletableFuture<ManualStartOutcome> seenByCallback =
+                start.thenApply(ignored -> fromAnotherThread(() -> coordinator.requestManualStart(mapping).join()));
+        coordinator.shutdown();
+
+        assertEquals(ManualStartOutcome.CANCELLED, start.join());
+        assertEquals(ManualStartOutcome.PROXY_SHUTDOWN, seenByCallback.join());
+    }
+
+    @Test
     void manualStart_ContainerMissing() {
         when(serverManager.getServerStatusAsync(mapping))
                 .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.MISSING)));
@@ -1413,6 +1521,28 @@ class ServerLifecycleCoordinatorTest {
     /** Waits until every task queued on the single worker so far has finished. */
     private static void awaitQueuedWork(AutoStopperExecutor executor) {
         executor.supply(() -> null).join();
+    }
+
+    /**
+     * Calls into the coordinator from another thread and waits for the result. Run from a future
+     * callback, this fails instead of hanging when the completing thread still holds a lifecycle
+     * lock that the call needs.
+     */
+    private static <T> T fromAnotherThread(Supplier<T> call) {
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        try {
+            return other.submit(call::get).get(5, TimeUnit.SECONDS);
+        } catch (TimeoutException error) {
+            throw new AssertionError("Future callback ran while a lifecycle lock was held", error);
+        } catch (InterruptedException | ExecutionException error) {
+            throw new AssertionError(error);
+        } finally {
+            other.shutdownNow();
+        }
+    }
+
+    private static void awaitLatch(CountDownLatch latch) throws InterruptedException {
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "latch was not released");
     }
 
     private PlayerHarness player(String name) {

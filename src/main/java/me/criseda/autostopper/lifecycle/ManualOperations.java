@@ -212,9 +212,15 @@ final class ManualOperations {
     private void runStop(LifecycleEntry entry, ServerMapping mapping, RegisteredServer registeredServer,
             CompletableFuture<ManualStopOutcome> stop) {
         onWorker(entry, stop, () -> {
-            if (mayStillStop(entry, registeredServer, stop)) {
-                finishManualStop(entry, stop, serverManager.stopServer(mapping), "manual stop");
+            if (!mayStillStop(entry, registeredServer, stop)) {
+                return;
             }
+            ContainerStatus result = serverManager.stopServer(mapping);
+            ManualStopOutcome outcome;
+            synchronized (entry) {
+                outcome = settleStop(entry, stop, result, "manual stop");
+            }
+            stop.complete(outcome);
         });
     }
 
@@ -230,16 +236,19 @@ final class ManualOperations {
                 return;
             }
             ContainerStatus result = serverManager.stopServer(mapping);
-            CompletableFuture<StartupOutcome> startup;
+            ManualStopOutcome outcome;
+            CompletableFuture<StartupOutcome> startup = null;
             synchronized (entry) {
-                if (!finishManualStop(entry, stop, result, "container stop during restart")
-                        || result != ContainerStatus.STOPPED) {
-                    return;
+                outcome = settleStop(entry, stop, result, "container stop during restart");
+                if (outcome == ManualStopOutcome.STOPPED) {
+                    startup = entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0);
                 }
-                startup = entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0);
             }
-            pipeline.launchStart(entry, mapping, startup);
-            completeRestart(restart, startup);
+            stop.complete(outcome);
+            if (startup != null) {
+                pipeline.launchStart(entry, mapping, startup);
+                completeRestart(restart, startup);
+            }
         });
     }
 
@@ -264,14 +273,16 @@ final class ManualOperations {
      */
     private boolean mayStillStop(LifecycleEntry entry, RegisteredServer registeredServer,
             CompletableFuture<ManualStopOutcome> stop) {
+        ManualStopOutcome blocked;
         synchronized (entry) {
-            ManualStopOutcome blocked = lateStopBlocker(entry, registeredServer, stop);
+            blocked = lateStopBlocker(entry, registeredServer, stop);
             if (blocked == null) {
                 return true;
             }
-            abortStop(entry, stop, blocked);
-            return false;
+            withdrawStop(entry, stop);
         }
+        stop.complete(blocked);
+        return false;
     }
 
     /** Like {@link #stopBlocker}, for an admitted stop about to call Docker. Caller holds the entry lock. */
@@ -291,27 +302,24 @@ final class ManualOperations {
     }
 
     /**
-     * Applies the Docker stop result and completes {@code stop} with how it ended.
+     * Applies the Docker stop result to the entry. When {@code stop} no longer owns the entry, the
+     * result is only applied to the state, so the entry still matches the container. Caller holds
+     * the entry lock and completes {@code stop} with the returned outcome after releasing it.
      *
-     * @return whether {@code stop} still owned the entry. When it did not, the result is only
-     *         applied to the state, so the entry still matches the container.
+     * @return how {@code stop} ended
      */
-    private boolean finishManualStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop,
+    private ManualStopOutcome settleStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop,
             ContainerStatus result, String failureContext) {
-        synchronized (entry) {
-            ManualStopOutcome lost = lostOwnership(entry, stop);
-            if (lost != null) {
-                entry.applyStopResult(result);
-                stop.complete(lost);
-                return false;
-            }
-            entry.detachOperation(stop);
-            entry.finishStop(result, () -> new OperationalFailure(Instant.now(), failureContext,
-                    "container stop failed with " + result,
-                    "Check Docker access and container state, then retry."));
-            stop.complete(stopOutcome(result));
-            return true;
+        ManualStopOutcome lost = lostOwnership(entry, stop);
+        if (lost != null) {
+            entry.applyStopResult(result);
+            return lost;
         }
+        entry.detachOperation(stop);
+        entry.finishStop(result, () -> new OperationalFailure(Instant.now(), failureContext,
+                "container stop failed with " + result,
+                "Check Docker access and container state, then retry."));
+        return stopOutcome(result);
     }
 
     /**
@@ -332,10 +340,15 @@ final class ManualOperations {
     private static void abortStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop,
             ManualStopOutcome outcome) {
         synchronized (entry) {
-            entry.cancelStop();
-            entry.detachOperation(stop);
-            stop.complete(outcome);
+            withdrawStop(entry, stop);
         }
+        stop.complete(outcome);
+    }
+
+    /** Returns the server to READY and releases it from {@code stop}. Caller holds the entry lock. */
+    private static void withdrawStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop) {
+        entry.cancelStop();
+        entry.detachOperation(stop);
     }
 
     private static ManualStopOutcome stopFailure(Throwable error) {

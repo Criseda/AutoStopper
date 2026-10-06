@@ -34,6 +34,11 @@ import java.util.function.Predicate;
  * {@link #cleanupRetired}, {@link #markStoppedIfUnchanged}, {@link #shutdown}). The shutdown flag,
  * clock, and reconnect-permit methods take no lock and are safe anywhere. Every method here that
  * hands out an entry does so with its monitor held.
+ *
+ * <p>Futures. Never complete or cancel a future while holding any of these locks.
+ * {@link java.util.concurrent.CompletableFuture} runs dependents on the completing thread, so a
+ * caller's callback would run under the lock and could take the locks out of order. Decide the
+ * outcome under the lock, release it, then complete the future.
  */
 final class LifecycleRuntime {
     private final Logger logger;

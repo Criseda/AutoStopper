@@ -76,13 +76,17 @@ final class WaiterConnector {
             finishWaiter(entry, waiter, ConnectionOutcome.CONNECTION_FAILED);
             return;
         }
+        boolean attached;
         synchronized (entry) {
-            if (runtime.isShutdown() || waiter.isFinished()) {
-                runtime.revokeReconnect(permit);
-                connection.cancel(true);
-                return;
+            attached = !runtime.isShutdown() && !waiter.isFinished();
+            if (attached) {
+                waiter.attachConnection(connection);
             }
-            waiter.attachConnection(connection);
+        }
+        if (!attached) {
+            runtime.revokeReconnect(permit);
+            connection.cancel(true);
+            return;
         }
 
         connection.whenComplete((result, error) -> {

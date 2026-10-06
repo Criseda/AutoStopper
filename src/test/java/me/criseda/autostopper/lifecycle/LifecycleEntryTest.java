@@ -308,8 +308,8 @@ class LifecycleEntryTest {
         boolean interrupted = entry.drainForShutdown(operations, stranded);
 
         assertTrue(interrupted);
-        assertTrue(startup.isCancelled());
-        assertEquals(List.of(operation), operations);
+        assertFalse(startup.isDone(), "the caller cancels the startup outside the entry lock");
+        assertEquals(List.of(operation, startup), operations);
         assertEquals(List.of(waiter), stranded);
         assertTrue(waiter.isDiscarded());
         assertFalse(entry.hasWaiters());
