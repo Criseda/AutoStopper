@@ -240,16 +240,17 @@ final class StartupPipeline {
         }
     }
 
+    /** Attaches {@code operation} to the entry, or cancels it if {@code startup} no longer owns the entry. */
     private boolean ownOperation(LifecycleEntry entry, CompletableFuture<StartupOutcome> startup,
             CompletableFuture<?> operation) {
         synchronized (entry) {
-            if (runtime.isShutdown() || !entry.ownsStartup(startup)) {
-                operation.cancel(true);
-                return false;
+            if (!runtime.isShutdown() && entry.ownsStartup(startup)) {
+                entry.attachOperation(operation);
+                return true;
             }
-            entry.attachOperation(operation);
-            return true;
         }
+        operation.cancel(true);
+        return false;
     }
 
     /** Docker-facing step of the pipeline and how its failures are reported. */

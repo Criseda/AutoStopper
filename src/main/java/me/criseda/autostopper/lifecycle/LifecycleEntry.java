@@ -325,8 +325,8 @@ final class LifecycleEntry {
     // --- Shutdown ---
 
     /**
-     * Detaches everything still in flight so the caller can cancel or complete it outside the
-     * lock.
+     * Detaches everything still in flight, including the startup future, so the caller can cancel
+     * or complete it outside the lock.
      *
      * @return whether a startup was interrupted before recording its telemetry
      */
@@ -338,7 +338,7 @@ final class LifecycleEntry {
         }
         if (startupFuture != null) {
             interruptedStartup = claimStartupTelemetry();
-            startupFuture.cancel(false);
+            operations.add(startupFuture);
             startupFuture = null;
         }
         for (ConnectionWaiter waiter : waiters.values()) {
