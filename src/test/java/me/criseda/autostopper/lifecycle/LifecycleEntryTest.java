@@ -174,6 +174,8 @@ class LifecycleEntryTest {
 
     @Test
     void manualStopOwnershipIsByIdentity() {
+        readyEntry();
+        entry.beginStop();
         CompletableFuture<ManualStopOutcome> stop = new CompletableFuture<>();
         entry.attachManualStop(stop);
 
@@ -181,6 +183,18 @@ class LifecycleEntryTest {
         entry.detachManualStop(new CompletableFuture<>());
         assertTrue(entry.ownsManualStop(stop));
         entry.detachManualStop(stop);
+        assertFalse(entry.ownsManualStop(stop));
+    }
+
+    @Test
+    void manualStopOwnershipEndsWhenEntryLeavesStopping() {
+        readyEntry();
+        entry.beginStop();
+        CompletableFuture<ManualStopOutcome> stop = new CompletableFuture<>();
+        entry.attachManualStop(stop);
+
+        entry.cancelStop();
+
         assertFalse(entry.ownsManualStop(stop));
     }
 

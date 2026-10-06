@@ -330,7 +330,7 @@ final class ManualOperations {
         if (runtime.isShutdown()) {
             return ManualStopOutcome.PROXY_SHUTDOWN;
         }
-        if (!entry.ownsManualStop(stop) || !entry.is(ServerLifecycleState.STOPPING)) {
+        if (!entry.ownsManualStop(stop)) {
             return ManualStopOutcome.CANCELLED;
         }
         return null;

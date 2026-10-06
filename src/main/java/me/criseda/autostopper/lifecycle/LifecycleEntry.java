@@ -243,8 +243,9 @@ final class LifecycleEntry {
         manualStop = stop;
     }
 
+    /** Whether {@code stop} is still the live manual stop for this entry. */
     boolean ownsManualStop(CompletableFuture<ManualStopOutcome> stop) {
-        return manualStop == stop;
+        return state == ServerLifecycleState.STOPPING && manualStop == stop;
     }
 
     void detachManualStop(CompletableFuture<ManualStopOutcome> stop) {
