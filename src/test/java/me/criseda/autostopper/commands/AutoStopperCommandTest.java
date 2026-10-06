@@ -622,6 +622,22 @@ public class AutoStopperCommandTest {
     }
 
     @Test
+    public void testExecuteStop_ProxyShutdownSendsNothingMore() {
+        grant(AutoStopperCommand.STOP_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualStop(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(me.criseda.autostopper.lifecycle.ManualStopOutcome.PROXY_SHUTDOWN));
+
+        command.execute(mockInvocation(source, new String[]{"stop", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Stopping survival"));
+        verify(activityTracker, never()).removeActivity("survival");
+    }
+
+    @Test
     public void testExecuteRestart_PermissionDenied() {
         deny(AutoStopperCommand.RESTART_PERMISSION);
         command.execute(mockInvocation(source, new String[]{"restart", "survival"}));
@@ -643,6 +659,21 @@ public class AutoStopperCommandTest {
         List<Component> messages = captor.getAllValues();
         assertTrue(plainText(messages.get(0)).contains("Restarting survival"));
         assertTrue(plainText(messages.get(1)).contains("Restarted server survival"));
+    }
+
+    @Test
+    public void testExecuteRestart_ProxyShutdownSendsNothingMore() {
+        grant(AutoStopperCommand.RESTART_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualRestart(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(me.criseda.autostopper.lifecycle.ManualRestartOutcome.PROXY_SHUTDOWN));
+
+        command.execute(mockInvocation(source, new String[]{"restart", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Restarting survival"));
     }
 
     @Test

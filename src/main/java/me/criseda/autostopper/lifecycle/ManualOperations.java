@@ -204,7 +204,7 @@ final class ManualOperations {
     private static CompletableFuture<ManualStopOutcome> beginStop(LifecycleEntry entry) {
         entry.beginStop();
         CompletableFuture<ManualStopOutcome> stop = new CompletableFuture<>();
-        entry.attachOperation(stop);
+        entry.attachManualStop(stop);
         return stop;
     }
 
@@ -315,7 +315,7 @@ final class ManualOperations {
             entry.applyStopResult(result);
             return lost;
         }
-        entry.detachOperation(stop);
+        entry.detachManualStop(stop);
         entry.finishStop(result, () -> new OperationalFailure(Instant.now(), failureContext,
                 "container stop failed with " + result,
                 "Check Docker access and container state, then retry."));
@@ -330,7 +330,7 @@ final class ManualOperations {
         if (runtime.isShutdown()) {
             return ManualStopOutcome.PROXY_SHUTDOWN;
         }
-        if (!entry.ownsOperation(stop) || !entry.is(ServerLifecycleState.STOPPING)) {
+        if (!entry.ownsManualStop(stop)) {
             return ManualStopOutcome.CANCELLED;
         }
         return null;
@@ -348,7 +348,7 @@ final class ManualOperations {
     /** Returns the server to READY and releases it from {@code stop}. Caller holds the entry lock. */
     private static void withdrawStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop) {
         entry.cancelStop();
-        entry.detachOperation(stop);
+        entry.detachManualStop(stop);
     }
 
     private static ManualStopOutcome stopFailure(Throwable error) {

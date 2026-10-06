@@ -1091,7 +1091,7 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
-    void manualStop_ShutdownWhileDockerStops_CancelsStopAndIgnoresLateResult() {
+    void manualStop_ShutdownWhileDockerStops_EndsWithProxyShutdownAndIgnoresLateResult() {
         try (AutoStopperExecutor executor = singleWorkerCoordinator()) {
             readyServerWithoutPlayers();
             when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
@@ -1102,14 +1102,16 @@ class ServerLifecycleCoordinatorTest {
             CompletableFuture<ManualStopOutcome> stop = coordinator.requestManualStop(mapping, targetServer);
             awaitQueuedWork(executor);
 
-            // Shutdown cancels the in-flight stop instead of reporting PROXY_SHUTDOWN (#114).
-            assertTrue(stop.isCancelled());
+            assertEquals(ManualStopOutcome.PROXY_SHUTDOWN, stop.join());
             assertEquals(Optional.empty(), coordinator.state("survival"));
+            TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
+            assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.PROXY_SHUTDOWN));
+            assertEquals(0, snapshot.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.STOP_FAILED));
         }
     }
 
     @Test
-    void manualRestart_ShutdownWhileDockerStops_NeverStartsContainer() {
+    void manualRestart_ShutdownWhileDockerStops_EndsWithProxyShutdownAndNeverStartsContainer() {
         try (AutoStopperExecutor executor = singleWorkerCoordinator()) {
             readyServerWithoutPlayers();
             when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
@@ -1121,9 +1123,11 @@ class ServerLifecycleCoordinatorTest {
                     coordinator.requestManualRestart(mapping, targetServer);
             awaitQueuedWork(executor);
 
-            // Shutdown cancels the in-flight restart instead of reporting PROXY_SHUTDOWN (#114).
-            assertTrue(restart.isCancelled());
+            assertEquals(ManualRestartOutcome.PROXY_SHUTDOWN, restart.join());
             verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
+            TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
+            assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.PROXY_SHUTDOWN));
+            assertEquals(0, snapshot.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.STOP_FAILED));
         }
     }
 
