@@ -330,12 +330,15 @@ class LifecycleEntryTest {
         entry.addWaiter(waiter);
 
         List<CompletableFuture<?>> operations = new ArrayList<>();
+        List<CompletableFuture<StartupOutcome>> startups = new ArrayList<>();
         List<ConnectionWaiter> stranded = new ArrayList<>();
-        boolean interrupted = entry.drainForShutdown(operations, new ArrayList<>(), stranded);
+        boolean interrupted = entry.drainForShutdown(operations, startups, new ArrayList<>(), stranded);
 
         assertTrue(interrupted);
-        assertFalse(startup.isDone(), "the caller cancels the startup outside the entry lock");
-        assertEquals(List.of(operation, startup), operations);
+        assertFalse(startup.isDone(), "the caller completes the startup outside the entry lock");
+        assertEquals(List.of(operation), operations);
+        assertEquals(List.of(startup), startups);
+        assertFalse(entry.ownsStartup(startup));
         assertEquals(List.of(waiter), stranded);
         assertTrue(waiter.isDiscarded());
         assertFalse(entry.hasWaiters());
@@ -348,7 +351,7 @@ class LifecycleEntryTest {
         entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 0, 0);
         entry.claimStartupTelemetry();
 
-        assertFalse(entry.drainForShutdown(new ArrayList<>(), new ArrayList<>(), new ArrayList<>()));
+        assertFalse(entry.drainForShutdown(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>()));
     }
 
     @Test
@@ -360,7 +363,7 @@ class LifecycleEntryTest {
 
         List<CompletableFuture<?>> operations = new ArrayList<>();
         List<CompletableFuture<ManualStopOutcome>> manualStops = new ArrayList<>();
-        entry.drainForShutdown(operations, manualStops, new ArrayList<>());
+        entry.drainForShutdown(operations, new ArrayList<>(), manualStops, new ArrayList<>());
 
         assertEquals(List.of(), operations);
         assertEquals(List.of(stop), manualStops);

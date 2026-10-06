@@ -344,11 +344,12 @@ public final class ServerLifecycleCoordinator {
 
     public void shutdown() {
         List<CompletableFuture<?>> operations = new ArrayList<>();
+        List<CompletableFuture<StartupOutcome>> startups = new ArrayList<>();
         List<CompletableFuture<ManualStopOutcome>> manualStops = new ArrayList<>();
         List<ConnectionWaiter> waiters = new ArrayList<>();
         List<Map.Entry<String, Long>> interruptedStartups = new ArrayList<>();
         boolean initiated = runtime.shutdown(entry -> {
-            if (entry.drainForShutdown(operations, manualStops, waiters)) {
+            if (entry.drainForShutdown(operations, startups, manualStops, waiters)) {
                 interruptedStartups.add(Map.entry(entry.mapping().serverName(), entry.startupStartNanos()));
             }
         });
@@ -365,9 +366,12 @@ public final class ServerLifecycleCoordinator {
         for (ConnectionWaiter waiter : waiters) {
             connector.abandon(waiter, ConnectionOutcome.PROXY_SHUTDOWN);
         }
-        // A restart follows its stop, so it ends with PROXY_SHUTDOWN too.
+        // A manual start or restart follows its stop or startup, so it ends with PROXY_SHUTDOWN too.
         for (CompletableFuture<ManualStopOutcome> manualStop : manualStops) {
             manualStop.complete(ManualStopOutcome.PROXY_SHUTDOWN);
+        }
+        for (CompletableFuture<StartupOutcome> startup : startups) {
+            startup.complete(StartupOutcome.PROXY_SHUTDOWN);
         }
         for (CompletableFuture<?> operation : operations) {
             operation.cancel(true);

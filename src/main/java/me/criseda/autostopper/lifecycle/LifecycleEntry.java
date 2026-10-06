@@ -343,11 +343,11 @@ final class LifecycleEntry {
 
     /**
      * Detaches everything still in flight so the caller can end it outside the lock: operations
-     * and the startup future to cancel, and the manual stop to complete with PROXY_SHUTDOWN.
+     * to cancel, and the startup and manual stop to complete with PROXY_SHUTDOWN.
      *
      * @return whether a startup was interrupted before recording its telemetry
      */
-    boolean drainForShutdown(List<CompletableFuture<?>> operations,
+    boolean drainForShutdown(List<CompletableFuture<?>> operations, List<CompletableFuture<StartupOutcome>> startups,
             List<CompletableFuture<ManualStopOutcome>> manualStops, List<ConnectionWaiter> stranded) {
         boolean interruptedStartup = false;
         if (activeOperation != null) {
@@ -360,7 +360,7 @@ final class LifecycleEntry {
         }
         if (startupFuture != null) {
             interruptedStartup = claimStartupTelemetry();
-            operations.add(startupFuture);
+            startups.add(startupFuture);
             startupFuture = null;
         }
         for (ConnectionWaiter waiter : waiters.values()) {

@@ -23,7 +23,9 @@ enum StartupOutcome {
     NOT_READY(false, ConnectionOutcome.SERVER_NOT_READY),
     READINESS_ERROR(false, ConnectionOutcome.SERVER_NOT_READY),
     CANCELLED(false, ConnectionOutcome.START_CANCELLED),
-    OVERLOADED(false, ConnectionOutcome.OVERLOADED);
+    OVERLOADED(false, ConnectionOutcome.OVERLOADED),
+    /** The proxy shut down before the startup finished; set only by shutdown, never by the pipeline. */
+    PROXY_SHUTDOWN(false, ConnectionOutcome.PROXY_SHUTDOWN);
 
     private final boolean ready;
     private final ConnectionOutcome connectionOutcome;
@@ -54,6 +56,7 @@ enum StartupOutcome {
             case NOT_READY, READINESS_ERROR -> TelemetryOutcome.SERVER_NOT_READY;
             case CANCELLED -> TelemetryOutcome.CANCELLED;
             case OVERLOADED -> TelemetryOutcome.OVERLOADED;
+            case PROXY_SHUTDOWN -> TelemetryOutcome.PROXY_SHUTDOWN;
         };
     }
 
@@ -69,6 +72,7 @@ enum StartupOutcome {
             case START_FAILED, START_ERROR -> ManualStartOutcome.START_FAILED;
             case NOT_READY, READINESS_ERROR -> ManualStartOutcome.SERVER_NOT_READY;
             case OVERLOADED -> ManualStartOutcome.OVERLOADED;
+            case PROXY_SHUTDOWN -> ManualStartOutcome.PROXY_SHUTDOWN;
         };
     }
 
@@ -82,6 +86,7 @@ enum StartupOutcome {
             case STATUS_FAILED, STATUS_ERROR, START_FAILED, START_ERROR -> ManualRestartOutcome.START_FAILED;
             case NOT_READY, READINESS_ERROR -> ManualRestartOutcome.SERVER_NOT_READY;
             case OVERLOADED -> ManualRestartOutcome.OVERLOADED;
+            case PROXY_SHUTDOWN -> ManualRestartOutcome.PROXY_SHUTDOWN;
         };
     }
 
@@ -96,6 +101,7 @@ enum StartupOutcome {
             case STATUS_FAILED, STATUS_ERROR, START_FAILED, START_ERROR -> "Docker operation failed";
             case NOT_READY, READINESS_ERROR -> "server readiness check failed";
             case READY_RUNNING, READY_AFTER_START -> throw new IllegalArgumentException("ready outcome is not a failure");
+            case PROXY_SHUTDOWN -> throw new IllegalArgumentException("shutdown outcome is not a startup failure");
         };
     }
 
@@ -110,6 +116,7 @@ enum StartupOutcome {
             case STATUS_FAILED, STATUS_ERROR, START_FAILED, START_ERROR -> "Review proxy logs and Docker state, then retry.";
             case NOT_READY, READINESS_ERROR -> "Verify the configured readiness strategy and backend endpoint, then retry.";
             case READY_RUNNING, READY_AFTER_START -> throw new IllegalArgumentException("ready outcome is not a failure");
+            case PROXY_SHUTDOWN -> throw new IllegalArgumentException("shutdown outcome is not a startup failure");
         };
     }
 }
