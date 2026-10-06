@@ -47,6 +47,7 @@ final class LifecycleMessages {
             case CANCELLED -> AutoStopperMessages.startCancelled(serverName);
             case OVERLOADED -> AutoStopperMessages.overloaded();
             case READY_RUNNING, READY_AFTER_START -> throw new IllegalArgumentException("ready outcome is not a failure");
+            case PROXY_SHUTDOWN -> throw new IllegalArgumentException("shutdown outcome is not a startup failure");
         };
     }
 

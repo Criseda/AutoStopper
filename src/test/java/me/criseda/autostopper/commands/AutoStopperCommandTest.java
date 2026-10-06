@@ -560,6 +560,21 @@ public class AutoStopperCommandTest {
     }
 
     @Test
+    public void testExecuteStart_ProxyShutdownSendsNothingMore() {
+        grant(AutoStopperCommand.START_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualStart(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(me.criseda.autostopper.lifecycle.ManualStartOutcome.PROXY_SHUTDOWN));
+
+        command.execute(mockInvocation(source, new String[]{"start", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertTrue(plainText(captor.getValue()).contains("Waking survival"));
+    }
+
+    @Test
     public void testExecuteStop_PermissionDenied() {
         deny(AutoStopperCommand.STOP_PERMISSION);
         command.execute(mockInvocation(source, new String[]{"stop", "survival"}));

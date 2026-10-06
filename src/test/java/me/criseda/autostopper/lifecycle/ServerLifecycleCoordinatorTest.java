@@ -1132,17 +1132,159 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
-    void manualRestart_ShutdownAfterStopSucceeds_EndsCancelledAndCancelsStart() {
-        readyServerWithoutPlayers();
-        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
-        CompletableFuture<ContainerStatus> start = new CompletableFuture<>();
-        when(serverManager.startServerAsync(mapping)).thenAnswer(invocation -> {
-            coordinator.shutdown();
-            return start;
-        });
+    void manualRestart_ShutdownWhileContainerStarts_EndsWithProxyShutdownAndCancelsStart() {
+        try (AutoStopperExecutor executor = singleWorkerCoordinator()) {
+            readyServerWithoutPlayers();
+            when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+            CompletableFuture<ContainerStatus> start = new CompletableFuture<>();
+            when(serverManager.startServerAsync(mapping)).thenAnswer(invocation -> {
+                coordinator.shutdown();
+                return start;
+            });
 
-        assertEquals(ManualRestartOutcome.CANCELLED, coordinator.requestManualRestart(mapping, targetServer).join());
-        assertTrue(start.isCancelled());
+            CompletableFuture<ManualRestartOutcome> restart =
+                    coordinator.requestManualRestart(mapping, targetServer);
+            awaitQueuedWork(executor);
+
+            assertEquals(ManualRestartOutcome.PROXY_SHUTDOWN, restart.join());
+            assertTrue(start.isCancelled());
+            assertManualOperationEndedWithProxyShutdown(TelemetryOperationType.MANUAL_RESTART);
+        }
+    }
+
+    @Test
+    void manualRestart_ShutdownDuringReadiness_EndsWithProxyShutdownAndCancelsReadiness() {
+        try (AutoStopperExecutor executor = singleWorkerCoordinator()) {
+            readyServerWithoutPlayers();
+            when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+            when(serverManager.startServerAsync(mapping))
+                    .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+            CompletableFuture<ReadinessResult> readiness = new CompletableFuture<>();
+            when(serverManager.waitForServerReadyAsync(mapping)).thenAnswer(invocation -> {
+                coordinator.shutdown();
+                return readiness;
+            });
+
+            CompletableFuture<ManualRestartOutcome> restart =
+                    coordinator.requestManualRestart(mapping, targetServer);
+            awaitQueuedWork(executor);
+
+            assertEquals(ManualRestartOutcome.PROXY_SHUTDOWN, restart.join());
+            assertTrue(readiness.isCancelled());
+            assertManualOperationEndedWithProxyShutdown(TelemetryOperationType.MANUAL_RESTART);
+        }
+    }
+
+    @Test
+    void manualRestart_OfStoppedServer_ShutdownDuringStartup_EndsWithProxyShutdown() {
+        CompletableFuture<Optional<ContainerStatus>> status = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(status);
+
+        CompletableFuture<ManualRestartOutcome> restart = coordinator.requestManualRestart(mapping, targetServer);
+        coordinator.shutdown();
+
+        assertEquals(ManualRestartOutcome.PROXY_SHUTDOWN, restart.join());
+        assertTrue(status.isCancelled());
+        assertManualOperationEndedWithProxyShutdown(TelemetryOperationType.MANUAL_RESTART);
+    }
+
+    @Test
+    void manualStart_ShutdownDuringInspect_EndsWithProxyShutdownAndCancelsInspect() {
+        CompletableFuture<Optional<ContainerStatus>> status = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(status);
+
+        CompletableFuture<ManualStartOutcome> start = coordinator.requestManualStart(mapping);
+        coordinator.shutdown();
+
+        assertEquals(ManualStartOutcome.PROXY_SHUTDOWN, start.join());
+        assertTrue(status.isCancelled());
+        assertManualOperationEndedWithProxyShutdown(TelemetryOperationType.MANUAL_START);
+    }
+
+    @Test
+    void manualStart_ShutdownWhileContainerStarts_EndsWithProxyShutdownAndCancelsStart() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        CompletableFuture<ContainerStatus> containerStart = new CompletableFuture<>();
+        when(serverManager.startServerAsync(mapping)).thenReturn(containerStart);
+
+        CompletableFuture<ManualStartOutcome> start = coordinator.requestManualStart(mapping);
+        coordinator.shutdown();
+
+        assertEquals(ManualStartOutcome.PROXY_SHUTDOWN, start.join());
+        assertTrue(containerStart.isCancelled());
+        assertManualOperationEndedWithProxyShutdown(TelemetryOperationType.MANUAL_START);
+    }
+
+    @Test
+    void manualStart_ShutdownDuringReadiness_EndsWithProxyShutdownAndCancelsReadiness() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        CompletableFuture<ReadinessResult> readiness = new CompletableFuture<>();
+        when(serverManager.waitForServerReadyAsync(mapping)).thenReturn(readiness);
+
+        CompletableFuture<ManualStartOutcome> start = coordinator.requestManualStart(mapping);
+        coordinator.shutdown();
+
+        assertEquals(ManualStartOutcome.PROXY_SHUTDOWN, start.join());
+        assertTrue(readiness.isCancelled());
+        assertManualOperationEndedWithProxyShutdown(TelemetryOperationType.MANUAL_START);
+    }
+
+    @Test
+    void shutdownCancelsInFlightWorkBeforeEndingManualStart() {
+        CompletableFuture<Optional<ContainerStatus>> status = new CompletableFuture<>();
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(status);
+
+        CompletableFuture<Boolean> statusCancelledWhenStartEnded = coordinator.requestManualStart(mapping)
+                .thenApply(ignored -> status.isCancelled());
+        coordinator.shutdown();
+
+        assertTrue(statusCancelledWhenStartEnded.join());
+    }
+
+    @Test
+    void manualStart_StatusWithoutMapping_EndsMappingChanged() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
+
+        assertEquals(ManualStartOutcome.MAPPING_CHANGED, coordinator.requestManualStart(mapping).join());
+        assertEquals(1, coordinator.snapshotTelemetry()
+                .outcomeCount(TelemetryOperationType.MANUAL_START, TelemetryOutcome.MAPPING_CHANGED));
+    }
+
+    @Test
+    void manualRestart_OfStoppedServer_StatusWithoutMapping_EndsMappingChanged() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
+
+        assertEquals(ManualRestartOutcome.MAPPING_CHANGED,
+                coordinator.requestManualRestart(mapping, targetServer).join());
+        assertEquals(1, coordinator.snapshotTelemetry()
+                .outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.MAPPING_CHANGED));
+    }
+
+    @Test
+    void manualStart_JoiningPlayerStartup_ShutdownEndsWithProxyShutdown() {
+        when(serverManager.getServerStatusAsync(mapping)).thenReturn(new CompletableFuture<>());
+        PlayerHarness player = player("joined-startup");
+        CompletableFuture<ConnectionOutcome> connection =
+                coordinator.requestConnection(player.player, targetServer, mapping);
+
+        CompletableFuture<ManualStartOutcome> start = coordinator.requestManualStart(mapping);
+        coordinator.shutdown();
+
+        assertEquals(ManualStartOutcome.PROXY_SHUTDOWN, start.join());
+        assertEquals(ConnectionOutcome.PROXY_SHUTDOWN, connection.join());
+        assertManualOperationEndedWithProxyShutdown(TelemetryOperationType.MANUAL_START);
+    }
+
+    /** Asserts that shutdown, not a cancellation or failure, ended both the operation and its startup. */
+    private void assertManualOperationEndedWithProxyShutdown(TelemetryOperationType type) {
+        TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
+        assertEquals(1, snapshot.outcomeCount(type, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, snapshot.operationCount(type));
+        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.STARTUP, TelemetryOutcome.PROXY_SHUTDOWN));
     }
 
     @Test
@@ -1220,7 +1362,7 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
-    void manualStartCallbackCanCallBackIntoCoordinatorWhenShutdownCancelsStartup() {
+    void manualStartCallbackCanCallBackIntoCoordinatorWhenShutdownEndsStartup() {
         when(serverManager.getServerStatusAsync(mapping)).thenReturn(new CompletableFuture<>());
 
         CompletableFuture<ManualStartOutcome> start = coordinator.requestManualStart(mapping);
@@ -1228,7 +1370,7 @@ class ServerLifecycleCoordinatorTest {
                 start.thenApply(ignored -> fromAnotherThread(() -> coordinator.requestManualStart(mapping).join()));
         coordinator.shutdown();
 
-        assertEquals(ManualStartOutcome.CANCELLED, start.join());
+        assertEquals(ManualStartOutcome.PROXY_SHUTDOWN, start.join());
         assertEquals(ManualStartOutcome.PROXY_SHUTDOWN, seenByCallback.join());
     }
 
