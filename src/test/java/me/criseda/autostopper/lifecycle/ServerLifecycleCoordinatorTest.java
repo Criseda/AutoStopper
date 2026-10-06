@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.stubbing.Answer;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -365,6 +366,23 @@ class ServerLifecycleCoordinatorTest {
 
         assertEquals(ConnectionOutcome.PLAYER_DISCONNECTED, outcome.join());
         assertEquals(0, coordinator.waitingCount("survival"));
+    }
+
+    @Test
+    void disconnectWhileConnectionIsCreatedCancelsTheConnection() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+        PlayerHarness player = player("disconnect-while-connecting");
+        when(player.player.createConnectionRequest(targetServer).connect()).thenAnswer(invocation -> {
+            coordinator.discardPlayer(player.player);
+            return player.connection;
+        });
+
+        CompletableFuture<ConnectionOutcome> outcome =
+                coordinator.requestConnection(player.player, targetServer, mapping);
+
+        assertEquals(ConnectionOutcome.PLAYER_DISCONNECTED, outcome.join());
+        assertTrue(player.connection.isCancelled());
     }
 
     @Test
@@ -1125,11 +1143,25 @@ class ServerLifecycleCoordinatorTest {
 
     @Test
     void manualStopCallbackCanCallBackIntoCoordinator() {
+        assertStopCallbackCanCallBack(invocation -> ContainerStatus.STOPPED,
+                ManualStopOutcome.STOPPED, ServerLifecycleState.STOPPED);
+    }
+
+    @Test
+    void failedManualStopWorkerCallbackCanCallBackIntoCoordinator() {
+        assertStopCallbackCanCallBack(invocation -> {
+            throw new IllegalStateException("stop worker failed");
+        }, ManualStopOutcome.STOP_FAILED, ServerLifecycleState.READY);
+    }
+
+    /** Registers a callback on a manual stop before Docker answers with {@code dockerStop}. */
+    private void assertStopCallbackCanCallBack(Answer<ContainerStatus> dockerStop,
+            ManualStopOutcome expectedOutcome, ServerLifecycleState expectedState) {
         readyServerWithoutPlayers();
         CountDownLatch callbackRegistered = new CountDownLatch(1);
         when(serverManager.stopServer(mapping)).thenAnswer(invocation -> {
             awaitLatch(callbackRegistered);
-            return ContainerStatus.STOPPED;
+            return dockerStop.answer(invocation);
         });
 
         CompletableFuture<ManualStopOutcome> stop = coordinator.requestManualStop(mapping, targetServer);
@@ -1137,8 +1169,8 @@ class ServerLifecycleCoordinatorTest {
                 stop.thenApply(ignored -> fromAnotherThread(() -> coordinator.state(mapping)));
         callbackRegistered.countDown();
 
-        assertEquals(ManualStopOutcome.STOPPED, stop.join());
-        assertEquals(Optional.of(ServerLifecycleState.STOPPED), seenByCallback.join());
+        assertEquals(expectedOutcome, stop.join());
+        assertEquals(Optional.of(expectedState), seenByCallback.join());
     }
 
     @Test

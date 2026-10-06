@@ -218,7 +218,7 @@ final class ManualOperations {
             ContainerStatus result = serverManager.stopServer(mapping);
             ManualStopOutcome outcome;
             synchronized (entry) {
-                outcome = applyStop(entry, stop, result, "manual stop");
+                outcome = settleStop(entry, stop, result, "manual stop");
             }
             stop.complete(outcome);
         });
@@ -239,7 +239,7 @@ final class ManualOperations {
             ManualStopOutcome outcome;
             CompletableFuture<StartupOutcome> startup = null;
             synchronized (entry) {
-                outcome = applyStop(entry, stop, result, "container stop during restart");
+                outcome = settleStop(entry, stop, result, "container stop during restart");
                 if (outcome == ManualStopOutcome.STOPPED) {
                     startup = entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0);
                 }
@@ -308,7 +308,7 @@ final class ManualOperations {
      *
      * @return how {@code stop} ended
      */
-    private ManualStopOutcome applyStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop,
+    private ManualStopOutcome settleStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop,
             ContainerStatus result, String failureContext) {
         ManualStopOutcome lost = lostOwnership(entry, stop);
         if (lost != null) {
