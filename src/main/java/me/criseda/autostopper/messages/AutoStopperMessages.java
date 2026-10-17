@@ -45,9 +45,19 @@ public final class AutoStopperMessages {
     // --- Root Overview & Help ---
 
     public static Component pluginHeader(String version) {
+        return pluginHeader(version, false);
+    }
+
+    public static Component pluginHeader(String version, boolean isPlayer) {
+        if (!isPlayer) {
+            return finish(Component.text()
+                    .append(Component.text("AutoStopper", MessageTokens.BRAND))
+                    .append(Component.text(" " + version, MessageTokens.TEXT_MUTED)));
+        }
         return finish(Component.text()
                 .append(Component.text("AutoStopper", MessageTokens.BRAND))
-                .append(Component.text(" " + version, MessageTokens.TEXT_MUTED)));
+                .append(Component.text(" ", MessageTokens.TEXT_MUTED))
+                .append(link(version, ProjectLinks.releaseNotes(version), "Open the release notes")));
     }
 
     public static Component pluginTagline() {
@@ -81,13 +91,68 @@ public final class AutoStopperMessages {
         return finish(Component.text("Commands:", MessageTokens.BRAND));
     }
 
-    public static Component helpEntry(String commandText, String description) {
-        return helpEntry(commandText, description, false);
+    /**
+     * Public project links: docs, GitHub, Modrinth, and changelog. Players get clickable labels; the
+     * console gets one copyable {@code Label: url} line per link.
+     */
+    public static Component projectLinks(String pluginVersion, boolean isPlayer) {
+        String[][] links = {
+                {"Docs", ProjectLinks.documentation(pluginVersion), "Open the AutoStopper documentation"},
+                {"GitHub", ProjectLinks.repository(), "Open the AutoStopper repository"},
+                {"Modrinth", ProjectLinks.modrinth(), "Open AutoStopper on Modrinth"},
+                {"Changelog", ProjectLinks.changelog(pluginVersion), "Open the changelog"}};
+        TextComponent.Builder builder = Component.text();
+        for (int i = 0; i < links.length; i++) {
+            String[] entry = links[i];
+            if (isPlayer) {
+                if (i > 0) {
+                    builder.append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED));
+                }
+                builder.append(link(entry[0], entry[1], entry[2]));
+            } else {
+                if (i > 0) {
+                    builder.append(Component.newline());
+                }
+                builder.append(Component.text(entry[0] + ": ", MessageTokens.TEXT_MUTED))
+                        .append(Component.text(entry[1], MessageTokens.ACTION));
+            }
+        }
+        return finish(builder);
     }
 
-    public static Component helpEntry(String commandText, String description, boolean isPlayer) {
+    public static Component helpGroup(String label) {
+        return finish(Component.text(label, MessageTokens.TEXT_MUTED));
+    }
+
+    public static Component helpNoOperatorCommands() {
+        return finish(Component.text("You have no AutoStopper operator commands.", MessageTokens.TEXT_PRIMARY));
+    }
+
+    /**
+     * One help line. Players hover for the description and the permission that grants the command, and
+     * click to suggest it; the console gets the same line as plain text.
+     */
+    public static Component helpEntry(String commandText, String description, String permission,
+            String adminPermission, boolean isPlayer) {
+        TextComponent.Builder commandBuilder = Component.text()
+                .content(commandText)
+                .color(MessageTokens.ACTION);
+        if (isPlayer) {
+            commandBuilder.clickEvent(ClickEvent.suggestCommand(commandText))
+                    .hoverEvent(HoverEvent.showText(Component.text()
+                            .append(Component.text(description, MessageTokens.TEXT_PRIMARY))
+                            .append(Component.newline())
+                            .append(Component.text("Permission: ", MessageTokens.TEXT_MUTED))
+                            .append(Component.text(permission, MessageTokens.ACTION))
+                            .append(Component.text(" or ", MessageTokens.TEXT_MUTED))
+                            .append(Component.text(adminPermission, MessageTokens.ACTION))
+                            .append(Component.newline())
+                            .append(Component.text("Click to suggest this command", MessageTokens.TEXT_MUTED))
+                            .build()));
+        }
         return finish(Component.text()
-                .append(command(commandText, "Click to suggest " + commandText, isPlayer))
+                .append(Component.text("  ", MessageTokens.TEXT_MUTED))
+                .append(commandBuilder.build())
                 .append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED))
                 .append(Component.text(description, MessageTokens.TEXT_PRIMARY)));
     }
@@ -680,7 +745,7 @@ public final class AutoStopperMessages {
     public static Component operatorFailure(Component reason, OperatorFailureGuide guide, String retryCommand,
             Duration elapsed, String pluginVersion, boolean isPlayer) {
         Objects.requireNonNull(guide, "guide");
-        String troubleshootingUrl = OperatorLinks.troubleshooting(pluginVersion, guide.troubleshootingAnchor());
+        String troubleshootingUrl = ProjectLinks.troubleshooting(pluginVersion, guide.troubleshootingAnchor());
         String nextCommand = switch (guide.nextStep()) {
             case RETRY -> retryCommand;
             case STATUS -> "/autostopper status";
@@ -728,8 +793,8 @@ public final class AutoStopperMessages {
 
     /** The {@code Troubleshooting · Get help} footer shown to operators under help and failed status. */
     public static Component operatorHelpFooter(String pluginVersion, boolean isPlayer) {
-        String troubleshootingUrl = OperatorLinks.troubleshooting(pluginVersion);
-        String helpUrl = OperatorLinks.getHelp();
+        String troubleshootingUrl = ProjectLinks.troubleshooting(pluginVersion);
+        String helpUrl = ProjectLinks.getHelp();
         if (isPlayer) {
             return finish(Component.text()
                     .append(link("Troubleshooting", troubleshootingUrl, "Open the troubleshooting guide"))

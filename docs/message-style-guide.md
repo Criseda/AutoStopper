@@ -78,9 +78,10 @@ Server status
 
 ## 5. Root Overview & Help Menu
 
-- `/autostopper` provides a calm overview showing the version, the signature tagline, and available commands for the source.
-- `/autostopper help` displays only commands the invoking source has permission to execute.
-- **Player Affordances:** For player sources, commands include `ClickEvent.suggestCommand(...)` and hover tooltips explaining the action.
+- `/autostopper` provides a calm overview: the version, the signature tagline, a `Docs · GitHub · Modrinth · Changelog` link row, and a pointer to `/autostopper help`. For players the version opens that release's notes (the releases list on development builds). These public project links go to every source; the console gets one `Label: <url>` line per link.
+- `/autostopper help` lists only commands the invoking source has permission to execute, under `General`, `Lifecycle`, and `Holds` headings; a heading with no permitted command is omitted. Descriptions are imperative ("Start a mapped server…") and come from the single subcommand definition in [`AutoStopperSubcommand.java`](../src/main/java/me/criseda/autostopper/commands/AutoStopperSubcommand.java), which also drives usage messages and tab completion.
+- A source with no operator command sees `You have no AutoStopper operator commands.` followed by the project link row.
+- **Player Affordances:** For player sources, help entries suggest the command on click, and their hover shows the description, the granting permission (`autostopper.command.<name> or autostopper.admin`), and `Click to suggest this command`.
 - **Console Fallback:** For console sources, output is complete and copyable plain text.
 - **Fuzzy Matching:** Typos (e.g. `/autostopper statsu`) provide nearest-match suggestions (`Did you mean /autostopper status?`) with click-to-suggest affordances.
 
@@ -102,6 +103,6 @@ Failed `/autostopper start`, `stop`, and `restart` commands keep the chat line s
 - **Hover (players):** `Cause`, `Fix` (remediation), and `Outcome` (the typed code, identical to `outcome=` in `velocity.log`), ending with `Click to open troubleshooting`.
 - **Click (players):** clicking the reason opens the troubleshooting section for that outcome. A separate trailing command component suggests the next step: the same command for transient failures, `/autostopper status` for infrastructure failures, and nothing when no command helps.
 - **Links:** documentation links point at the release tag of the running plugin (for example `blob/2.1.1/docs/troubleshooting.md#start_failed`); development builds link `master`. Anchors are the lowercase outcome code, and a test fails if `docs/troubleshooting.md` lacks one.
-- **Footer:** `/autostopper help` (for sources with any operator command) and a status view containing failures end with `Troubleshooting · Get help`. "Get help" opens `issues/new/choose`.
+- **Footer:** `/autostopper help` (for sources with any operator command; others get the public project link row, §5) and a status view containing failures end with `Troubleshooting · Get help`. "Get help" opens `issues/new/choose`.
 - **Console:** no hover or click. The cause stays on the first line, followed by `Fix:`, `Next:`, and `Outcome: … · Troubleshooting: <url>` lines, and the footer prints both URLs.
-- **Players never receive these links or outcome codes** (§6). Player connection messages are unchanged.
+- **Players never receive troubleshooting links or outcome codes** (§6). Player connection messages are unchanged. The public project links in §5 (docs, GitHub, Modrinth, changelog, release notes) are not operator detail and may go to anyone.

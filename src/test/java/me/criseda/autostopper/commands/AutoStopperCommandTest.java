@@ -18,7 +18,10 @@ import me.criseda.autostopper.operational.OperationalStatusService;
 import me.criseda.autostopper.operational.PreflightSummary;
 import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.server.ActivityTracker;
+import me.criseda.autostopper.testing.ComponentTestUtils;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
+import net.kyori.adventure.text.event.ClickEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -88,12 +91,17 @@ public class AutoStopperCommandTest {
         command.execute(invocation);
 
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(3)).sendMessage(messageCaptor.capture());
+        verify(source, times(4)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(plainText(messages.get(0)).contains("AutoStopper 1.1.2"));
+        assertEquals("AutoStopper 1.1.2", plainText(messages.get(0)));
         assertTrue(plainText(messages.get(1)).contains("Empty servers sleep. Players wake them."));
-        assertTrue(plainText(messages.get(2)).contains("help"));
+        assertEquals("Docs: https://github.com/Criseda/AutoStopper/blob/1.1.2/README.md\n"
+                + "GitHub: https://github.com/Criseda/AutoStopper\n"
+                + "Modrinth: https://modrinth.com/plugin/autostopper\n"
+                + "Changelog: https://github.com/Criseda/AutoStopper/blob/1.1.2/CHANGELOG.md",
+                plainText(messages.get(2)));
+        assertTrue(plainText(messages.get(3)).contains("help"));
     }
 
     @Test
@@ -104,12 +112,35 @@ public class AutoStopperCommandTest {
         command.execute(invocation);
 
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(3)).sendMessage(messageCaptor.capture());
+        verify(source, times(4)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(plainText(messages.get(0)).contains("AutoStopper Unknown"));
         assertTrue(plainText(messages.get(1)).contains("Empty servers sleep. Players wake them."));
-        assertTrue(plainText(messages.get(2)).contains("help"));
+        assertTrue(plainText(messages.get(2)).contains("blob/master/README.md"));
+        assertTrue(plainText(messages.get(3)).contains("help"));
+    }
+
+    @Test
+    public void testExecuteWithNoArgs_PlayerWithoutPermissionsGetsClickableProjectLinks() {
+        Player player = mock(Player.class);
+        lenient().when(player.getPermissionValue(anyString())).thenReturn(Tristate.UNDEFINED);
+
+        command.execute(mockInvocation(player, new String[]{}));
+
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(player, times(4)).sendMessage(messageCaptor.capture());
+        List<Component> messages = messageCaptor.getAllValues();
+        assertEquals("AutoStopper 1.1.2", plainText(messages.get(0)));
+        assertEquals("Docs · GitHub · Modrinth · Changelog", plainText(messages.get(2)));
+        assertEquals(ClickEvent.openUrl("https://github.com/Criseda/AutoStopper/releases/tag/1.1.2"),
+                clickEvent(messages.get(0), "1.1.2"));
+        assertEquals(ClickEvent.openUrl("https://github.com/Criseda/AutoStopper/blob/1.1.2/README.md"),
+                clickEvent(messages.get(2), "Docs"));
+        assertEquals(ClickEvent.openUrl("https://github.com/Criseda/AutoStopper"), clickEvent(messages.get(2), "GitHub"));
+        assertEquals(ClickEvent.openUrl("https://modrinth.com/plugin/autostopper"), clickEvent(messages.get(2), "Modrinth"));
+        assertEquals(ClickEvent.openUrl("https://github.com/Criseda/AutoStopper/blob/1.1.2/CHANGELOG.md"),
+                clickEvent(messages.get(2), "Changelog"));
     }
 
     @Test
@@ -120,22 +151,43 @@ public class AutoStopperCommandTest {
         command.execute(invocation);
 
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(11)).sendMessage(messageCaptor.capture());
+        verify(source, times(12)).sendMessage(messageCaptor.capture());
 
-        List<Component> messages = messageCaptor.getAllValues();
-        assertTrue(plainText(messages.get(0)).contains("AutoStopper Commands"));
-        assertTrue(plainText(messages.get(1)).contains("/autostopper"));
-        assertTrue(plainText(messages.get(2)).contains("/autostopper help"));
-        assertTrue(plainText(messages.get(3)).contains("/autostopper status"));
-        assertTrue(plainText(messages.get(4)).contains("/autostopper reload"));
-        assertTrue(plainText(messages.get(5)).contains("/autostopper start <server>"));
-        assertTrue(plainText(messages.get(6)).contains("/autostopper stop <server>"));
-        assertTrue(plainText(messages.get(7)).contains("/autostopper restart <server>"));
-        assertTrue(plainText(messages.get(8)).contains("/autostopper hold <server>"));
-        assertTrue(plainText(messages.get(9)).contains("/autostopper release <server>"));
-        String footer = plainText(messages.get(10));
+        List<String> lines = messageCaptor.getAllValues().stream().map(ComponentTestUtils::plainText).toList();
+        assertEquals(List.of(
+                "AutoStopper Commands",
+                "General",
+                "  /autostopper status · Show the status of every mapped server",
+                "  /autostopper reload · Reload and validate the configuration",
+                "Lifecycle",
+                "  /autostopper start <server> · Start a mapped server and wait until it is ready",
+                "  /autostopper stop <server> · Stop a mapped server that has no players",
+                "  /autostopper restart <server> · Restart a mapped server that has no players",
+                "Holds",
+                "  /autostopper hold <server> · Keep a server from stopping automatically",
+                "  /autostopper release <server> · Let a held server stop automatically again"),
+                lines.subList(0, 11));
+        String footer = lines.get(11);
         assertTrue(footer.contains("Troubleshooting: https://github.com/Criseda/AutoStopper/blob/1.1.2/docs/troubleshooting.md"));
         assertTrue(footer.contains("Get help: https://github.com/Criseda/AutoStopper/issues/new/choose"));
+    }
+
+    @Test
+    public void testExecuteHelpCommand_OnlyListsGroupsWithPermittedCommands() {
+        grant(AutoStopperCommand.HOLD_PERMISSION);
+        grant(AutoStopperCommand.STATUS_PERMISSION);
+
+        command.execute(mockInvocation(source, new String[]{"help"}));
+
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(6)).sendMessage(messageCaptor.capture());
+        List<String> lines = messageCaptor.getAllValues().stream().map(ComponentTestUtils::plainText).toList();
+        assertEquals("General", lines.get(1));
+        assertTrue(lines.get(2).contains("/autostopper status"));
+        assertEquals("Holds", lines.get(3));
+        assertTrue(lines.get(4).contains("/autostopper hold <server>"));
+        assertTrue(lines.get(5).contains("Troubleshooting:"));
+        assertTrue(lines.stream().noneMatch(line -> line.contains("Lifecycle") || line.contains("release")));
     }
 
     @Test
@@ -148,10 +200,53 @@ public class AutoStopperCommandTest {
         verify(source, times(3)).sendMessage(messageCaptor.capture());
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(plainText(messages.get(0)).contains("AutoStopper Commands"));
-        assertTrue(plainText(messages.get(1)).contains("/autostopper"));
-        assertTrue(plainText(messages.get(2)).contains("/autostopper help"));
+        assertEquals("You have no AutoStopper operator commands.", plainText(messages.get(1)));
+        assertTrue(plainText(messages.get(2)).contains("Docs: https://github.com/Criseda/AutoStopper/blob/1.1.2/README.md"));
         assertTrue(messages.stream().noneMatch(message -> plainText(message).contains("status")));
         assertTrue(messages.stream().noneMatch(message -> plainText(message).contains("reload")));
+        assertTrue(messages.stream().noneMatch(message -> plainText(message).contains("Troubleshooting")));
+    }
+
+    @Test
+    public void testExecuteHelpCommand_PlayerHoverNamesDescriptionAndPermission() {
+        Player player = mock(Player.class);
+        lenient().when(player.getPermissionValue(anyString())).thenReturn(Tristate.UNDEFINED);
+        when(player.getPermissionValue(AutoStopperCommand.START_PERMISSION)).thenReturn(Tristate.TRUE);
+
+        command.execute(mockInvocation(player, new String[]{"help"}));
+
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(player, times(4)).sendMessage(messageCaptor.capture());
+        Component entry = messageCaptor.getAllValues().get(2);
+        TextComponent commandText = findText(entry, "/autostopper start <server>");
+        assertNotNull(commandText);
+        assertEquals(ClickEvent.suggestCommand("/autostopper start <server>"), commandText.clickEvent());
+        assertNotNull(commandText.hoverEvent());
+        assertEquals("Start a mapped server and wait until it is ready\n"
+                + "Permission: autostopper.command.start or autostopper.admin\n"
+                + "Click to suggest this command",
+                plainText((Component) commandText.hoverEvent().value()));
+    }
+
+    @Test
+    public void testUsageMessageReusesTheHelpDescription() {
+        grant(AutoStopperCommand.RELEASE_PERMISSION);
+
+        command.execute(mockInvocation(source, new String[]{"release"}));
+
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(messageCaptor.capture());
+        assertEquals("AutoStopper ! Usage: /autostopper release <server> · Let a held server stop automatically again",
+                plainText(messageCaptor.getValue()));
+    }
+
+    @Test
+    public void testSubcommandsAreCaseInsensitive() {
+        command.execute(mockInvocation(source, new String[]{"HELP"}));
+
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(3)).sendMessage(messageCaptor.capture());
+        assertTrue(plainText(messageCaptor.getAllValues().get(0)).contains("AutoStopper Commands"));
     }
 
     @Test
@@ -454,6 +549,25 @@ public class AutoStopperCommandTest {
         lenient().when(invocation.source()).thenReturn(source);
         lenient().when(invocation.arguments()).thenReturn(args);
         return invocation;
+    }
+
+    private static ClickEvent<?> clickEvent(Component message, String label) {
+        TextComponent text = findText(message, label);
+        assertNotNull(text, label);
+        return text.clickEvent();
+    }
+
+    private static TextComponent findText(Component component, String content) {
+        if (component instanceof TextComponent text && text.content().equals(content)) {
+            return text;
+        }
+        for (Component child : component.children()) {
+            TextComponent found = findText(child, content);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
     }
 
     private void grant(String permission) {

@@ -198,8 +198,8 @@ for the complete contract.
 
 | Command | Required permission | Notes |
 |---|---|---|
-| `/autostopper`, `/as` | None | Shows plugin overview and permitted commands. |
-| `/autostopper help` | None | Shows only commands the source may use, with click-to-suggest for players. |
+| `/autostopper`, `/as` | None | Shows the version, tagline, and Docs, GitHub, Modrinth, and Changelog links. |
+| `/autostopper help` | None | Lists the commands the source may use, grouped by purpose, with click-to-suggest and a permission hover for players. |
 | `/autostopper status` | `autostopper.command.status` or `autostopper.admin` | Shows scannable, deterministic operational status for all mapped backends. |
 | `/autostopper reload` | `autostopper.command.reload` or `autostopper.admin` | Atomically validates, applies, and preflights the new configuration. |
 | `/autostopper start <server>` | `autostopper.command.start` or `autostopper.admin` | Starts the mapped backend container and awaits verified readiness. |
