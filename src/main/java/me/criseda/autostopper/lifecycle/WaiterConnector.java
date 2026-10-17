@@ -85,6 +85,7 @@ final class WaiterConnector {
         }
         if (!attached) {
             runtime.revokeReconnect(permit);
+            assert entry.isUnlockedByCaller();
             connection.cancel(true);
             return;
         }

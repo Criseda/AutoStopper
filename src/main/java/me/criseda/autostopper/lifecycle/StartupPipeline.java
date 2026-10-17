@@ -24,7 +24,8 @@ import java.util.function.Supplier;
 /**
  * Drives the single shared startup operation for a server: container status, container start
  * when stopped, then readiness. Each stage runs only while its startup future still owns the
- * entry, so a superseded or cancelled operation never mutates lifecycle state.
+ * entry, so a superseded or cancelled operation never mutates lifecycle state. Anything a stage
+ * throws fails the startup, so the entry never stays in STARTING with nothing left to finish it.
  */
 final class StartupPipeline {
     private final LifecycleRuntime runtime;
@@ -67,9 +68,15 @@ final class StartupPipeline {
      * Runs one asynchronous stage. Waiters hear about the stage first when it is announced, and
      * the stage is skipped if the operation no longer owns the entry. A thrown or {@code null}
      * future fails startup immediately; otherwise {@code onResult} receives the completed value
-     * (possibly {@code null}) unless the proxy shut down meanwhile.
+     * (possibly {@code null}) unless the proxy shut down meanwhile. If the stage itself or
+     * {@code onResult} throws, startup fails with the stage's error outcome.
      */
     private <T> void runStage(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation,
+            Stage stage, Supplier<CompletableFuture<T>> action, BiConsumer<T, Duration> onResult) {
+        guarded(entry, mapping, operation, stage, () -> startStage(entry, mapping, operation, stage, action, onResult));
+    }
+
+    private <T> void startStage(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation,
             Stage stage, Supplier<CompletableFuture<T>> action, BiConsumer<T, Duration> onResult) {
         long stageStart = runtime.now();
         List<ConnectionWaiter> stageWaiters = List.of();
@@ -94,7 +101,7 @@ final class StartupPipeline {
         if (!ownOperation(entry, operation, future)) {
             return;
         }
-        future.whenComplete((result, error) -> {
+        future.whenComplete((result, error) -> guarded(entry, mapping, operation, stage, () -> {
             if (runtime.isShutdown()) {
                 return;
             }
@@ -104,8 +111,23 @@ final class StartupPipeline {
             } else {
                 onResult.accept(result, stageElapsed);
             }
-        });
+        }));
         connector.drainNotifications(stageWaiters);
+    }
+
+    /**
+     * Runs {@code work} for {@code stage}, failing startup with the stage's error outcome if it
+     * throws. Stage telemetry is skipped on that path, since it may be what threw.
+     */
+    private void guarded(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation,
+            Stage stage, Runnable work) {
+        try {
+            work.run();
+        } catch (RuntimeException error) {
+            logger.error("Lifecycle {} operation failed for server {}",
+                    stage.name().toLowerCase(), mapping.serverName(), error);
+            completeStartup(entry, mapping, operation, stage.errorOutcome, null);
+        }
     }
 
     private void onStatus(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation,
@@ -213,6 +235,7 @@ final class StartupPipeline {
             }
         }
 
+        assert entry.isUnlockedByCaller();
         operation.complete(outcome);
         if (outcome.isReady()) {
             connector.connectAll(entry, waiters);
@@ -249,6 +272,7 @@ final class StartupPipeline {
                 return true;
             }
         }
+        assert entry.isUnlockedByCaller();
         operation.cancel(true);
         return false;
     }

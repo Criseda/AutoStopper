@@ -158,7 +158,7 @@ public final class ServerLifecycleCoordinator {
             return ConnectionAdmission.rejected(ConnectionOutcome.SERVER_STOPPING);
         }
 
-        ConnectionWaiter waiter = new ConnectionWaiter(playerId, player, targetServer, serverName, runtime.now());
+        ConnectionWaiter waiter = new ConnectionWaiter(entry, playerId, player, targetServer, serverName, runtime.now());
         entry.addWaiter(waiter);
         if (entry.is(ServerLifecycleState.STARTING)) {
             entry.notePeakWaiters();
@@ -351,6 +351,7 @@ public final class ServerLifecycleCoordinator {
         // Cancel Docker, readiness, and connection work first so shutdown stays bounded; their
         // callbacks see the shutdown flag and do nothing.
         for (CompletableFuture<?> operation : drain.operations()) {
+            assert !runtime.holdsShutdownLock();
             operation.cancel(true);
         }
         for (ShutdownDrain.InterruptedStartup startup : drain.interruptedStartups()) {
@@ -363,9 +364,11 @@ public final class ServerLifecycleCoordinator {
         }
         // A manual start or restart follows its stop or startup, so it ends with PROXY_SHUTDOWN too.
         for (CompletableFuture<ManualStopOutcome> manualStop : drain.manualStops()) {
+            assert !runtime.holdsShutdownLock();
             manualStop.complete(ManualStopOutcome.PROXY_SHUTDOWN);
         }
         for (CompletableFuture<StartupOutcome> startup : drain.startups()) {
+            assert !runtime.holdsShutdownLock();
             startup.complete(StartupOutcome.PROXY_SHUTDOWN);
         }
     }

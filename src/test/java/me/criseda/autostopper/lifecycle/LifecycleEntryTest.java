@@ -373,13 +373,70 @@ class LifecycleEntryTest {
         assertFalse(entry.ownsManualStop(stop));
     }
 
+    @Test
+    void cancelledManualStopDoesNotOwnALaterStop() {
+        readyEntry();
+        entry.beginStop();
+        CompletableFuture<ManualStopOutcome> stop = new CompletableFuture<>();
+        entry.attachManualStop(stop);
+
+        entry.cancelStop();
+        assertEquals(ServerLifecycleState.READY, entry.state());
+        assertFalse(entry.ownsManualStop(stop));
+
+        entry.beginStop();
+        assertEquals(ServerLifecycleState.STOPPING, entry.state());
+        assertFalse(entry.ownsManualStop(stop), "an automatic stop must not revive the cancelled manual stop");
+        ShutdownDrain drain = new ShutdownDrain();
+        entry.drainForShutdown(drain);
+        assertEquals(List.of(), drain.manualStops());
+    }
+
+    @Test
+    void leavingStoppingReleasesTheOperationItOwned() {
+        readyEntry();
+        entry.beginStop();
+        CompletableFuture<Void> operation = new CompletableFuture<>();
+        entry.attachOperation(operation);
+
+        entry.cancelStop();
+        entry.beginStop();
+
+        assertFalse(entry.ownsOperation(operation));
+        ShutdownDrain drain = new ShutdownDrain();
+        entry.drainForShutdown(drain);
+        assertEquals(List.of(), drain.operations());
+    }
+
+    @Test
+    void finishedStopReleasesTheManualStop() {
+        readyEntry();
+        entry.beginStop();
+        CompletableFuture<ManualStopOutcome> stop = new CompletableFuture<>();
+        entry.attachManualStop(stop);
+
+        entry.applyStopResult(ContainerStatus.STOPPED);
+
+        assertEquals(ServerLifecycleState.STOPPED, entry.state());
+        entry.beginStop();
+        assertFalse(entry.ownsManualStop(stop));
+    }
+
+    @Test
+    void isUnlockedByCallerReflectsTheEntryMonitor() {
+        assertTrue(entry.isUnlockedByCaller());
+        synchronized (entry) {
+            assertFalse(entry.isUnlockedByCaller());
+        }
+    }
+
     private void readyEntry() {
         entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 0, 0);
         entry.finishStartup(StartupOutcome.READY_RUNNING, null);
     }
 
-    private static ConnectionWaiter waiter() {
-        return new ConnectionWaiter(UUID.randomUUID(), mock(Player.class), mock(RegisteredServer.class),
+    private ConnectionWaiter waiter() {
+        return new ConnectionWaiter(entry, UUID.randomUUID(), mock(Player.class), mock(RegisteredServer.class),
                 "survival", 0);
     }
 }

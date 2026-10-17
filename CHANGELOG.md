@@ -30,6 +30,14 @@ All notable AutoStopper changes are documented here.
   prefix filter is disabled in `.mvn/maven.config` because the PaperMC repository can publish a
   prefix file that omits `com.velocitypowered`, which blocks Velocity API resolution.
 
+### Fixed
+
+- A startup whose next step throws unexpectedly now fails with the stage's error outcome, so the
+  server becomes `FAILED` instead of staying in `STARTING` until the proxy restarts. A manual
+  restart in that case reports `START_FAILED` instead of never completing (#118).
+- A manual stop that loses its server to another operation now ends `CANCELLED` and leaves that
+  operation's state alone, instead of stopping the container or returning the server to `READY` (#119).
+
 ## [2.1.1] - 2026-09-26
 
 ### Fixed
