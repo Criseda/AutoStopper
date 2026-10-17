@@ -123,6 +123,18 @@ container again and reports the stop as successful when it has already stopped.
 | Hold disappeared after proxy restart | Runtime holds are memory-only and do not survive proxy restarts. | Re-apply the hold with `/autostopper hold <name>` or omit the server from `monitored_servers` if it should remain persistent. |
 | Hold disappeared after reload | The server mapping was modified or removed in `config.yml`. | Re-apply the hold if the server is still monitored under a new mapping. |
 
+## Outcome reference
+
+Every `AutoStopper lifecycle completed:` and `AutoStopper lifecycle stage:` log line carries a typed
+`outcome=` code. Each code is documented below:
+
+- [Manual command outcomes](#manual-command-outcomes): failures of `/autostopper start`, `stop`, and
+  `restart`. The same codes mean the same thing for player connections and automatic stops.
+- [Connection and startup outcomes](#connection-and-startup-outcomes): codes that only player
+  connections and the shared startup produce.
+- [PROXY_SHUTDOWN](#proxy_shutdown): work that was still running when Velocity shut down.
+- [Success and no-op outcomes](#success-and-no-op-outcomes): codes that need no action.
+
 ## Manual command outcomes
 
 When `/autostopper start`, `stop`, or `restart` fails, the chat line states the cause. In game,
@@ -212,6 +224,66 @@ retry.
 A reload, proxy shutdown, or conflicting lifecycle operation cancelled the command. Retry once the
 reload or conflicting operation completes.
 
+## Connection and startup outcomes
+
+These codes appear on `op=CONNECTION_WAIT` lines, which record one player's wait from the connection
+attempt to the final result, and on startup stage lines. When the shared startup fails, the wait
+reports that startup's code from [Manual command outcomes](#manual-command-outcomes) instead.
+
+### CONNECTION_FAILED
+
+The connection request to the ready backend failed with an error or returned no result. Review the
+proxy log for the error, check that the backend is listening on the address in Velocity's
+`[servers]` table, then retry with `/server <name>`. If no player has connected since the backend
+became ready, AutoStopper marks the server failed so `/autostopper status` shows it.
+
+### SERVER_DISCONNECTED
+
+The backend accepted the connection and then disconnected the player, for example a whitelist, ban,
+version mismatch, or a backend that stopped outside AutoStopper. Check the backend log for the kick
+reason. If no player has connected since the backend became ready, AutoStopper marks the server
+failed. When a backend that served players before refuses a connection, AutoStopper checks Docker
+and marks the server stopped if the container is no longer running; see
+[Connection behavior](#connection-behavior).
+
+### CONNECTION_CANCELLED
+
+Another plugin or Velocity cancelled the connection request. Check plugins that handle
+`ServerPreConnectEvent` or move players between servers.
+
+### CONNECTION_IN_PROGRESS
+
+Velocity was already connecting the player to a server, so it did not start a second connection.
+Usually no action is needed; the player can retry once the other connection finishes.
+
+### PLAYER_DISCONNECTED
+
+The player left the proxy before the server became ready or before the connection finished. No
+action is needed; the shared startup continues for any other waiting players.
+
+### NO_MAPPING
+
+The startup status check found no active container mapping for the server, usually because a reload
+removed it while the startup was queued. Players see a no-container-mapping message, and a manual
+start or restart reports [MAPPING_CHANGED](#mapping_changed). Confirm the server
+is still in `monitored_servers`, reload a valid configuration, then retry.
+
+## Success and no-op outcomes
+
+These codes report success, a stage result, or a request that was already satisfied. No action is
+needed.
+
+| Outcome | Meaning |
+|---|---|
+| `READY` | The server passed its readiness check, or a manual start finished with the server ready. |
+| `RUNNING` | The Docker status check found the container running. |
+| `STOPPED` | The container stopped, or a status or readiness check found it stopped. |
+| `RESTARTED_AND_READY` | A manual restart stopped the server, started it again, and it passed readiness. |
+| `CONNECTED` | Velocity connected the waiting player to the backend. |
+| `ALREADY_READY` | A manual start found the server already running and ready. |
+| `ALREADY_STOPPED` | A manual stop found the server already stopped. |
+| `ALREADY_CONNECTED` | The player was already connected to the backend. |
+
 ## Lifecycle telemetry diagnostics
 
 AutoStopper emits structured `INFO` log lines upon completing every authoritative operation and `DEBUG`
@@ -224,6 +296,7 @@ log lines for intermediate stages:
   of startup time).
 - Telemetry records use typed outcomes (e.g., `START_TIMED_OUT`, `SERVER_NOT_READY`, `CONTAINER_MISSING`,
   `DOCKER_INACCESSIBLE`) to quickly isolate root causes without needing to guess from unformatted messages.
+  Look up any code in the [Outcome reference](#outcome-reference).
 
 ## Shutdown
 
@@ -231,3 +304,10 @@ log lines for intermediate stages:
 work, Docker subprocesses, lifecycle requests, and worker threads. Velocity shutdown deliberately
 leaves backend containers unchanged. If the deadline expires, remaining AutoStopper worker threads
 are daemon threads and the proxy log records the expiration.
+
+### PROXY_SHUTDOWN
+
+Velocity shut down while the operation was still running: a startup, a player's connection wait, a
+manual command, or an automatic stop. AutoStopper completes it with this code rather than
+`CANCELLED` and leaves the backend container in whatever state Docker reached. No action is needed;
+check `/autostopper status` after the proxy starts again.
