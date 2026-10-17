@@ -139,7 +139,7 @@ public final class AutoStopperMessages {
                 .color(MessageTokens.ACTION);
         if (isPlayer) {
             commandBuilder.clickEvent(ClickEvent.suggestCommand(commandText))
-                    .hoverEvent(HoverEvent.showText(Component.text()
+                    .hoverEvent(HoverEvent.showText(finish(Component.text()
                             .append(Component.text(description, MessageTokens.TEXT_PRIMARY))
                             .append(Component.newline())
                             .append(Component.text("Permission: ", MessageTokens.TEXT_MUTED))
@@ -147,12 +147,11 @@ public final class AutoStopperMessages {
                             .append(Component.text(" or ", MessageTokens.TEXT_MUTED))
                             .append(Component.text(adminPermission, MessageTokens.ACTION))
                             .append(Component.newline())
-                            .append(Component.text("Click to suggest this command", MessageTokens.TEXT_MUTED))
-                            .build()));
+                            .append(Component.text("Click to suggest this command", MessageTokens.TEXT_MUTED)))));
         }
         return finish(Component.text()
                 .append(Component.text("  ", MessageTokens.TEXT_MUTED))
-                .append(commandBuilder.build())
+                .append(finish(commandBuilder))
                 .append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED))
                 .append(Component.text(description, MessageTokens.TEXT_PRIMARY)));
     }
