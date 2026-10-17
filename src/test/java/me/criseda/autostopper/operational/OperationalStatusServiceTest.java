@@ -5,6 +5,7 @@ import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerInspection;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerDiagnostic;
+import me.criseda.autostopper.lifecycle.ConnectionLifecycleStage;
 import me.criseda.autostopper.lifecycle.LifecycleStatusSnapshot;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.lifecycle.ServerLifecycleState;
@@ -339,6 +340,94 @@ class OperationalStatusServiceTest {
         assertTrue(inspections.isCancelled());
         assertEquals(new PreflightSummary(0, 1), preflight.join());
         verify(logger, never()).warn(contains("preflight could not complete"), any(), any());
+    }
+
+    @Test
+    void collectStatusInspectsOnlyTheRequestedContainer() {
+        ConfigSnapshot snapshot = snapshot("survival", "creative");
+        service.reconcileConfig(snapshot);
+        ServerMapping survival = snapshot.server("survival").orElseThrow();
+        when(serverManager.inspectContainerAsync(survival)).thenReturn(
+                CompletableFuture.completedFuture(ContainerInspection.healthy(ContainerStatus.STOPPED)));
+
+        OperationalServerStatus status = service.collectStatus(snapshot, "survival").join();
+
+        assertEquals(OperationalState.STOPPED, status.state());
+        verify(serverManager).inspectContainerAsync(survival);
+        verify(serverManager, never()).inspectContainersAsync(any());
+        verify(serverManager, never()).inspectContainerAsync(snapshot.server("creative").orElseThrow());
+    }
+
+    @Test
+    void collectStatusReportsStageWhileStarting() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+        ServerMapping survival = snapshot.server("survival").orElseThrow();
+        when(lifecycleCoordinator.statusSnapshot(survival)).thenReturn(new LifecycleStatusSnapshot(
+                Optional.of(ServerLifecycleState.STARTING), 1, Optional.empty(), 4,
+                Optional.of(ConnectionLifecycleStage.WAITING_FOR_READINESS)));
+        when(serverManager.inspectContainerAsync(survival)).thenReturn(
+                CompletableFuture.completedFuture(ContainerInspection.healthy(ContainerStatus.RUNNING)));
+
+        OperationalServerStatus status = service.collectStatus(snapshot, "survival").join();
+
+        assertEquals(OperationalState.STARTING, status.state());
+        assertEquals(Optional.of(ConnectionLifecycleStage.WAITING_FOR_READINESS), status.stage());
+        assertEquals(1, status.waitingPlayers());
+    }
+
+    @Test
+    void collectStatusRecordsFailedInspectionLikeTheOverview() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+        ServerMapping survival = snapshot.server("survival").orElseThrow();
+        when(serverManager.inspectContainerAsync(survival)).thenReturn(CompletableFuture.completedFuture(
+                failure(ContainerStatus.MISSING, DockerDiagnostic.CONTAINER_MISSING, "container missing")));
+
+        OperationalServerStatus status = service.collectStatus(snapshot, "survival").join();
+
+        assertEquals(OperationalState.FAILED, status.state());
+        OperationalFailure failure = status.lastFailure().orElseThrow();
+        assertEquals(NOW, failure.timestamp());
+        assertEquals("container missing", failure.detail());
+        assertEquals("Safe remediation.", failure.remediation());
+    }
+
+    @Test
+    void collectStatusFailsForUnmappedServerWithoutInspecting() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+
+        CompletionException error = assertThrows(CompletionException.class,
+                () -> service.collectStatus(snapshot, "lobby").join());
+
+        assertInstanceOf(IllegalArgumentException.class, error.getCause());
+        verifyNoInteractions(serverManager);
+    }
+
+    @Test
+    void collectStatusFailsWhenConfigurationChangesDuringInspection() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+        CompletableFuture<ContainerInspection> inspection = new CompletableFuture<>();
+        when(serverManager.inspectContainerAsync(snapshot.server("survival").orElseThrow())).thenReturn(inspection);
+
+        CompletableFuture<OperationalServerStatus> status = service.collectStatus(snapshot, "survival");
+        service.reconcileConfig(snapshot("survival", "creative"));
+        inspection.complete(ContainerInspection.healthy(ContainerStatus.STOPPED));
+
+        CompletionException error = assertThrows(CompletionException.class, status::join);
+        assertInstanceOf(IllegalStateException.class, error.getCause());
+    }
+
+    @Test
+    void collectStatusFailsAfterShutdown() {
+        ConfigSnapshot snapshot = snapshot("survival");
+        service.reconcileConfig(snapshot);
+        service.shutdown();
+
+        assertThrows(CompletionException.class, () -> service.collectStatus(snapshot, "survival").join());
+        verifyNoInteractions(serverManager);
     }
 
     private ConfigSnapshot snapshot(String... names) {

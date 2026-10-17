@@ -1,7 +1,8 @@
 # Troubleshooting
 
 Start with the proxy log and `/autostopper status`. Status output contains bounded, sanitized
-details and a remediation for the latest failure; raw Docker stderr is logged only for operators.
+details for the latest failure, and `/autostopper status <server>` adds its remediation; raw Docker
+stderr is logged only for operators.
 Run Docker checks from inside the Velocity container because host access alone does not prove that
 the proxy user can reach the daemon:
 

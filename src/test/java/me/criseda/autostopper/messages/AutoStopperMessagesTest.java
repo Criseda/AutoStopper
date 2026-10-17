@@ -1,5 +1,6 @@
 package me.criseda.autostopper.messages;
 
+import me.criseda.autostopper.lifecycle.ConnectionLifecycleStage;
 import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
@@ -155,10 +156,79 @@ class AutoStopperMessagesTest {
                 OperationalState.DOCKER_UNAVAILABLE, 0, Optional.of(failure));
         Component message = AutoStopperMessages.operationalStatus("survival", status, null);
 
-        String text = plainText(message);
-        assertTrue(text.contains("! survival   Unavailable · Docker cannot be reached"));
-        assertTrue(text.contains("last failure 2026-08-15T12:00:00Z during startup probe: daemon unreachable"));
-        assertTrue(text.contains("Remediation: Start Docker daemon"));
+        String text = plainText(AutoStopperMessages.operationalStatus("survival", status, null,
+                Instant.parse("2026-08-15T14:30:00Z"), false));
+        assertEquals("! survival   Unavailable · Docker cannot be reached · "
+                + "last failure 2h 30m ago during startup probe: daemon unreachable", text);
+        assertFalse(plainText(message).contains("Remediation"), "the remediation moved to the detail view");
+    }
+
+    @Test
+    void formatAgoCoversEveryRange() {
+        assertEquals("just now", AutoStopperMessages.formatAgo(Duration.ofSeconds(59)));
+        assertEquals("just now", AutoStopperMessages.formatAgo(Duration.ofMinutes(-3)));
+        assertEquals("1m ago", AutoStopperMessages.formatAgo(Duration.ofSeconds(60)));
+        assertEquals("59m ago", AutoStopperMessages.formatAgo(Duration.ofMinutes(59)));
+        assertEquals("1h ago", AutoStopperMessages.formatAgo(Duration.ofMinutes(60)));
+        assertEquals("1h 15m ago", AutoStopperMessages.formatAgo(Duration.ofMinutes(75)));
+        assertEquals("23h 59m ago", AutoStopperMessages.formatAgo(Duration.ofMinutes(24 * 60 - 1)));
+        assertEquals("1d ago", AutoStopperMessages.formatAgo(Duration.ofHours(24)));
+        assertEquals("2d 3h ago", AutoStopperMessages.formatAgo(Duration.ofHours(51).plusMinutes(20)));
+    }
+
+    @Test
+    void statusDetailShowsStageWhileStarting() {
+        OperationalServerStatus status = new OperationalServerStatus(OperationalState.STARTING, 2,
+                Optional.empty(), false, Optional.of(ConnectionLifecycleStage.WAITING_FOR_READINESS));
+
+        List<String> lines = AutoStopperMessages.statusDetail(status, null, Instant.EPOCH, false).stream()
+                .map(AutoStopperMessagesTest::plainText).toList();
+
+        assertEquals(List.of(
+                "  State: ◐ Waking · waiting for readiness",
+                "  Hold: none",
+                "  Waiting: 2 players waiting",
+                "  Activity: no activity recorded",
+                "  Last failure: none"), lines);
+    }
+
+    @Test
+    void statusDetailStageLabelsCoverEveryStartupStage() {
+        assertEquals("  State: ◐ Waking · checking the container", stateLine(ConnectionLifecycleStage.INSPECTING));
+        assertEquals("  State: ◐ Waking · starting the container", stateLine(ConnectionLifecycleStage.STARTING));
+    }
+
+    @Test
+    void statusDetailPlayerHoversFailureAgeForExactTime() {
+        OperationalFailure failure = new OperationalFailure(Instant.parse("2026-08-15T12:00:00Z"),
+                "server startup", "Docker operation failed", "Retry.");
+        OperationalServerStatus status = new OperationalServerStatus(OperationalState.FAILED, 0,
+                Optional.of(failure));
+
+        List<Component> lines = AutoStopperMessages.statusDetail(status, null,
+                Instant.parse("2026-08-15T12:03:00Z"), true);
+
+        assertEquals("  Last failure: 3m ago during server startup", plainText(lines.get(4)));
+        TextComponent age = findText(lines.get(4), "3m ago");
+        assertNotNull(age);
+        assertNotNull(age.hoverEvent());
+        assertEquals("2026-08-15T12:00:00Z", plainText((Component) age.hoverEvent().value()));
+        assertEquals("  Cause: Docker operation failed", plainText(lines.get(5)));
+        assertEquals("  Fix: Retry.", plainText(lines.get(6)));
+    }
+
+    @Test
+    void operationalStatusDropsStageOutsideStarting() {
+        OperationalServerStatus status = new OperationalServerStatus(OperationalState.READY, 0,
+                Optional.empty(), false, Optional.of(ConnectionLifecycleStage.CONNECTING));
+
+        assertTrue(status.stage().isEmpty());
+    }
+
+    private static String stateLine(ConnectionLifecycleStage stage) {
+        OperationalServerStatus status = new OperationalServerStatus(OperationalState.STARTING, 0,
+                Optional.empty(), false, Optional.of(stage));
+        return plainText(AutoStopperMessages.statusDetail(status, null, Instant.EPOCH, false).get(0));
     }
 
     @Test

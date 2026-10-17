@@ -17,9 +17,17 @@ All notable AutoStopper changes are documented here.
 - `docs/troubleshooting.md` has an outcome reference covering every `outcome=` code in lifecycle
   log lines, including player connection outcomes, `NO_MAPPING`, `PROXY_SHUTDOWN`, and success
   codes (#123).
+- `/autostopper status <server>` shows one server in detail: state and, while waking, the startup
+  stage, hold, waiting players, time since activity, and the last failure with its age, cause, and
+  fix. The console prints the exact failure time; players hover the age for it. It inspects only
+  that server's container and tab-completes mapped server names. In game, clicking a server name in
+  `/autostopper status` opens its detail view (#125).
 
 ### Changed
 
+- `/autostopper status` shows the last failure's age (`last failure 3m ago during …`) instead of a
+  raw ISO-8601 timestamp, and leaves the remediation to `/autostopper status <server>`. Activity and
+  failure ages share one format, and ages of a day or more read `2d 3h ago` (#125).
 - `/autostopper` now shows clickable Docs, GitHub, Modrinth, and Changelog links to everyone, and
   the version opens the release notes; console senders get the URLs as plain text. Documentation
   and changelog links are pinned to the running release (#131).

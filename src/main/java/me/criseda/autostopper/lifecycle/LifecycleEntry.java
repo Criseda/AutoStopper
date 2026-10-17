@@ -116,8 +116,10 @@ final class LifecycleEntry {
     }
 
     LifecycleStatusSnapshot snapshot() {
+        Optional<ConnectionLifecycleStage> stage = state == ServerLifecycleState.STARTING
+                ? Optional.ofNullable(progressStage) : Optional.empty();
         return new LifecycleStatusSnapshot(Optional.of(state), waiters.size(),
-                Optional.ofNullable(lastFailure), revision);
+                Optional.ofNullable(lastFailure), revision, stage);
     }
 
     // --- Waiters ---
