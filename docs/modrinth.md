@@ -128,13 +128,15 @@ If the backend is already available, the connection proceeds normally. Servers o
 
 ## Tested support
 
-One Java 21 bytecode AutoStopper JAR is tested on all three complete runtime lines below:
+One Java 21 bytecode AutoStopper JAR is tested on all five complete runtime lines below:
 
 | Support line | Role | Proxy image | Java | Velocity |
 |---|---|---:|---:|---|
 | Legacy | Minimum/floor | `itzg/mc-proxy:2026.8.0-java21` | 21 | 3.5.1 build 615 |
-| Stable | Production | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.0.0 build 6 |
-| Preview | Snapshot validation | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.1.0-SNAPSHOT build 16 |
+| Stable 4.0 | Production | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.0.0 build 6 |
+| Stable 4.1 | Production | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.1.0 build 22 |
+| Stable 4.2 | Production (recommended) | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.2.0 build 30 |
+| Preview | Snapshot validation | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.2.1-SNAPSHOT build 41 |
 
 Velocity 4.x requires at least Java 25; the preview line validates a PaperMC snapshot and is not a
 production baseline. Keep the proxy image/JVM and Velocity build from one row together. The real
@@ -146,8 +148,8 @@ line.
 
 1. Choose the complete
    [Java 21 / Velocity 3.5.1 example](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-legacy)
-   (minimum), [Java 25 / Velocity 4.0 example](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-stable)
-   (recommended production), or [Java 25 / Velocity 4.1 preview example](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-preview).
+   (minimum), [Java 25 / Velocity 4.2 example](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-stable)
+   (recommended production), or [Java 25 / Velocity 4.2.1 preview example](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-preview).
 2. Put the downloaded, unchanged JAR at `velocity_server/plugins/AutoStopper.jar`.
 3. Register each managed backend in Velocity's `[servers]` table.
 4. Start the stack once and edit the generated lowercase path

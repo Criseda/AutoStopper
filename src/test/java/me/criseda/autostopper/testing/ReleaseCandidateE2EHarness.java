@@ -37,8 +37,8 @@ public final class ReleaseCandidateE2EHarness {
     private static final Duration RETRY_STOP_TIMEOUT = Duration.ofSeconds(90);
     private static final Duration POLL_INTERVAL = Duration.ofMillis(750);
     private static final String VELOCITY_IMAGE = "itzg/mc-proxy:2026.8.0-java25";
-    private static final String PINNED_VELOCITY_VERSION = "4.0.0";
-    private static final String PINNED_VELOCITY_BUILD = "6";
+    private static final String PINNED_VELOCITY_VERSION = "4.2.0";
+    private static final String PINNED_VELOCITY_BUILD = "30";
     private static final String BACKEND_IMAGE = "itzg/minecraft-server:java21";
     private static final String CLIENT_IMAGE_PREFIX = "autostopper-release-candidate-client";
 

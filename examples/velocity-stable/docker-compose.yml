@@ -8,8 +8,8 @@ services:
     environment:
       TYPE: "VELOCITY"
       ONLINE_MODE: "true"
-      VELOCITY_VERSION: "4.0.0"
-      VELOCITY_BUILD_ID: "6"
+      VELOCITY_VERSION: "4.2.0"
+      VELOCITY_BUILD_ID: "30"
       REPLACE_ENV_VARIABLES: "true"
     ports:
       - "25565:25577"
