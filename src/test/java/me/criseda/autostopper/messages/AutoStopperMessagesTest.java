@@ -38,6 +38,53 @@ class AutoStopperMessagesTest {
     }
 
     @Test
+    void playerHeaderLinksTheVersionToItsReleaseNotes() {
+        Component header = AutoStopperMessages.pluginHeader("2.1.1", true);
+
+        assertEquals("AutoStopper 2.1.1", plainText(header));
+        TextComponent version = findText(header, "2.1.1");
+        assertNotNull(version);
+        assertEquals(MessageTokens.ACTION, version.color());
+        assertEquals(ClickEvent.openUrl("https://github.com/Criseda/AutoStopper/releases/tag/2.1.1"),
+                version.clickEvent());
+        assertNotNull(version.hoverEvent());
+        assertTrue(textComponents(AutoStopperMessages.pluginHeader("2.1.1", false)).stream()
+                .allMatch(text -> text.clickEvent() == null));
+    }
+
+    @Test
+    void projectLinksAreClickableForPlayersAndCopyableOnConsole() {
+        Component player = AutoStopperMessages.projectLinks("2.1.1", true);
+        Component console = AutoStopperMessages.projectLinks("2.1.1", false);
+
+        assertEquals("Docs · GitHub · Modrinth · Changelog", plainText(player));
+        for (String label : List.of("Docs", "GitHub", "Modrinth", "Changelog")) {
+            TextComponent link = findText(player, label);
+            assertNotNull(link, label);
+            assertEquals(ClickEvent.Action.OPEN_URL, link.clickEvent().action());
+            assertNotNull(link.hoverEvent(), label);
+            assertColor(player, label, MessageTokens.ACTION);
+        }
+
+        assertEquals("Docs: https://github.com/Criseda/AutoStopper/blob/2.1.1/README.md\n"
+                + "GitHub: https://github.com/Criseda/AutoStopper\n"
+                + "Modrinth: https://modrinth.com/plugin/autostopper\n"
+                + "Changelog: https://github.com/Criseda/AutoStopper/blob/2.1.1/CHANGELOG.md",
+                plainText(console));
+        assertEquals(3, console.children().stream().filter(child -> child.equals(Component.newline())).count());
+        assertTrue(textComponents(console).stream().allMatch(text -> text.clickEvent() == null && text.hoverEvent() == null));
+    }
+
+    @Test
+    void consoleHelpEntryIsPlainIndentedText() {
+        Component entry = AutoStopperMessages.helpEntry("/autostopper status", "Show the status of every mapped server",
+                "autostopper.command.status", "autostopper.admin", false);
+
+        assertEquals("  /autostopper status · Show the status of every mapped server", plainText(entry));
+        assertTrue(textComponents(entry).stream().allMatch(text -> text.clickEvent() == null && text.hoverEvent() == null));
+    }
+
+    @Test
     void helpHintOffersProgressiveAffordances() {
         Component playerHint = AutoStopperMessages.helpHint(true);
         Component consoleHint = AutoStopperMessages.helpHint(false);
@@ -197,7 +244,13 @@ class AutoStopperMessagesTest {
                 AutoStopperMessages.helpHint(),
                 AutoStopperMessages.helpHeader(),
                 AutoStopperMessages.commandsHeader(),
-                AutoStopperMessages.helpEntry("/autostopper", "Shows plugin overview"),
+                AutoStopperMessages.helpGroup("General"),
+                AutoStopperMessages.helpNoOperatorCommands(),
+                AutoStopperMessages.helpEntry("/autostopper status", "Show the status of every mapped server",
+                        "autostopper.command.status", "autostopper.admin", false),
+                AutoStopperMessages.projectLinks("2.1.0", false),
+                AutoStopperMessages.projectLinks("2.1.0", true),
+                AutoStopperMessages.pluginHeader("2.1.0", true),
                 AutoStopperMessages.unknownCommand(),
                 AutoStopperMessages.statusHeader(),
                 AutoStopperMessages.statusCollectionFailed(),

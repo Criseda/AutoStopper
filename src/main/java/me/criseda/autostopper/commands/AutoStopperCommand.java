@@ -26,9 +26,10 @@ import me.criseda.autostopper.server.ActivityTrackerService;
 import net.kyori.adventure.text.Component;
 
 import java.time.Duration;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 public class AutoStopperCommand implements SimpleCommand {
@@ -65,166 +66,82 @@ public class AutoStopperCommand implements SimpleCommand {
         boolean isPlayer = source instanceof Player;
 
         if (args.length == 0) {
-            source.sendMessage(AutoStopperMessages.pluginHeader(pluginVersion()));
+            String version = pluginVersion();
+            source.sendMessage(AutoStopperMessages.pluginHeader(version, isPlayer));
             source.sendMessage(AutoStopperMessages.pluginTagline());
+            source.sendMessage(AutoStopperMessages.projectLinks(version, isPlayer));
             source.sendMessage(AutoStopperMessages.helpHint(isPlayer));
             return;
         }
 
-        String subcommand = args[0].toLowerCase();
+        Optional<AutoStopperSubcommand> match = AutoStopperSubcommand.byLabel(args[0]);
+        if (match.isEmpty()) {
+            List<String> permitted = getPermittedSubcommands(source);
+            Optional<String> closest = findClosestSubcommand(args[0], permitted);
+            if (closest.isPresent()) {
+                source.sendMessage(AutoStopperMessages.unknownSubcommand(args[0], closest.get(), isPlayer));
+            } else {
+                source.sendMessage(AutoStopperMessages.unknownSubcommandNoMatch(args[0], isPlayer));
+            }
+            return;
+        }
+
+        AutoStopperSubcommand subcommand = match.get();
+        if (!isPermitted(source, subcommand)) {
+            sendPermissionDenied(source, subcommand.deniedAction());
+            return;
+        }
+        if (!subcommand.takesServer()) {
+            switch (subcommand) {
+                case HELP -> showHelp(source, isPlayer);
+                case STATUS -> showStatus(source);
+                case RELOAD -> reloadConfig(source);
+                default -> throw new IllegalStateException("Unhandled subcommand " + subcommand);
+            }
+            return;
+        }
+
+        if (args.length < 2) {
+            source.sendMessage(AutoStopperMessages.commandUsage(
+                    subcommand.usage(), subcommand.description(), isPlayer));
+            return;
+        }
+        String serverName = args[1];
+        Optional<ServerMapping> mapping = config.snapshot().server(serverName);
+        if (mapping.isEmpty()) {
+            source.sendMessage(AutoStopperMessages.unmappedServer(serverName));
+            return;
+        }
         switch (subcommand) {
-            case "help" -> showHelp(source, isPlayer);
-            case "status" -> {
-                if (hasAdministrativePermission(source, STATUS_PERMISSION)) {
-                    showStatus(source);
-                } else {
-                    sendPermissionDenied(source, "view AutoStopper status");
-                }
-            }
-            case "reload" -> {
-                if (hasAdministrativePermission(source, RELOAD_PERMISSION)) {
-                    reloadConfig(source);
-                } else {
-                    sendPermissionDenied(source, "reload AutoStopper configuration");
-                }
-            }
-            case "start" -> {
-                if (!hasAdministrativePermission(source, START_PERMISSION)) {
-                    sendPermissionDenied(source, "start a server");
-                    return;
-                }
-                if (args.length < 2) {
-                    source.sendMessage(AutoStopperMessages.commandUsage(
-                            "/autostopper start <server>", "Starts and readies a mapped backend server", isPlayer));
-                    return;
-                }
-                String serverName = args[1];
-                Optional<ServerMapping> mapping = config.snapshot().server(serverName);
-                if (mapping.isEmpty()) {
-                    source.sendMessage(AutoStopperMessages.unmappedServer(serverName));
-                    return;
-                }
-                startServer(source, mapping.get());
-            }
-            case "stop" -> {
-                if (!hasAdministrativePermission(source, STOP_PERMISSION)) {
-                    sendPermissionDenied(source, "stop a server");
-                    return;
-                }
-                if (args.length < 2) {
-                    source.sendMessage(AutoStopperMessages.commandUsage(
-                            "/autostopper stop <server>", "Stops an empty mapped backend server", isPlayer));
-                    return;
-                }
-                String serverName = args[1];
-                Optional<ServerMapping> mapping = config.snapshot().server(serverName);
-                if (mapping.isEmpty()) {
-                    source.sendMessage(AutoStopperMessages.unmappedServer(serverName));
-                    return;
-                }
-                stopServer(source, mapping.get());
-            }
-            case "restart" -> {
-                if (!hasAdministrativePermission(source, RESTART_PERMISSION)) {
-                    sendPermissionDenied(source, "restart a server");
-                    return;
-                }
-                if (args.length < 2) {
-                    source.sendMessage(AutoStopperMessages.commandUsage(
-                            "/autostopper restart <server>", "Restarts and readies an empty mapped backend server", isPlayer));
-                    return;
-                }
-                String serverName = args[1];
-                Optional<ServerMapping> mapping = config.snapshot().server(serverName);
-                if (mapping.isEmpty()) {
-                    source.sendMessage(AutoStopperMessages.unmappedServer(serverName));
-                    return;
-                }
-                restartServer(source, mapping.get());
-            }
-            case "hold" -> {
-                if (!hasAdministrativePermission(source, HOLD_PERMISSION)) {
-                    sendPermissionDenied(source, "hold a server");
-                    return;
-                }
-                if (args.length < 2) {
-                    source.sendMessage(AutoStopperMessages.commandUsage(
-                            "/autostopper hold <server>", "Suppresses automatic shutdown for a server", isPlayer));
-                    return;
-                }
-                String serverName = args[1];
-                Optional<ServerMapping> mapping = config.snapshot().server(serverName);
-                if (mapping.isEmpty()) {
-                    source.sendMessage(AutoStopperMessages.unmappedServer(serverName));
-                    return;
-                }
-                holdServer(source, mapping.get());
-            }
-            case "release" -> {
-                if (!hasAdministrativePermission(source, RELEASE_PERMISSION)) {
-                    sendPermissionDenied(source, "release a server hold");
-                    return;
-                }
-                if (args.length < 2) {
-                    source.sendMessage(AutoStopperMessages.commandUsage(
-                            "/autostopper release <server>", "Removes automatic shutdown suppression for a server", isPlayer));
-                    return;
-                }
-                String serverName = args[1];
-                Optional<ServerMapping> mapping = config.snapshot().server(serverName);
-                if (mapping.isEmpty()) {
-                    source.sendMessage(AutoStopperMessages.unmappedServer(serverName));
-                    return;
-                }
-                releaseServer(source, mapping.get());
-            }
-            default -> {
-                List<String> permitted = getPermittedSubcommands(source);
-                Optional<String> closest = findClosestSubcommand(args[0], permitted);
-                if (closest.isPresent()) {
-                    source.sendMessage(AutoStopperMessages.unknownSubcommand(args[0], closest.get(), isPlayer));
-                } else {
-                    source.sendMessage(AutoStopperMessages.unknownSubcommandNoMatch(args[0], isPlayer));
-                }
-            }
+            case START -> startServer(source, mapping.get());
+            case STOP -> stopServer(source, mapping.get());
+            case RESTART -> restartServer(source, mapping.get());
+            case HOLD -> holdServer(source, mapping.get());
+            case RELEASE -> releaseServer(source, mapping.get());
+            default -> throw new IllegalStateException("Unhandled subcommand " + subcommand);
         }
     }
 
     private void showHelp(CommandSource source, boolean isPlayer) {
         source.sendMessage(AutoStopperMessages.helpHeader());
-        source.sendMessage(AutoStopperMessages.helpEntry("/autostopper", "Shows plugin overview", isPlayer));
-        source.sendMessage(AutoStopperMessages.helpEntry("/autostopper help", "Shows this help menu", isPlayer));
-        if (hasAdministrativePermission(source, STATUS_PERMISSION)) {
-            source.sendMessage(AutoStopperMessages.helpEntry(
-                    "/autostopper status", "Shows server status", isPlayer));
+        List<AutoStopperSubcommand> listed = Arrays.stream(AutoStopperSubcommand.values())
+                .filter(subcommand -> subcommand.group() != null && isPermitted(source, subcommand))
+                .toList();
+        if (listed.isEmpty()) {
+            source.sendMessage(AutoStopperMessages.helpNoOperatorCommands());
+            source.sendMessage(AutoStopperMessages.projectLinks(pluginVersion(), isPlayer));
+            return;
         }
-        if (hasAdministrativePermission(source, RELOAD_PERMISSION)) {
-            source.sendMessage(AutoStopperMessages.helpEntry(
-                    "/autostopper reload", "Reload configuration", isPlayer));
+        AutoStopperSubcommand.Group currentGroup = null;
+        for (AutoStopperSubcommand subcommand : listed) {
+            if (subcommand.group() != currentGroup) {
+                currentGroup = subcommand.group();
+                source.sendMessage(AutoStopperMessages.helpGroup(currentGroup.label()));
+            }
+            source.sendMessage(AutoStopperMessages.helpEntry(subcommand.usage(), subcommand.description(),
+                    subcommand.permission(), ADMIN_PERMISSION, isPlayer));
         }
-        if (hasAdministrativePermission(source, START_PERMISSION)) {
-            source.sendMessage(AutoStopperMessages.helpEntry(
-                    "/autostopper start <server>", "Starts and readies a mapped backend server", isPlayer));
-        }
-        if (hasAdministrativePermission(source, STOP_PERMISSION)) {
-            source.sendMessage(AutoStopperMessages.helpEntry(
-                    "/autostopper stop <server>", "Stops an empty mapped backend server", isPlayer));
-        }
-        if (hasAdministrativePermission(source, RESTART_PERMISSION)) {
-            source.sendMessage(AutoStopperMessages.helpEntry(
-                    "/autostopper restart <server>", "Restarts and readies an empty mapped backend server", isPlayer));
-        }
-        if (hasAdministrativePermission(source, HOLD_PERMISSION)) {
-            source.sendMessage(AutoStopperMessages.helpEntry(
-                    "/autostopper hold <server>", "Suppresses automatic shutdown for a server", isPlayer));
-        }
-        if (hasAdministrativePermission(source, RELEASE_PERMISSION)) {
-            source.sendMessage(AutoStopperMessages.helpEntry(
-                    "/autostopper release <server>", "Removes automatic shutdown suppression for a server", isPlayer));
-        }
-        if (getPermittedSubcommands(source).size() > 1) {
-            source.sendMessage(AutoStopperMessages.operatorHelpFooter(pluginVersion(), isPlayer));
-        }
+        source.sendMessage(AutoStopperMessages.operatorHelpFooter(pluginVersion(), isPlayer));
     }
 
     private void showStatus(CommandSource source) {
@@ -437,49 +354,20 @@ public class AutoStopperCommand implements SimpleCommand {
 
         // If user hasn't typed anything yet or is typing the first argument
         if (args.length == 0 || args.length == 1) {
-            String input = args.length == 1 ? args[0].toLowerCase() : "";
-            List<String> suggestions = new ArrayList<>();
-
-            if ("help".startsWith(input)) suggestions.add("help");
-            if (hasAdministrativePermission(source, STATUS_PERMISSION) && "status".startsWith(input)) {
-                suggestions.add("status");
-            }
-            if (hasAdministrativePermission(source, RELOAD_PERMISSION) && "reload".startsWith(input)) {
-                suggestions.add("reload");
-            }
-            if (hasAdministrativePermission(source, START_PERMISSION) && "start".startsWith(input)) {
-                suggestions.add("start");
-            }
-            if (hasAdministrativePermission(source, STOP_PERMISSION) && "stop".startsWith(input)) {
-                suggestions.add("stop");
-            }
-            if (hasAdministrativePermission(source, RESTART_PERMISSION) && "restart".startsWith(input)) {
-                suggestions.add("restart");
-            }
-            if (hasAdministrativePermission(source, HOLD_PERMISSION) && "hold".startsWith(input)) {
-                suggestions.add("hold");
-            }
-            if (hasAdministrativePermission(source, RELEASE_PERMISSION) && "release".startsWith(input)) {
-                suggestions.add("release");
-            }
-
-            return suggestions;
+            String input = args.length == 1 ? args[0].toLowerCase(Locale.ROOT) : "";
+            return Arrays.stream(AutoStopperSubcommand.values())
+                    .filter(subcommand -> subcommand.label().startsWith(input) && isPermitted(source, subcommand))
+                    .map(AutoStopperSubcommand::label)
+                    .toList();
         }
 
         // If user is typing the second argument (server name)
         if (args.length == 2) {
-            String subcommand = args[0].toLowerCase();
-            String input = args[1].toLowerCase();
-
-            boolean isStart = subcommand.equals("start") && hasAdministrativePermission(source, START_PERMISSION);
-            boolean isStop = subcommand.equals("stop") && hasAdministrativePermission(source, STOP_PERMISSION);
-            boolean isRestart = subcommand.equals("restart") && hasAdministrativePermission(source, RESTART_PERMISSION);
-            boolean isHold = subcommand.equals("hold") && hasAdministrativePermission(source, HOLD_PERMISSION);
-            boolean isRelease = subcommand.equals("release") && hasAdministrativePermission(source, RELEASE_PERMISSION);
-
-            if (isStart || isStop || isRestart || isHold || isRelease) {
+            Optional<AutoStopperSubcommand> subcommand = AutoStopperSubcommand.byLabel(args[0]);
+            String input = args[1].toLowerCase(Locale.ROOT);
+            if (subcommand.isPresent() && subcommand.get().takesServer() && isPermitted(source, subcommand.get())) {
                 return config.snapshot().serverNames().stream()
-                        .filter(name -> name.toLowerCase().startsWith(input))
+                        .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(input))
                         .sorted()
                         .toList();
             }
@@ -496,30 +384,14 @@ public class AutoStopperCommand implements SimpleCommand {
     }
 
     private List<String> getPermittedSubcommands(CommandSource source) {
-        List<String> permitted = new ArrayList<>();
-        permitted.add("help");
-        if (hasAdministrativePermission(source, STATUS_PERMISSION)) {
-            permitted.add("status");
-        }
-        if (hasAdministrativePermission(source, RELOAD_PERMISSION)) {
-            permitted.add("reload");
-        }
-        if (hasAdministrativePermission(source, START_PERMISSION)) {
-            permitted.add("start");
-        }
-        if (hasAdministrativePermission(source, STOP_PERMISSION)) {
-            permitted.add("stop");
-        }
-        if (hasAdministrativePermission(source, RESTART_PERMISSION)) {
-            permitted.add("restart");
-        }
-        if (hasAdministrativePermission(source, HOLD_PERMISSION)) {
-            permitted.add("hold");
-        }
-        if (hasAdministrativePermission(source, RELEASE_PERMISSION)) {
-            permitted.add("release");
-        }
-        return permitted;
+        return Arrays.stream(AutoStopperSubcommand.values())
+                .filter(subcommand -> isPermitted(source, subcommand))
+                .map(AutoStopperSubcommand::label)
+                .toList();
+    }
+
+    private boolean isPermitted(CommandSource source, AutoStopperSubcommand subcommand) {
+        return subcommand.isPublic() || hasAdministrativePermission(source, subcommand.permission());
     }
 
     private boolean hasAdministrativePermission(CommandSource source, String permission) {

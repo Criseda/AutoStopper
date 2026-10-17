@@ -93,7 +93,7 @@ class OperatorFailureGuideTest {
     }
 
     private static String troubleshootingMarkdown() throws IOException {
-        return Files.readString(Path.of(OperatorLinks.TROUBLESHOOTING_PATH), StandardCharsets.UTF_8);
+        return Files.readString(Path.of(ProjectLinks.TROUBLESHOOTING_PATH), StandardCharsets.UTF_8);
     }
 
     private static Set<String> troubleshootingAnchors() throws IOException {

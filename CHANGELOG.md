@@ -20,6 +20,13 @@ All notable AutoStopper changes are documented here.
 
 ### Changed
 
+- `/autostopper` now shows clickable Docs, GitHub, Modrinth, and Changelog links to everyone, and
+  the version opens the release notes; console senders get the URLs as plain text. Documentation
+  and changelog links are pinned to the running release (#131).
+- `/autostopper help` groups commands under General, Lifecycle, and Holds, uses consistent
+  imperative descriptions (also used by usage messages), drops the `/autostopper` and
+  `/autostopper help` entries, and shows each command's permission on hover. Sources without
+  operator commands get the project links instead of an empty list (#131).
 - A cancelled manual stop now reports `Stopping server <name> was cancelled.` instead of the start
   wording (#124).
 - Readiness checks no longer hold an AutoStopper worker for the whole readiness window. Each
