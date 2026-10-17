@@ -1,6 +1,7 @@
 package me.criseda.autostopper.testing;
 
 import me.criseda.autostopper.messages.AutoStopperMessages;
+import me.criseda.autostopper.messages.OperatorFailureGuide;
 import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
@@ -68,6 +69,9 @@ public final class MessageCompatibilityProbe {
         }
         if (type == Component.class) {
             return Component.text("compatibility-probe");
+        }
+        if (type == OperatorFailureGuide.class) {
+            return OperatorFailureGuide.START_FAILED;
         }
         if (type == OperationalServerStatus.class) {
             OperationalFailure failure = new OperationalFailure(

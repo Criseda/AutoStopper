@@ -317,6 +317,75 @@ class AutoStopperMessagesTest {
         assertEquals("2m", AutoStopperMessages.formatElapsed(Duration.ofMinutes(2)));
     }
 
+    @Test
+    void operatorFailureForConsoleIsCompletePlainText() {
+        Component message = AutoStopperMessages.operatorFailure(AutoStopperMessages.stopTimedOut("survival"),
+                OperatorFailureGuide.STOP_TIMED_OUT, "/autostopper stop survival", null, "2.1.1", false);
+
+        assertEquals("AutoStopper ! Timed out stopping server survival. Try again."
+                        + " Docker did not stop the container in time.\n"
+                        + "Fix: Check the container's stop grace period and host load, then retry.\n"
+                        + "Next: /autostopper stop survival\n"
+                        + "Outcome: STOP_TIMED_OUT · Troubleshooting: "
+                        + "https://github.com/Criseda/AutoStopper/blob/2.1.1/docs/troubleshooting.md#stop_timed_out",
+                plainText(message));
+        for (TextComponent text : textComponents(message)) {
+            assertNull(text.clickEvent(), text.content());
+            assertNull(text.hoverEvent(), text.content());
+        }
+    }
+
+    @Test
+    void operatorFailureForPlayerKeepsCauseVisibleAndDetailOnHover() {
+        Component message = AutoStopperMessages.operatorFailure(AutoStopperMessages.startFailed("survival"),
+                OperatorFailureGuide.START_FAILED, "/autostopper start survival", Duration.ofSeconds(3),
+                "2.1.1", true);
+
+        assertEquals("AutoStopper ! Failed to start server survival. Docker could not start the container."
+                + " · Waited 3s. · /autostopper status", plainText(message));
+
+        Component reason = message.children().get(0);
+        assertEquals(ClickEvent.Action.OPEN_URL, reason.clickEvent().action());
+        assertTrue(reason.clickEvent().toString().contains("blob/2.1.1/docs/troubleshooting.md#start_failed"));
+        assertEquals(HoverEvent.Action.SHOW_TEXT, reason.hoverEvent().action());
+        assertEquals("Cause: Docker could not start the container.\n"
+                        + "Fix: Review the proxy log and Docker state, then retry.\n"
+                        + "Outcome: START_FAILED\n"
+                        + "Click to open troubleshooting",
+                plainText((Component) reason.hoverEvent().value()));
+
+        TextComponent next = findText(message, "/autostopper status");
+        assertEquals(ClickEvent.Action.SUGGEST_COMMAND, next.clickEvent().action());
+    }
+
+    @Test
+    void operatorFailureWithoutNextStepOffersNoCommand() {
+        Component message = AutoStopperMessages.operatorFailure(
+                AutoStopperMessages.manualStopRefusedPlayers("survival", 2),
+                OperatorFailureGuide.PLAYERS_CONNECTED, "/autostopper stop survival", null, "2.1.1", true);
+
+        assertFalse(plainText(message).contains("/autostopper"));
+        assertFalse(plainText(message).contains("Next:"));
+    }
+
+    @Test
+    void operatorHelpFooterLinksTroubleshootingAndHelp() {
+        Component player = AutoStopperMessages.operatorHelpFooter("2.1.1", true);
+        Component console = AutoStopperMessages.operatorHelpFooter("2.1.1", false);
+
+        assertEquals("Troubleshooting · Get help", plainText(player));
+        TextComponent troubleshooting = findText(player, "Troubleshooting");
+        assertEquals(ClickEvent.Action.OPEN_URL, troubleshooting.clickEvent().action());
+        assertTrue(troubleshooting.clickEvent().toString().contains("blob/2.1.1/docs/troubleshooting.md"));
+        TextComponent help = findText(player, "Get help");
+        assertTrue(help.clickEvent().toString().contains("issues/new/choose"));
+        assertNotNull(help.hoverEvent());
+
+        assertEquals("Troubleshooting: https://github.com/Criseda/AutoStopper/blob/2.1.1/docs/troubleshooting.md"
+                        + " · Get help: https://github.com/Criseda/AutoStopper/issues/new/choose",
+                plainText(console));
+    }
+
     private static void assertColor(Component component, String content, TextColor expected) {
         TextComponent text = findText(component, content);
         assertNotNull(text, "Missing text component containing: " + content);

@@ -123,6 +123,95 @@ container again and reports the stop as successful when it has already stopped.
 | Hold disappeared after proxy restart | Runtime holds are memory-only and do not survive proxy restarts. | Re-apply the hold with `/autostopper hold <name>` or omit the server from `monitored_servers` if it should remain persistent. |
 | Hold disappeared after reload | The server mapping was modified or removed in `config.yml`. | Re-apply the hold if the server is still monitored under a new mapping. |
 
+## Manual command outcomes
+
+When `/autostopper start`, `stop`, or `restart` fails, the chat line states the cause. In game,
+hovering the line shows the remediation and the typed outcome code, which matches `outcome=` in the
+`AutoStopper lifecycle completed:` log line; clicking it opens the matching section below. Console
+senders get the same detail and link as plain text. A suggested next command (the retry or
+`/autostopper status`) follows the line where one helps.
+
+### SERVER_STARTING
+
+A start is already in progress for the server. Wait for it to finish, then retry the stop or restart.
+
+### SERVER_STOPPING
+
+A stop is already in progress for the server. Wait for it to finish, then retry.
+
+### PLAYERS_CONNECTED
+
+Stop and restart refuse to disconnect players. Move players to another server or wait for them to
+leave; inactivity stopping takes over once the server is empty.
+
+### WAITERS_PRESENT
+
+Players are waiting for the server to become ready. Let the connection sequence finish or fail,
+then retry; AutoStopper does not interrupt in-flight player admission.
+
+### MAPPING_CHANGED
+
+A configuration reload changed or removed the server's mapping while the command ran, so the command
+stopped rather than act on a stale mapping. Check the mapping in `config.yml`, then retry.
+
+### CONTAINER_MISSING
+
+The configured container does not exist. Run `docker ps -a` inside the proxy container, create the
+backend with `docker compose create` or `up`, or correct `container_name` and reload. AutoStopper
+never creates containers. See [Docker diagnostics](#docker-diagnostics).
+
+### DOCKER_INACCESSIBLE
+
+The proxy cannot reach the Docker daemon: the CLI is missing, the daemon is down, or socket
+permission is denied. Follow the matching row in [Docker diagnostics](#docker-diagnostics), then retry.
+
+### STATUS_TIMED_OUT
+
+The Docker status check exceeded its bounded deadline. Check daemon responsiveness, disk pressure,
+and host load, then retry.
+
+### STATUS_FAILED
+
+The Docker status check failed for a reason other than a missing container or lost access. Review
+the raw error in the proxy log, run the equivalent `docker inspect` inside the proxy container, and
+correct the Docker or container error before retrying.
+
+### START_TIMED_OUT
+
+Docker did not start the container within the deadline. Check daemon responsiveness and host load,
+then retry.
+
+### START_FAILED
+
+Docker could not start the container. Review the raw error in the proxy log and the backend's
+`docker logs`, correct the container error, then retry.
+
+### STOP_TIMED_OUT
+
+Docker did not stop the container within its stop grace period plus the command deadline. Check
+host load and whether the backend needs a longer grace period; see
+[Stop grace period](#stop-grace-period).
+
+### STOP_FAILED
+
+Docker could not stop the container. Review the raw error in the proxy log and the container state,
+then retry. See [Failed stops and retries](#failed-stops-and-retries).
+
+### SERVER_NOT_READY
+
+The container started but did not pass the configured readiness check before the deadline. Follow
+[Readiness failures](#readiness-failures), then retry.
+
+### OVERLOADED
+
+AutoStopper's bounded worker queue is full. Wait for current lifecycle operations to finish, then
+retry.
+
+### CANCELLED
+
+A reload, proxy shutdown, or conflicting lifecycle operation cancelled the command. Retry once the
+reload or conflicting operation completes.
+
 ## Lifecycle telemetry diagnostics
 
 AutoStopper emits structured `INFO` log lines upon completing every authoritative operation and `DEBUG`

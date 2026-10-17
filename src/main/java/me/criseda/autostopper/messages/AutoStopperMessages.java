@@ -670,6 +670,79 @@ public final class AutoStopperMessages {
                 .append(Component.text(" " + MessageTokens.SEPARATOR + " Waited " + formatElapsed(elapsed) + ".", MessageTokens.TEXT_MUTED)));
     }
 
+    // --- Operator Failure Detail & Help Links ---
+
+    /**
+     * A failed manual command for an operator. The chat line keeps the reason and cause; players get
+     * the remediation and typed outcome code on hover, a troubleshooting link on click, and the next
+     * command as a click-to-suggest affordance. Console senders get the same detail as plain text.
+     */
+    public static Component operatorFailure(Component reason, OperatorFailureGuide guide, String retryCommand,
+            Duration elapsed, String pluginVersion, boolean isPlayer) {
+        Objects.requireNonNull(guide, "guide");
+        String troubleshootingUrl = OperatorLinks.troubleshooting(pluginVersion, guide.troubleshootingAnchor());
+        String nextCommand = switch (guide.nextStep()) {
+            case RETRY -> retryCommand;
+            case STATUS -> "/autostopper status";
+            case NONE -> null;
+        };
+
+        TextComponent.Builder message = Component.text();
+        if (isPlayer) {
+            message.append(Component.text()
+                    .append(reason)
+                    .hoverEvent(HoverEvent.showText(failureHover(guide)))
+                    .clickEvent(ClickEvent.openUrl(troubleshootingUrl)));
+        } else {
+            message.append(reason);
+        }
+        message.append(Component.text(" " + guide.cause(), MessageTokens.TEXT_PRIMARY));
+        if (elapsed != null) {
+            message.append(Component.text(" " + MessageTokens.SEPARATOR + " Waited " + formatElapsed(elapsed) + ".",
+                    MessageTokens.TEXT_MUTED));
+        }
+
+        if (isPlayer) {
+            if (nextCommand != null) {
+                message.append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED))
+                        .append(command(nextCommand, "Click to suggest " + nextCommand, true));
+            }
+            return finish(message);
+        }
+
+        message.append(Component.newline())
+                .append(Component.text("Fix: ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(guide.remediation(), MessageTokens.TEXT_PRIMARY));
+        if (nextCommand != null) {
+            message.append(Component.newline())
+                    .append(Component.text("Next: ", MessageTokens.TEXT_MUTED))
+                    .append(Component.text(nextCommand, MessageTokens.ACTION));
+        }
+        message.append(Component.newline())
+                .append(Component.text("Outcome: ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(guide.outcomeCode(), MessageTokens.TEXT_PRIMARY))
+                .append(Component.text(" " + MessageTokens.SEPARATOR + " Troubleshooting: ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(troubleshootingUrl, MessageTokens.ACTION));
+        return finish(message);
+    }
+
+    /** The {@code Troubleshooting · Get help} footer shown to operators under help and failed status. */
+    public static Component operatorHelpFooter(String pluginVersion, boolean isPlayer) {
+        String troubleshootingUrl = OperatorLinks.troubleshooting(pluginVersion);
+        String helpUrl = OperatorLinks.getHelp();
+        if (isPlayer) {
+            return finish(Component.text()
+                    .append(link("Troubleshooting", troubleshootingUrl, "Open the troubleshooting guide"))
+                    .append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED))
+                    .append(link("Get help", helpUrl, "Ask for support or report a bug")));
+        }
+        return finish(Component.text()
+                .append(Component.text("Troubleshooting: ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(troubleshootingUrl, MessageTokens.ACTION))
+                .append(Component.text(" " + MessageTokens.SEPARATOR + " Get help: ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(helpUrl, MessageTokens.ACTION)));
+    }
+
     public static Component holdApplied(String serverName) {
         return finish(Component.text()
                 .append(brandSuccess())
@@ -724,6 +797,14 @@ public final class AutoStopperMessages {
                 .append(Component.text("Failed to stop server ", MessageTokens.FAILURE))
                 .append(argument(serverName))
                 .append(Component.text(".", MessageTokens.FAILURE)));
+    }
+
+    public static Component stopCancelled(String serverName) {
+        return finish(Component.text()
+                .append(brandAttention())
+                .append(Component.text("Stopping server ", MessageTokens.FAILURE))
+                .append(argument(serverName))
+                .append(Component.text(" was cancelled.", MessageTokens.FAILURE)));
     }
 
     // --- Humanization Utilities ---
@@ -802,6 +883,28 @@ public final class AutoStopperMessages {
             }
         }
         return finish(builder);
+    }
+
+    private static Component failureHover(OperatorFailureGuide guide) {
+        return finish(Component.text()
+                .append(Component.text("Cause: ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(guide.cause(), MessageTokens.TEXT_PRIMARY))
+                .append(Component.newline())
+                .append(Component.text("Fix: ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(guide.remediation(), MessageTokens.TEXT_PRIMARY))
+                .append(Component.newline())
+                .append(Component.text("Outcome: ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(guide.outcomeCode(), MessageTokens.TEXT_PRIMARY))
+                .append(Component.newline())
+                .append(Component.text("Click to open troubleshooting", MessageTokens.ACTION)));
+    }
+
+    private static Component link(String label, String url, String hoverDescription) {
+        return finish(Component.text()
+                .content(label)
+                .color(MessageTokens.ACTION)
+                .clickEvent(ClickEvent.openUrl(url))
+                .hoverEvent(HoverEvent.showText(Component.text(hoverDescription, MessageTokens.TEXT_PRIMARY))));
     }
 
     private static Component finish(ComponentLike componentLike) {
