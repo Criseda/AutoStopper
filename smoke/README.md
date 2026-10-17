@@ -7,13 +7,17 @@ only needs to satisfy the normal build requirement.
 | Profile | Role | Runtime image | Proxy JVM | Velocity artifact | Official download URL | SHA-256 |
 |---|---|---|---|---|---|---|
 | `legacy` | Minimum/floor | `eclipse-temurin:21-jre` | 21 | `velocity-3.5.1-615.jar` | `https://fill-data.papermc.io/v1/objects/b4e3164df5377346854dc6cb9e6a78022b1946ff69e89676313f5f6f1c6f0fb3/velocity-3.5.1-615.jar` | `b4e3164df5377346854dc6cb9e6a78022b1946ff69e89676313f5f6f1c6f0fb3` |
-| `stable` | Production | `eclipse-temurin:25-jre` | 25 | `velocity-4.0.0-6.jar` | `https://fill-data.papermc.io/v1/objects/4540289f48c83e305fc2f2c495a84d1f4d0b7f360830251e169dd5a208740e70/velocity-4.0.0-6.jar` | `4540289f48c83e305fc2f2c495a84d1f4d0b7f360830251e169dd5a208740e70` |
-| `preview` | Snapshot validation | `eclipse-temurin:25-jre` | 25 | `velocity-4.1.0-SNAPSHOT-16.jar` | `https://fill-data.papermc.io/v1/objects/aebade8be3b15d7c3c61514a50ce857cbf78ee87bd32e8d16d2352c6ca3e472f/velocity-4.1.0-SNAPSHOT-16.jar` | `aebade8be3b15d7c3c61514a50ce857cbf78ee87bd32e8d16d2352c6ca3e472f` |
+| `stable-4.0` | Production | `eclipse-temurin:25-jre` | 25 | `velocity-4.0.0-6.jar` | `https://fill-data.papermc.io/v1/objects/4540289f48c83e305fc2f2c495a84d1f4d0b7f360830251e169dd5a208740e70/velocity-4.0.0-6.jar` | `4540289f48c83e305fc2f2c495a84d1f4d0b7f360830251e169dd5a208740e70` |
+| `stable-4.1` | Production | `eclipse-temurin:25-jre` | 25 | `velocity-4.1.0-22.jar` | `https://fill-data.papermc.io/v1/objects/bff15036c6a43f0db66600ee405407aa71e95fbf05d692e35e8ab364c7c9083d/velocity-4.1.0-22.jar` | `bff15036c6a43f0db66600ee405407aa71e95fbf05d692e35e8ab364c7c9083d` |
+| `stable` | Production (recommended, 4.2) | `eclipse-temurin:25-jre` | 25 | `velocity-4.2.0-30.jar` | `https://fill-data.papermc.io/v1/objects/35a5596a5468a035d8a32c8de5ebb0dc6b8d8f0cc3ff5169d514aca762af8aa8/velocity-4.2.0-30.jar` | `35a5596a5468a035d8a32c8de5ebb0dc6b8d8f0cc3ff5169d514aca762af8aa8` |
+| `preview` | Snapshot validation | `eclipse-temurin:25-jre` | 25 | `velocity-4.2.1-SNAPSHOT-41.jar` | `https://fill-data.papermc.io/v1/objects/aab3cc7e60ee758ea8cfff3cb0ab88e92aececfd0025061c90f00d6aa9f1aa1e/velocity-4.2.1-SNAPSHOT-41.jar` | `aab3cc7e60ee758ea8cfff3cb0ab88e92aececfd0025061c90f00d6aa9f1aa1e` |
 
 Each row records the complete pinned runtime: the compatible proxy JVM, the exact Velocity build
 downloaded from PaperMC's official Fill downloads service, and its content-addressed object URL and
-SHA-256 digest. The `stable` line is the recommended production runtime; the `preview` line
-validates the next 4.x snapshot ahead of release.
+SHA-256 digest. The `stable` line (4.2) is the recommended production runtime, alongside the
+`stable-4.0` and `stable-4.1` lines; the `preview` line validates the next 4.x
+snapshot ahead of release. Pull requests run `legacy`, `stable`, and `preview`; the release
+workflow also runs `stable-4.0` and `stable-4.1`.
 
 The harness downloads each content-addressed Velocity JAR, verifies its hash,
 and copies the exact versioned `target/AutoStopper-<project-version>.jar` produced by the current
@@ -70,4 +74,4 @@ These tests deliberately do not mount the Docker socket, start Minecraft, or
 exercise a real managed container. The live gate is the reusable
 `release-candidate-e2e.yml` workflow and Maven `release-candidate-e2e` profile; the protected
 release workflow must pass that gate against the exact JAR it publishes on the pinned stable
-Velocity 4.0.0 line.
+Velocity 4.2.0 line.

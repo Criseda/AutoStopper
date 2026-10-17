@@ -33,6 +33,8 @@ REQUIRED_RELEASE_JOBS = {
     "Release / required deterministic CI / Java 21 / verify",
     "Release / required deterministic CI / Java 25 / verify",
     "Release / required deterministic CI / Velocity legacy / packaged runtime",
+    "Release / required deterministic CI / Velocity stable-4.0 / packaged runtime",
+    "Release / required deterministic CI / Velocity stable-4.1 / packaged runtime",
     "Release / required deterministic CI / Velocity stable / packaged runtime",
     "Release / required deterministic CI / Velocity preview / packaged runtime",
     "Release / exact Docker Minecraft candidate / Release candidate / Docker Minecraft E2E",
@@ -230,17 +232,31 @@ def validate_source(repository: Path, version: str, previous_tag: str) -> str:
             "image": "itzg/mc-proxy:2026.8.0-java21",
         },
         {
-            "line": "stable",
+            "line": "stable-4.0",
             "java": 25,
             "version": "4.0.0",
             "build": "6",
             "image": "itzg/mc-proxy:2026.8.0-java25",
         },
         {
+            "line": "stable-4.1",
+            "java": 25,
+            "version": "4.1.0",
+            "build": "22",
+            "image": "itzg/mc-proxy:2026.8.0-java25",
+        },
+        {
+            "line": "stable",
+            "java": 25,
+            "version": "4.2.0",
+            "build": "30",
+            "image": "itzg/mc-proxy:2026.8.0-java25",
+        },
+        {
             "line": "preview",
             "java": 25,
-            "version": "4.1.0-SNAPSHOT",
-            "build": "16",
+            "version": "4.2.1-SNAPSHOT",
+            "build": "41",
             "image": "itzg/mc-proxy:2026.8.0-java25",
         },
     ]
@@ -250,7 +266,7 @@ def validate_source(repository: Path, version: str, previous_tag: str) -> str:
         )
     expected_release_candidate = {
         "velocityImage": "itzg/mc-proxy:2026.8.0-java25",
-        "velocityVersion": "4.0.0-6",
+        "velocityVersion": "4.2.0-30",
         "backendImage": "itzg/minecraft-server:java21",
         "minecraftVersion": "1.21.4",
         "purpurBuild": "2416",

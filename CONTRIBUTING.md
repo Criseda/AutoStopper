@@ -64,7 +64,8 @@ The following GitHub Actions checks are required before a pull request can merge
 
 The branch must be up to date with `master`, every required check must succeed, and every review
 conversation must be resolved. The release-candidate E2E workflow is a separate protected release
-gate; it is not an ordinary pull-request check.
+gate; it is not an ordinary pull-request check. Pull requests run the `legacy`, `stable`
+(4.2.0), and `preview` profiles; the release gate also runs `stable-4.0` and `stable-4.1`.
 
 These check names are part of the repository governance contract. Renaming a workflow job requires
 a coordinated update to the protected-branch ruleset so that protection never silently disappears

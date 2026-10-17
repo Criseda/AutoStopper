@@ -70,7 +70,7 @@ public final class VelocitySystemHarness {
                             + "velocity-3.5.1-615.jar"),
                     "b4e3164df5377346854dc6cb9e6a78022b1946ff69e89676313f5f6f1c6f0fb3"),
             new RuntimeProfile(
-                    "stable",
+                    "stable-4.0",
                     "Java 25",
                     "eclipse-temurin:25-jre",
                     "Velocity 4.0.0 build 6",
@@ -79,14 +79,32 @@ public final class VelocitySystemHarness {
                             + "velocity-4.0.0-6.jar"),
                     "4540289f48c83e305fc2f2c495a84d1f4d0b7f360830251e169dd5a208740e70"),
             new RuntimeProfile(
+                    "stable-4.1",
+                    "Java 25",
+                    "eclipse-temurin:25-jre",
+                    "Velocity 4.1.0 build 22",
+                    URI.create("https://fill-data.papermc.io/v1/objects/"
+                            + "bff15036c6a43f0db66600ee405407aa71e95fbf05d692e35e8ab364c7c9083d/"
+                            + "velocity-4.1.0-22.jar"),
+                    "bff15036c6a43f0db66600ee405407aa71e95fbf05d692e35e8ab364c7c9083d"),
+            new RuntimeProfile(
+                    "stable",
+                    "Java 25",
+                    "eclipse-temurin:25-jre",
+                    "Velocity 4.2.0 build 30",
+                    URI.create("https://fill-data.papermc.io/v1/objects/"
+                            + "35a5596a5468a035d8a32c8de5ebb0dc6b8d8f0cc3ff5169d514aca762af8aa8/"
+                            + "velocity-4.2.0-30.jar"),
+                    "35a5596a5468a035d8a32c8de5ebb0dc6b8d8f0cc3ff5169d514aca762af8aa8"),
+            new RuntimeProfile(
                     "preview",
                     "Java 25",
                     "eclipse-temurin:25-jre",
-                    "Velocity 4.1.0-SNAPSHOT build 16",
+                    "Velocity 4.2.1-SNAPSHOT build 41",
                     URI.create("https://fill-data.papermc.io/v1/objects/"
-                            + "aebade8be3b15d7c3c61514a50ce857cbf78ee87bd32e8d16d2352c6ca3e472f/"
-                            + "velocity-4.1.0-SNAPSHOT-16.jar"),
-                    "aebade8be3b15d7c3c61514a50ce857cbf78ee87bd32e8d16d2352c6ca3e472f"));
+                            + "aab3cc7e60ee758ea8cfff3cb0ab88e92aececfd0025061c90f00d6aa9f1aa1e/"
+                            + "velocity-4.2.1-SNAPSHOT-41.jar"),
+                    "aab3cc7e60ee758ea8cfff3cb0ab88e92aececfd0025061c90f00d6aa9f1aa1e"));
 
     private final Path pluginArtifact;
     private final Path outputDirectory;

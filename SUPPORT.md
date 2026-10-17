@@ -29,17 +29,19 @@ checksum before use.
 
 ## Supported runtimes
 
-AutoStopper ships one Java 21 bytecode JAR compiled against Velocity API 3.5.1 and tested on three
-runtime lines. Keep each proxy image and Velocity build together.
+AutoStopper ships one Java 21 bytecode JAR compiled against Velocity API 3.5.1 and tested on five
+runtime lines (Stable 4.0 and 4.1 are verified at release, the rest on every pull request). Keep each proxy image and Velocity build together.
 
 | Support line | Role | Proxy JVM | Velocity runtime |
 |---|---:|---:|---|
 | Legacy | Minimum supported | 21 | `3.5.1`, build `615` |
-| Stable | Production (recommended) | 25 | `4.0.0`, build `6` |
-| Preview | Snapshot validation only | 25 | `4.1.0-SNAPSHOT`, build `16` |
+| Stable 4.0 | Production | 25 | `4.0.0`, build `6` |
+| Stable 4.1 | Production | 25 | `4.1.0`, build `22` |
+| Stable 4.2 | Production (recommended) | 25 | `4.2.0`, build `30` |
+| Preview | Snapshot validation only | 25 | `4.2.1-SNAPSHOT`, build `41` |
 
 Velocity 4.x requires at least Java 25, so the stable and preview lines cannot run on Java 21.
-Velocity 4.1 is supplied as a snapshot and is validated only as preview, not as a production
+Velocity 4.2.1 is supplied as a snapshot and is validated only as preview, not as a production
 baseline. Other Velocity, Java, proxy-image, and backend combinations are not part of the tested
 matrix; issues on unsupported combinations may be closed without investigation.
 
