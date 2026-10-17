@@ -2,6 +2,11 @@ name: Deterministic CI
 
 on:
   workflow_call:
+    inputs:
+      full-matrix:
+        description: Also run the older stable Velocity lines (the release gate)
+        type: boolean
+        default: false
   push:
     branches:
       - master
@@ -71,10 +76,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile:
-          - legacy
-          - stable
-          - preview
+        # Pull requests run the floor, the recommended stable line, and the preview
+        # snapshot. The release gate (full-matrix) adds the older stable lines.
+        profile: ${{ fromJSON(inputs.full-matrix && '["legacy","stable-4.0","stable-4.1","stable","preview"]' || '["legacy","stable","preview"]') }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

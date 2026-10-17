@@ -12,7 +12,7 @@
   <a href="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml"><img alt="Deterministic CI" src="https://github.com/Criseda/AutoStopper/actions/workflows/ci.yml/badge.svg?branch=master"></a>
   <a href="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml"><img alt="Release candidate E2E" src="https://github.com/Criseda/AutoStopper/actions/workflows/release-candidate-e2e.yml/badge.svg?branch=master"></a>
   <a href="#supported-runtimes"><img alt="Java 21 bytecode" src="https://img.shields.io/badge/Java-21%20bytecode-ED8B00?logo=openjdk&amp;logoColor=white"></a>
-  <a href="#supported-runtimes"><img alt="Velocity 3.5.1, 4.0, and 4.1" src="https://img.shields.io/badge/Velocity-3.5.1%20%7C%204.0%20%7C%204.1-5865F2"></a>
+  <a href="#supported-runtimes"><img alt="Velocity 3.5.1, 4.0, 4.1, and 4.2" src="https://img.shields.io/badge/Velocity-3.5.1%20%7C%204.0%20%7C%204.1%20%7C%204.2-5865F2"></a>
   <a href="https://modrinth.com/plugin/autostopper"><img alt="Modrinth downloads" src="https://img.shields.io/modrinth/dt/PG4gqnzX?logo=modrinth&amp;label=downloads"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/Criseda/AutoStopper"></a>
 </p>
@@ -68,17 +68,20 @@ installing. To report a suspected vulnerability privately, see [SECURITY.md](SEC
 ## Supported runtimes
 
 AutoStopper is one Java 21 bytecode JAR compiled against Velocity API 3.5.1. The same packaged JAR
-is tested on the three runtime lines below; keep each proxy image and Velocity build together.
+is tested on the five runtime lines below (pull requests run Legacy, Stable 4.2, and Preview;
+the release gate runs all five); keep each proxy image and Velocity build together.
 
 | Support line | Role | Proxy image | Proxy JVM | Velocity runtime | Example |
 |---|---|---:|---:|---|---|
 | Legacy | Minimum supported | `itzg/mc-proxy:2026.8.0-java21` | 21 | `3.5.1`, build `615` | [`examples/velocity-legacy`](examples/velocity-legacy/) |
-| Stable | Production | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.0.0`, build `6` | [`examples/velocity-stable`](examples/velocity-stable/) |
-| Preview | Snapshot validation | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.1.0-SNAPSHOT`, build `16` | [`examples/velocity-preview`](examples/velocity-preview/) |
+| Stable 4.0 | Production | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.0.0`, build `6` | [`examples/velocity-stable`](examples/velocity-stable/) (pins 4.2.0) |
+| Stable 4.1 | Production | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.1.0`, build `22` | [`examples/velocity-stable`](examples/velocity-stable/) (pins 4.2.0) |
+| Stable 4.2 | Production (recommended) | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.2.0`, build `30` | [`examples/velocity-stable`](examples/velocity-stable/) |
+| Preview | Snapshot validation | `itzg/mc-proxy:2026.8.0-java25` | 25 | `4.2.1-SNAPSHOT`, build `41` | [`examples/velocity-preview`](examples/velocity-preview/) |
 
-The legacy line is the tested minimum; the stable line is the recommended production runtime.
+The legacy line is the tested minimum; the stable lines (4.0, 4.1, and 4.2) are production runtimes, with 4.2 recommended.
 Velocity 4.x requires at least Java 25, so do not run the stable or preview builds on Java 21.
-Velocity 4.1 is currently supplied by PaperMC as a snapshot and is validated only as preview, not
+Velocity 4.2.1 is currently supplied by PaperMC as a snapshot and is validated only as preview, not
 as a production baseline. The release-candidate stack is tested with Purpur 1.21.4; backend Java
 is independent of the proxy JVM. AutoStopper observes Velocity API events and a generic Minecraft
 status request rather than backend-specific APIs, so it is compatible with Minecraft Java Edition

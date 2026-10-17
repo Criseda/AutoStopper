@@ -57,6 +57,8 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/ci.yml
+    with:
+      full-matrix: true
 
   dependency-review:
     name: Release / dependency review

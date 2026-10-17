@@ -28,6 +28,7 @@ All notable AutoStopper changes are documented here.
 - `/autostopper status` shows the last failure's age (`last failure 3m ago during …`) instead of a
   raw ISO-8601 timestamp, and leaves the remediation to `/autostopper status <server>`. Activity and
   failure ages share one format, and ages of a day or more read `2d 3h ago` (#125).
+- Velocity 4.1.0 (build 22) and 4.2.0 (build 30) are now tested stable runtimes alongside 4.0.0, with 4.2.0 the recommended production line and the stable example. The preview line now validates Velocity 4.2.1-SNAPSHOT (build 41). The packaged-runtime CI matrix, smoke profiles (`stable-4.0`, `stable-4.1`, `stable`, `preview`), release-candidate E2E, and release metadata were updated to match. Pull requests run only `legacy`, `stable`, and `preview`; the release gate also runs `stable-4.0` and `stable-4.1` (#134).
 - `/autostopper` now shows clickable Docs, GitHub, Modrinth, and Changelog links to everyone, and
   the version opens the release notes; console senders get the URLs as plain text. Documentation
   and changelog links are pinned to the running release (#131).
@@ -111,6 +112,7 @@ All notable AutoStopper changes are documented here.
 
 ### Changed
 
+- Velocity 4.1.0 (build 22) and 4.2.0 (build 30) are now tested stable runtimes alongside 4.0.0, with 4.2.0 the recommended production line and the stable example. The preview line now validates Velocity 4.2.1-SNAPSHOT (build 41). The packaged-runtime CI matrix, smoke profiles (`stable-4.0`, `stable-4.1`, `stable`, `preview`), release-candidate E2E, and release metadata were updated to match. Pull requests run only `legacy`, `stable`, and `preview`; the release gate also runs `stable-4.0` and `stable-4.1` (#134).
 - Operational status now reconciles Docker observations lazily with mapping-aware lifecycle
   revisions. Active transitions remain authoritative, stopped/degraded Docker state overrides
   stale quiescent state, and results captured before reload, mapping replacement, or newer
@@ -151,6 +153,7 @@ All notable AutoStopper changes are documented here.
 
 ### Changed
 
+- Velocity 4.1.0 (build 22) and 4.2.0 (build 30) are now tested stable runtimes alongside 4.0.0, with 4.2.0 the recommended production line and the stable example. The preview line now validates Velocity 4.2.1-SNAPSHOT (build 41). The packaged-runtime CI matrix, smoke profiles (`stable-4.0`, `stable-4.1`, `stable`, `preview`), release-candidate E2E, and release metadata were updated to match. Pull requests run only `legacy`, `stable`, and `preview`; the release gate also runs `stable-4.0` and `stable-4.1` (#134).
 - Generated inactivity timeout and public documentation now agree on `300` seconds.
 - New installations generate no monitored mappings instead of controlling example containers by
   default.

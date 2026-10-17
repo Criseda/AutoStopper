@@ -12,17 +12,31 @@
       "image": "itzg/mc-proxy:2026.8.0-java21"
     },
     {
-      "line": "stable",
+      "line": "stable-4.0",
       "java": 25,
       "version": "4.0.0",
       "build": "6",
       "image": "itzg/mc-proxy:2026.8.0-java25"
     },
     {
+      "line": "stable-4.1",
+      "java": 25,
+      "version": "4.1.0",
+      "build": "22",
+      "image": "itzg/mc-proxy:2026.8.0-java25"
+    },
+    {
+      "line": "stable",
+      "java": 25,
+      "version": "4.2.0",
+      "build": "30",
+      "image": "itzg/mc-proxy:2026.8.0-java25"
+    },
+    {
       "line": "preview",
       "java": 25,
-      "version": "4.1.0-SNAPSHOT",
-      "build": "16",
+      "version": "4.2.1-SNAPSHOT",
+      "build": "41",
       "image": "itzg/mc-proxy:2026.8.0-java25"
     }
   ],
@@ -39,7 +53,7 @@
   },
   "releaseCandidate": {
     "velocityImage": "itzg/mc-proxy:2026.8.0-java25",
-    "velocityVersion": "4.0.0-6",
+    "velocityVersion": "4.2.0-30",
     "backendImage": "itzg/minecraft-server:java21",
     "minecraftVersion": "1.21.4",
     "purpurBuild": "2416"
