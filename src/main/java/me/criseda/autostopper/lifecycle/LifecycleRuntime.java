@@ -38,7 +38,9 @@ import java.util.function.Predicate;
  * <p>Futures. Never complete or cancel a future while holding any of these locks.
  * {@link java.util.concurrent.CompletableFuture} runs dependents on the completing thread, so a
  * caller's callback would run under the lock and could take the locks out of order. Decide the
- * outcome under the lock, release it, then complete the future.
+ * outcome under the lock, release it, then complete the future. Every completion and cancellation
+ * in this package asserts the rule with {@link LifecycleEntry#isUnlockedByCaller()} (or, for
+ * shutdown, {@link #holdsShutdownLock()}), and the tests run with assertions enabled.
  */
 final class LifecycleRuntime {
     private final Logger logger;
@@ -224,6 +226,11 @@ final class LifecycleRuntime {
 
     boolean isShutdown() {
         return shutdown.get();
+    }
+
+    /** For assertions: whether the calling thread holds the shutdown lock, and so every entry it drains. */
+    boolean holdsShutdownLock() {
+        return Thread.holdsLock(shutdownLock);
     }
 
     /**

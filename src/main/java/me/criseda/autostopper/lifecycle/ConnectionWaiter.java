@@ -21,6 +21,7 @@ import java.util.function.Consumer;
  * the owning {@link LifecycleEntry}'s monitor.
  */
 final class ConnectionWaiter {
+    private final LifecycleEntry owner;
     private final UUID playerId;
     private final Player player;
     private final RegisteredServer targetServer;
@@ -38,8 +39,9 @@ final class ConnectionWaiter {
     private int lastWaitingCountReported;
     private CompletableFuture<ConnectionRequestBuilder.Result> connection;
 
-    ConnectionWaiter(UUID playerId, Player player, RegisteredServer targetServer,
+    ConnectionWaiter(LifecycleEntry owner, UUID playerId, Player player, RegisteredServer targetServer,
             String serverName, long startNanos) {
+        this.owner = owner;
         this.playerId = playerId;
         this.player = player;
         this.targetServer = targetServer;
@@ -74,6 +76,7 @@ final class ConnectionWaiter {
 
     /** Ends this waiter's request. Only {@link WaiterConnector} does this; later calls have no effect. */
     void complete(ConnectionOutcome result) {
+        assert owner.isUnlockedByCaller() : "waiter completed under its entry lock";
         outcome.complete(result);
     }
 

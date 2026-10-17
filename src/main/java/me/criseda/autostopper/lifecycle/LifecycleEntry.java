@@ -20,8 +20,13 @@ import java.util.function.Supplier;
  * which enforces the legal transitions and bumps {@link #revision()} so that status readers can
  * detect concurrent change.
  *
+ * <p>Each operation is owned by one field: the startup by {@code startupFuture}, a manual stop by
+ * {@code manualStop}, and the Docker or readiness call in flight by {@code activeOperation}.
+ * Leaving STARTING or STOPPING clears the owners of that state, so an operation that lost the
+ * entry can never pass for the owner of a later one.
+ *
  * <p>Not thread-safe on its own: callers must hold this entry's monitor for every method except
- * {@link #mapping()}, which is immutable.
+ * {@link #mapping()}, which is immutable, and {@link #isUnlockedByCaller()}.
  */
 final class LifecycleEntry {
     private final ServerMapping mapping;
@@ -53,6 +58,14 @@ final class LifecycleEntry {
 
     ServerMapping mapping() {
         return mapping;
+    }
+
+    /**
+     * Whether the calling thread does not hold this entry's monitor. Every site that completes or
+     * cancels a lifecycle future asserts this; see {@link LifecycleRuntime}.
+     */
+    boolean isUnlockedByCaller() {
+        return !Thread.holdsLock(this);
     }
 
     boolean matches(ServerMapping other) {
@@ -383,6 +396,13 @@ final class LifecycleEntry {
                     + ": " + state + " -> " + next);
         }
         logger.debug("Server {} lifecycle transitioned from {} to {}", mapping.serverName(), state, next);
+        if (state == ServerLifecycleState.STARTING) {
+            startupFuture = null;
+            activeOperation = null;
+        } else if (state == ServerLifecycleState.STOPPING) {
+            manualStop = null;
+            activeOperation = null;
+        }
         state = next;
         touch();
     }

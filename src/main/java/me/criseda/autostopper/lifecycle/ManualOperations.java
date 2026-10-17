@@ -120,6 +120,8 @@ final class ManualOperations {
      *   <li>in {@link #completeRestart}, when the startup that follows ends. That startup is opened
      *       by {@link #runStopThenStart}, or here when the server was already stopped.</li>
      * </ol>
+     * {@link #completeRestart} is registered before the startup is launched, so a startup that
+     * fails while launching still completes the restart.
      */
     CompletableFuture<ManualRestartOutcome> requestRestart(ServerMapping mapping, RegisteredServer registeredServer) {
         long startNanos = runtime.now();
@@ -149,11 +151,13 @@ final class ManualOperations {
         }
 
         if (admission.startup() != null) {
+            completeRestart(admission.entry(), restart, admission.startup());
             pipeline.launch(admission.entry(), mapping, admission.startup());
-            completeRestart(restart, admission.startup());
             return restart;
         }
+        LifecycleEntry entry = admission.entry();
         admission.stop().whenComplete((stopOutcome, error) -> {
+            assert entry.isUnlockedByCaller();
             if (error != null) {
                 restart.completeExceptionally(error);
             } else if (stopOutcome != ManualStopOutcome.STOPPED) {
@@ -164,9 +168,10 @@ final class ManualOperations {
         return restart;
     }
 
-    private static void completeRestart(CompletableFuture<ManualRestartOutcome> restart,
+    private static void completeRestart(LifecycleEntry entry, CompletableFuture<ManualRestartOutcome> restart,
             CompletableFuture<StartupOutcome> startup) {
         startup.whenComplete((outcome, error) -> {
+            assert entry.isUnlockedByCaller();
             if (error != null) {
                 restart.complete(AutoStopperExecutor.classify(error, ManualRestartOutcome.OVERLOADED,
                         ManualRestartOutcome.CANCELLED, ManualRestartOutcome.START_FAILED));
@@ -220,6 +225,7 @@ final class ManualOperations {
             synchronized (entry) {
                 outcome = settleStop(entry, stop, result, "manual stop");
             }
+            assert entry.isUnlockedByCaller();
             stop.complete(outcome);
         });
     }
@@ -244,10 +250,11 @@ final class ManualOperations {
                     startup = entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0);
                 }
             }
+            assert entry.isUnlockedByCaller();
             stop.complete(outcome);
             if (startup != null) {
+                completeRestart(entry, restart, startup);
                 pipeline.launchStart(entry, mapping, startup);
-                completeRestart(restart, startup);
             }
         });
     }
@@ -281,6 +288,7 @@ final class ManualOperations {
             }
             withdrawStop(entry, stop);
         }
+        assert entry.isUnlockedByCaller();
         stop.complete(blocked);
         return false;
     }
@@ -342,13 +350,19 @@ final class ManualOperations {
         synchronized (entry) {
             withdrawStop(entry, stop);
         }
+        assert entry.isUnlockedByCaller();
         stop.complete(outcome);
     }
 
-    /** Returns the server to READY and releases it from {@code stop}. Caller holds the entry lock. */
+    /**
+     * Returns the server to READY, releasing it from {@code stop}, if {@code stop} still owns it.
+     * A stop that lost the entry leaves it alone, since its state now belongs to another operation.
+     * Caller holds the entry lock.
+     */
     private static void withdrawStop(LifecycleEntry entry, CompletableFuture<ManualStopOutcome> stop) {
-        entry.cancelStop();
-        entry.detachManualStop(stop);
+        if (entry.ownsManualStop(stop)) {
+            entry.cancelStop();
+        }
     }
 
     private static ManualStopOutcome stopFailure(Throwable error) {

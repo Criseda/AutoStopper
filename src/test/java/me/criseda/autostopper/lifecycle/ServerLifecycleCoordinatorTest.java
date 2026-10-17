@@ -12,6 +12,7 @@ import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.server.ServerManager;
 import me.criseda.autostopper.readiness.ReadinessResult;
 import me.criseda.autostopper.readiness.MinecraftStatusProbe;
+import me.criseda.autostopper.telemetry.LifecycleTelemetry;
 import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
 import me.criseda.autostopper.telemetry.TelemetryOrigin;
@@ -38,6 +39,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -1489,6 +1491,69 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
+    void manualRestart_StartLaunchThrowsAfterStop_EndsStartFailedAndFreesEntry() throws Exception {
+        coordinator = new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(),
+                new AutoStopperExecutor(), System::nanoTime, telemetryFailingOnce(TelemetryOperationType.CONTAINER_START));
+        readyServerWithoutPlayers();
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+        // No start future: recording that stage failure throws, so launching the start throws.
+        when(serverManager.startServerAsync(mapping)).thenReturn(null);
+
+        CompletableFuture<ManualRestartOutcome> restart = coordinator.requestManualRestart(mapping, targetServer);
+
+        assertEquals(ManualRestartOutcome.START_FAILED, restart.get(5, TimeUnit.SECONDS));
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+        assertEquals(ManualStartOutcome.READY, coordinator.requestManualStart(mapping).get(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void manualRestart_OfStoppedServer_LaunchThrows_EndsStartFailedAndFreesEntry() throws Exception {
+        coordinator = new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(),
+                new AutoStopperExecutor(), System::nanoTime, telemetryFailingOnce(TelemetryOperationType.STATUS_CHECK));
+        // No status future: recording that stage failure throws, so launching the startup throws.
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(null, CompletableFuture.completedFuture(Optional.of(ContainerStatus.RUNNING)));
+
+        CompletableFuture<ManualRestartOutcome> restart = coordinator.requestManualRestart(mapping, targetServer);
+
+        assertEquals(ManualRestartOutcome.START_FAILED, restart.get(5, TimeUnit.SECONDS));
+        verify(serverManager, never()).stopServer(any(ServerMapping.class));
+        assertEquals(Optional.of(ServerLifecycleState.FAILED), coordinator.state("survival"));
+        PlayerHarness player = player("after-failed-launch");
+        CompletableFuture<ConnectionOutcome> connection = coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        assertEquals(ConnectionOutcome.CONNECTED, connection.get(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void manualStop_ThatLostTheEntryToAnAutomaticStop_EndsCancelledAndLeavesItAlone() throws Exception {
+        try (AutoStopperExecutor executor = singleWorkerCoordinator()) {
+            readyServerWithoutPlayers();
+            CountDownLatch workerBlocked = new CountDownLatch(1);
+            CountDownLatch releaseWorker = new CountDownLatch(1);
+            executor.supply(() -> {
+                workerBlocked.countDown();
+                try {
+                    awaitLatch(releaseWorker);
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                }
+                return null;
+            });
+            awaitLatch(workerBlocked);
+
+            CompletableFuture<ManualStopOutcome> stop = coordinator.requestManualStop(mapping, targetServer);
+            coordinator.cancelStop(mapping);
+            assertTrue(coordinator.tryBeginStop(mapping), "an automatic stop takes the entry");
+            releaseWorker.countDown();
+
+            assertEquals(ManualStopOutcome.CANCELLED, stop.get(5, TimeUnit.SECONDS));
+            verify(serverManager, never()).stopServer(any(ServerMapping.class));
+            assertEquals(Optional.of(ServerLifecycleState.STOPPING), coordinator.state("survival"));
+        }
+    }
+
+    @Test
     void manualRestart_StartTimedOut() {
         when(serverManager.getServerStatusAsync(mapping))
                 .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
@@ -1645,6 +1710,19 @@ class ServerLifecycleCoordinatorTest {
         player.complete(ConnectionRequestBuilder.Status.SUCCESS);
 
         assertEquals(ConnectionOutcome.CONNECTED, future.join());
+    }
+
+    /** Telemetry that throws the first time it records {@code failingStage}, and records nothing. */
+    private static LifecycleTelemetry telemetryFailingOnce(TelemetryOperationType failingStage) {
+        LifecycleTelemetry telemetry = mock(LifecycleTelemetry.class);
+        AtomicBoolean failed = new AtomicBoolean();
+        doAnswer(invocation -> {
+            if (invocation.getArgument(0) == failingStage && failed.compareAndSet(false, true)) {
+                throw new IllegalStateException("telemetry failure");
+            }
+            return null;
+        }).when(telemetry).recordStage(any(), any(), any(), any());
+        return telemetry;
     }
 
     /** Brings the server to READY through one successful connection, with nobody left on it. */
