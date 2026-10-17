@@ -230,6 +230,7 @@
                 <version>3.6.0</version>
                 <configuration>
                     <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+                    <forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>
                 </configuration>
             </plugin>
             <plugin>
