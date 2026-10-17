@@ -4,8 +4,21 @@ All notable AutoStopper changes are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Failed `/autostopper start`, `stop`, and `restart` commands now state the cause in chat. In game,
+  hovering shows the remediation and the typed outcome code (matching `outcome=` in `velocity.log`),
+  clicking opens the matching troubleshooting section, and a suggested next command (the retry or
+  `/autostopper status`) follows the line. Console senders get the same cause, remediation, outcome,
+  and link as plain text. Player connection messages are unchanged (#124).
+- `/autostopper help` for operators, and `/autostopper status` when any server has failed, end with
+  `Troubleshooting · Get help` links. Documentation links are pinned to the running release (#124).
+- `docs/troubleshooting.md` documents every manual command failure outcome (#124).
+
 ### Changed
 
+- A cancelled manual stop now reports `Stopping server <name> was cancelled.` instead of the start
+  wording (#124).
 - Readiness checks no longer hold an AutoStopper worker for the whole readiness window. Each
   attempt runs as a short, individually bounded task, and the probe interval between attempts waits
   on a timer instead of a sleeping worker. Concurrent startups no longer delay other servers' status
