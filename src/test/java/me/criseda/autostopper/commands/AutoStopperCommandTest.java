@@ -5,10 +5,12 @@ import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.permission.Tristate;
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.plugin.PluginDescription;
+import com.velocitypowered.api.proxy.Player;
 import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigLoadResult;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
+import me.criseda.autostopper.lifecycle.ManualStartOutcome;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
@@ -118,7 +120,7 @@ public class AutoStopperCommandTest {
         command.execute(invocation);
 
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(10)).sendMessage(messageCaptor.capture());
+        verify(source, times(11)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(plainText(messages.get(0)).contains("AutoStopper Commands"));
@@ -131,6 +133,9 @@ public class AutoStopperCommandTest {
         assertTrue(plainText(messages.get(7)).contains("/autostopper restart <server>"));
         assertTrue(plainText(messages.get(8)).contains("/autostopper hold <server>"));
         assertTrue(plainText(messages.get(9)).contains("/autostopper release <server>"));
+        String footer = plainText(messages.get(10));
+        assertTrue(footer.contains("Troubleshooting: https://github.com/Criseda/AutoStopper/blob/1.1.2/docs/troubleshooting.md"));
+        assertTrue(footer.contains("Get help: https://github.com/Criseda/AutoStopper/issues/new/choose"));
     }
 
     @Test
@@ -221,7 +226,7 @@ public class AutoStopperCommandTest {
                 "s-docker", operational(OperationalState.DOCKER_UNAVAILABLE))));
 
         ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(8)).sendMessage(messageCaptor.capture());
+        verify(source, times(9)).sendMessage(messageCaptor.capture());
 
         List<Component> messages = messageCaptor.getAllValues();
         assertTrue(plainText(messages.get(1)).contains("Unavailable · Docker cannot be reached")); // s-docker (sorted first)
@@ -231,6 +236,7 @@ public class AutoStopperCommandTest {
         assertTrue(plainText(messages.get(5)).contains("Sleeping")); // s-stopped
         assertTrue(plainText(messages.get(6)).contains("Stopping")); // s-stopping
         assertTrue(plainText(messages.get(7)).contains("Running · readiness unverified")); // s-unverified
+        assertTrue(plainText(messages.get(8)).contains("Get help:"));
     }
 
     @Test
@@ -491,8 +497,9 @@ public class AutoStopperCommandTest {
         command.execute(mockInvocation(source, new String[]{"status"}));
 
         ArgumentCaptor<Component> messages = ArgumentCaptor.forClass(Component.class);
-        verify(source, times(2)).sendMessage(messages.capture());
+        verify(source, times(3)).sendMessage(messages.capture());
         String status = plainText(messages.getAllValues().get(1));
+        assertTrue(plainText(messages.getAllValues().get(2)).contains("Troubleshooting:"));
         assertTrue(status.contains("Unavailable · Docker cannot be reached"));
         assertTrue(status.contains("2026-08-12T12:00:00Z"));
         assertTrue(status.contains("Grant Docker socket access"));
@@ -801,12 +808,17 @@ public class AutoStopperCommandTest {
                     .thenReturn(CompletableFuture.completedFuture(outcome));
 
             command.execute(mockInvocation(source, new String[]{"start", "survival"}));
+            if (!outcome.name().equals("PROXY_SHUTDOWN")) {
+                assertOperatorFailure(outcome.name());
+            }
+            clearInvocations(source);
         }
 
         // Also test exceptional completion
         when(lifecycleCoordinator.requestManualStart(snapshot.server("survival").orElseThrow()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("boom")));
         command.execute(mockInvocation(source, new String[]{"start", "survival"}));
+        assertOperatorFailure("START_FAILED");
     }
 
     @Test
@@ -824,12 +836,17 @@ public class AutoStopperCommandTest {
                     .thenReturn(CompletableFuture.completedFuture(outcome));
 
             command.execute(mockInvocation(source, new String[]{"stop", "survival"}));
+            if (!outcome.name().equals("PROXY_SHUTDOWN")) {
+                assertOperatorFailure(outcome.name());
+            }
+            clearInvocations(source);
         }
 
         // Exceptional completion
         when(lifecycleCoordinator.requestManualStop(snapshot.server("survival").orElseThrow()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("boom")));
         command.execute(mockInvocation(source, new String[]{"stop", "survival"}));
+        assertOperatorFailure("STOP_FAILED");
     }
 
     @Test
@@ -846,12 +863,17 @@ public class AutoStopperCommandTest {
                     .thenReturn(CompletableFuture.completedFuture(outcome));
 
             command.execute(mockInvocation(source, new String[]{"restart", "survival"}));
+            if (!outcome.name().equals("PROXY_SHUTDOWN")) {
+                assertOperatorFailure(outcome.name());
+            }
+            clearInvocations(source);
         }
 
         // Exceptional completion
         when(lifecycleCoordinator.requestManualRestart(snapshot.server("survival").orElseThrow()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("boom")));
         command.execute(mockInvocation(source, new String[]{"restart", "survival"}));
+        assertOperatorFailure("START_FAILED");
     }
 
     @Test
@@ -863,6 +885,83 @@ public class AutoStopperCommandTest {
         assertEquals(List.of("survival"), command.suggest(mockInvocation(source, new String[]{"restart", "s"})));
         assertEquals(List.of("survival"), command.suggest(mockInvocation(source, new String[]{"hold", "s"})));
         assertEquals(List.of("survival"), command.suggest(mockInvocation(source, new String[]{"release", "s"})));
+    }
+
+    @Test
+    public void testExecuteStart_ConsoleFailureIncludesCauseRemediationAndLink() {
+        grant(AutoStopperCommand.START_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualStart(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(ManualStartOutcome.START_FAILED));
+
+        command.execute(mockInvocation(source, new String[]{"start", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(captor.capture());
+        String failure = plainText(captor.getAllValues().get(1));
+        assertTrue(failure.contains("Failed to start server survival. Docker could not start the container."));
+        assertTrue(failure.contains("Fix: Review the proxy log and Docker state, then retry."));
+        assertTrue(failure.contains("Next: /autostopper status"));
+        assertTrue(failure.contains("Outcome: START_FAILED"));
+        assertTrue(failure.contains(
+                "https://github.com/Criseda/AutoStopper/blob/1.1.2/docs/troubleshooting.md#start_failed"));
+    }
+
+    @Test
+    public void testExecuteStart_PlayerFailureUsesHoverAndClickAffordances() {
+        Player player = mock(Player.class);
+        when(player.getPermissionValue(anyString())).thenReturn(Tristate.UNDEFINED);
+        when(player.getPermissionValue(AutoStopperCommand.START_PERMISSION)).thenReturn(Tristate.TRUE);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(lifecycleCoordinator.requestManualStart(snapshot.server("survival").orElseThrow()))
+                .thenReturn(CompletableFuture.completedFuture(ManualStartOutcome.CANCELLED));
+
+        command.execute(mockInvocation(player, new String[]{"start", "survival"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(player, times(2)).sendMessage(captor.capture());
+        Component failure = captor.getAllValues().get(1);
+        String text = plainText(failure);
+        assertTrue(text.contains("Starting server survival was cancelled. Try again."));
+        assertTrue(text.contains("A reload, shutdown, or conflicting operation cancelled this one."));
+        assertFalse(text.contains("Outcome:"));
+        assertFalse(text.contains("https://"));
+
+        Component reason = failure.children().get(0);
+        assertEquals(net.kyori.adventure.text.event.ClickEvent.Action.OPEN_URL, reason.clickEvent().action());
+        assertTrue(reason.clickEvent().toString().contains("troubleshooting.md#cancelled"));
+        Component hover = (Component) reason.hoverEvent().value();
+        assertTrue(plainText(hover).contains("Outcome: CANCELLED"));
+        assertTrue(plainText(hover).contains("Click to open troubleshooting"));
+
+        Component next = failure.children().get(failure.children().size() - 1);
+        assertEquals("/autostopper start survival", plainText(next));
+        assertEquals(net.kyori.adventure.text.event.ClickEvent.Action.SUGGEST_COMMAND, next.clickEvent().action());
+    }
+
+    @Test
+    public void testExecuteStatusCommand_NoFooterWithoutFailures() {
+        grant(AutoStopperCommand.STATUS_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(operationalStatus.collectStatuses(snapshot)).thenReturn(CompletableFuture.completedFuture(
+                Map.of("survival", operational(OperationalState.READY))));
+
+        command.execute(mockInvocation(source, new String[]{"status"}));
+
+        verify(source, times(2)).sendMessage(any(Component.class));
+    }
+
+    private void assertOperatorFailure(String outcomeCode) {
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source, atLeastOnce()).sendMessage(captor.capture());
+        String failure = plainText(captor.getValue());
+        assertTrue(failure.contains("Outcome: " + outcomeCode), outcomeCode + " -> " + failure);
+        assertTrue(failure.contains("Fix: "), failure);
+        assertTrue(failure.contains("troubleshooting.md#" + outcomeCode.toLowerCase(java.util.Locale.ROOT)), failure);
+        clearInvocations(source);
     }
 
     private OperationalServerStatus operational(OperationalState state) {

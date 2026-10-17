@@ -91,3 +91,17 @@ Server status
 - **Player Messages:** Sanitized, clear, and actionable. Never expose Docker container names, container IDs, socket paths, daemon URLs, or stack traces.
 - **Operator Diagnostics:** `/autostopper status` and reload reports provide safe failure contexts and suggested remediation (e.g. *Start Docker daemon* or *Check backend listener*).
 - **Raw Infrastructure Logs:** Raw Docker stderr, process exit codes, and stack traces belong exclusively in server operator logs (`velocity.log`).
+
+---
+
+## 7. Operator Failure Detail, Hover, Click & Links
+
+Failed `/autostopper start`, `stop`, and `restart` commands keep the chat line short and put the detail one interaction away. The catalogue lives in [`OperatorFailureGuide.java`](../src/main/java/me/criseda/autostopper/messages/OperatorFailureGuide.java).
+
+- **Chat line:** the reason, then the cause in plain prose, then the elapsed wait where it applies. The cause is always visible, so meaning never depends on hover.
+- **Hover (players):** `Cause`, `Fix` (remediation), and `Outcome` (the typed code, identical to `outcome=` in `velocity.log`), ending with `Click to open troubleshooting`.
+- **Click (players):** clicking the reason opens the troubleshooting section for that outcome. A separate trailing command component suggests the next step: the same command for transient failures, `/autostopper status` for infrastructure failures, and nothing when no command helps.
+- **Links:** documentation links point at the release tag of the running plugin (for example `blob/2.1.1/docs/troubleshooting.md#start_failed`); development builds link `master`. Anchors are the lowercase outcome code, and a test fails if `docs/troubleshooting.md` lacks one.
+- **Footer:** `/autostopper help` (for sources with any operator command) and a status view containing failures end with `Troubleshooting · Get help`. "Get help" opens `issues/new/choose`.
+- **Console:** no hover or click. The cause stays on the first line, followed by `Fix:`, `Next:`, and `Outcome: … · Troubleshooting: <url>` lines, and the footer prints both URLs.
+- **Players never receive these links or outcome codes** (§6). Player connection messages are unchanged.

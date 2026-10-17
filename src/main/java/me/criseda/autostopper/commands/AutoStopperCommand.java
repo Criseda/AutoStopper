@@ -13,11 +13,17 @@ import me.criseda.autostopper.config.ConfigProvider;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.messages.AutoStopperMessages;
+import me.criseda.autostopper.lifecycle.ManualRestartOutcome;
+import me.criseda.autostopper.lifecycle.ManualStartOutcome;
+import me.criseda.autostopper.lifecycle.ManualStopOutcome;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
+import me.criseda.autostopper.messages.OperatorFailureGuide;
 import me.criseda.autostopper.operational.OperationalServerStatus;
+import me.criseda.autostopper.operational.OperationalState;
 import me.criseda.autostopper.operational.OperationalStatusService;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ActivityTrackerService;
+import net.kyori.adventure.text.Component;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -59,8 +65,7 @@ public class AutoStopperCommand implements SimpleCommand {
         boolean isPlayer = source instanceof Player;
 
         if (args.length == 0) {
-            String version = pluginContainer.getDescription().getVersion().orElse("Unknown");
-            source.sendMessage(AutoStopperMessages.pluginHeader(version));
+            source.sendMessage(AutoStopperMessages.pluginHeader(pluginVersion()));
             source.sendMessage(AutoStopperMessages.pluginTagline());
             source.sendMessage(AutoStopperMessages.helpHint(isPlayer));
             return;
@@ -217,6 +222,9 @@ public class AutoStopperCommand implements SimpleCommand {
             source.sendMessage(AutoStopperMessages.helpEntry(
                     "/autostopper release <server>", "Removes automatic shutdown suppression for a server", isPlayer));
         }
+        if (getPermittedSubcommands(source).size() > 1) {
+            source.sendMessage(AutoStopperMessages.operatorHelpFooter(pluginVersion(), isPlayer));
+        }
     }
 
     private void showStatus(CommandSource source) {
@@ -229,10 +237,22 @@ public class AutoStopperCommand implements SimpleCommand {
                 source.sendMessage(AutoStopperMessages.statusCollectionFailed());
                 return;
             }
+            boolean anyFailure = false;
             for (String serverName : serverNames) {
-                sendServerStatus(source, serverName, statuses.get(serverName));
+                OperationalServerStatus status = statuses.get(serverName);
+                sendServerStatus(source, serverName, status);
+                anyFailure |= hasFailure(status);
+            }
+            if (anyFailure) {
+                source.sendMessage(AutoStopperMessages.operatorHelpFooter(pluginVersion(), source instanceof Player));
             }
         });
+    }
+
+    private static boolean hasFailure(OperationalServerStatus status) {
+        return status != null && (status.lastFailure().isPresent()
+                || status.state() == OperationalState.FAILED
+                || status.state() == OperationalState.DOCKER_UNAVAILABLE);
     }
 
     private void sendServerStatus(CommandSource source, String serverName,
@@ -262,54 +282,52 @@ public class AutoStopperCommand implements SimpleCommand {
 
     private void startServer(CommandSource source, ServerMapping mapping) {
         String serverName = mapping.serverName();
+        String retryCommand = "/autostopper start " + serverName;
         source.sendMessage(AutoStopperMessages.manualStartStarting(serverName));
         long startNanos = System.nanoTime();
         lifecycleCoordinator.requestManualStart(mapping).whenComplete((outcome, error) -> {
             Duration elapsed = Duration.ofNanos(Math.max(0, System.nanoTime() - startNanos));
             if (error != null) {
-                source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.startError(serverName), elapsed));
+                sendFailure(source, AutoStopperMessages.startError(serverName),
+                        OperatorFailureGuide.START_FAILED, retryCommand, elapsed);
                 return;
             }
             switch (outcome) {
                 case ALREADY_READY -> source.sendMessage(AutoStopperMessages.manualStartAlreadyReady(serverName));
                 case READY -> source.sendMessage(AutoStopperMessages.manualStartSucceeded(serverName, elapsed));
-                case SERVER_STOPPING -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.serverStopping(serverName), elapsed));
-                case MAPPING_CHANGED -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.mappingChanged(serverName), elapsed));
-                case CONTAINER_MISSING -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.containerMissing(serverName), elapsed));
-                case DOCKER_INACCESSIBLE -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.dockerUnavailable("start", serverName), elapsed));
-                case STATUS_TIMED_OUT -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.statusCheckTimedOut(serverName), elapsed));
-                case STATUS_FAILED -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.statusCheckFailed(serverName), elapsed));
-                case START_TIMED_OUT -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.startTimedOut(serverName), elapsed));
-                case START_FAILED -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.startFailed(serverName), elapsed));
-                case SERVER_NOT_READY -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.serverNotReady(serverName), elapsed));
-                case OVERLOADED -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.overloaded(), elapsed));
-                case CANCELLED -> source.sendMessage(AutoStopperMessages.manualStartFailed(serverName,
-                        AutoStopperMessages.startCancelled(serverName), elapsed));
                 case PROXY_SHUTDOWN -> {}
+                default -> sendFailure(source, startFailureReason(serverName, outcome),
+                        OperatorFailureGuide.of(outcome), retryCommand, elapsed);
             }
         });
     }
 
+    private static Component startFailureReason(String serverName, ManualStartOutcome outcome) {
+        return switch (outcome) {
+            case SERVER_STOPPING -> AutoStopperMessages.serverStopping(serverName);
+            case MAPPING_CHANGED -> AutoStopperMessages.mappingChanged(serverName);
+            case CONTAINER_MISSING -> AutoStopperMessages.containerMissing(serverName);
+            case DOCKER_INACCESSIBLE -> AutoStopperMessages.dockerUnavailable("start", serverName);
+            case STATUS_TIMED_OUT -> AutoStopperMessages.statusCheckTimedOut(serverName);
+            case STATUS_FAILED -> AutoStopperMessages.statusCheckFailed(serverName);
+            case START_TIMED_OUT -> AutoStopperMessages.startTimedOut(serverName);
+            case SERVER_NOT_READY -> AutoStopperMessages.serverNotReady(serverName);
+            case OVERLOADED -> AutoStopperMessages.overloaded();
+            case CANCELLED -> AutoStopperMessages.startCancelled(serverName);
+            case START_FAILED, ALREADY_READY, READY, PROXY_SHUTDOWN -> AutoStopperMessages.startFailed(serverName);
+        };
+    }
+
     private void stopServer(CommandSource source, ServerMapping mapping) {
         String serverName = mapping.serverName();
+        String retryCommand = "/autostopper stop " + serverName;
         source.sendMessage(AutoStopperMessages.manualStopStopping(serverName));
         long startNanos = System.nanoTime();
         lifecycleCoordinator.requestManualStop(mapping).whenComplete((outcome, error) -> {
             Duration elapsed = Duration.ofNanos(Math.max(0, System.nanoTime() - startNanos));
             if (error != null) {
-                source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.stopFailed(serverName)));
+                sendFailure(source, AutoStopperMessages.stopFailed(serverName),
+                        OperatorFailureGuide.STOP_FAILED, retryCommand, null);
                 return;
             }
             switch (outcome) {
@@ -318,79 +336,79 @@ public class AutoStopperCommand implements SimpleCommand {
                     source.sendMessage(AutoStopperMessages.manualStopSucceeded(serverName, elapsed));
                 }
                 case ALREADY_STOPPED -> source.sendMessage(AutoStopperMessages.manualStopAlreadyStopped(serverName));
-                case PLAYERS_CONNECTED -> {
-                    int count = Math.max(1, lifecycleCoordinator.connectedPlayerCount(serverName));
-                    source.sendMessage(AutoStopperMessages.manualStopRefusedPlayers(serverName, count));
-                }
-                case WAITERS_PRESENT -> source.sendMessage(AutoStopperMessages.manualStopRefusedWaiters(serverName));
-                case SERVER_STARTING -> source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.serverAlreadyStarting()));
-                case SERVER_STOPPING -> source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.serverStopping(serverName)));
-                case MAPPING_CHANGED -> source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.mappingChanged(serverName)));
-                case CONTAINER_MISSING -> source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.containerMissing(serverName)));
-                case DOCKER_INACCESSIBLE -> source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.dockerUnavailable("stop", serverName)));
-                case STOP_TIMED_OUT -> source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.stopTimedOut(serverName)));
-                case STOP_FAILED -> source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.stopFailed(serverName)));
-                case OVERLOADED -> source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.overloaded()));
-                case CANCELLED -> source.sendMessage(AutoStopperMessages.manualStopFailed(serverName,
-                        AutoStopperMessages.startCancelled(serverName)));
                 case PROXY_SHUTDOWN -> {}
+                default -> sendFailure(source, stopFailureReason(serverName, outcome),
+                        OperatorFailureGuide.of(outcome), retryCommand, null);
             }
         });
     }
 
+    private Component stopFailureReason(String serverName, ManualStopOutcome outcome) {
+        return switch (outcome) {
+            case PLAYERS_CONNECTED -> AutoStopperMessages.manualStopRefusedPlayers(serverName,
+                    Math.max(1, lifecycleCoordinator.connectedPlayerCount(serverName)));
+            case WAITERS_PRESENT -> AutoStopperMessages.manualStopRefusedWaiters(serverName);
+            case SERVER_STARTING -> AutoStopperMessages.serverAlreadyStarting();
+            case SERVER_STOPPING -> AutoStopperMessages.serverStopping(serverName);
+            case MAPPING_CHANGED -> AutoStopperMessages.mappingChanged(serverName);
+            case CONTAINER_MISSING -> AutoStopperMessages.containerMissing(serverName);
+            case DOCKER_INACCESSIBLE -> AutoStopperMessages.dockerUnavailable("stop", serverName);
+            case STOP_TIMED_OUT -> AutoStopperMessages.stopTimedOut(serverName);
+            case OVERLOADED -> AutoStopperMessages.overloaded();
+            case CANCELLED -> AutoStopperMessages.stopCancelled(serverName);
+            case STOP_FAILED, STOPPED, ALREADY_STOPPED, PROXY_SHUTDOWN -> AutoStopperMessages.stopFailed(serverName);
+        };
+    }
+
     private void restartServer(CommandSource source, ServerMapping mapping) {
         String serverName = mapping.serverName();
+        String retryCommand = "/autostopper restart " + serverName;
         source.sendMessage(AutoStopperMessages.manualRestartRestarting(serverName));
         long startNanos = System.nanoTime();
         lifecycleCoordinator.requestManualRestart(mapping).whenComplete((outcome, error) -> {
             Duration elapsed = Duration.ofNanos(Math.max(0, System.nanoTime() - startNanos));
             if (error != null) {
-                source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.startError(serverName), elapsed));
+                sendFailure(source, AutoStopperMessages.startError(serverName),
+                        OperatorFailureGuide.START_FAILED, retryCommand, elapsed);
                 return;
             }
             switch (outcome) {
                 case RESTARTED_AND_READY -> source.sendMessage(AutoStopperMessages.manualRestartSucceeded(serverName, elapsed));
-                case PLAYERS_CONNECTED -> {
-                    int count = Math.max(1, lifecycleCoordinator.connectedPlayerCount(serverName));
-                    source.sendMessage(AutoStopperMessages.manualRestartRefusedPlayers(serverName, count));
-                }
-                case WAITERS_PRESENT -> source.sendMessage(AutoStopperMessages.manualRestartRefusedWaiters(serverName));
-                case SERVER_STARTING -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.serverAlreadyStarting(), elapsed));
-                case SERVER_STOPPING -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.serverStopping(serverName), elapsed));
-                case MAPPING_CHANGED -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.mappingChanged(serverName), elapsed));
-                case CONTAINER_MISSING -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.containerMissing(serverName), elapsed));
-                case DOCKER_INACCESSIBLE -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.dockerUnavailable("restart", serverName), elapsed));
-                case STOP_TIMED_OUT -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.stopTimedOut(serverName), elapsed));
-                case STOP_FAILED -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.stopFailed(serverName), elapsed));
-                case START_TIMED_OUT -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.startTimedOut(serverName), elapsed));
-                case START_FAILED -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.startFailed(serverName), elapsed));
-                case SERVER_NOT_READY -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.serverNotReady(serverName), elapsed));
-                case OVERLOADED -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.overloaded(), elapsed));
-                case CANCELLED -> source.sendMessage(AutoStopperMessages.manualRestartFailed(serverName,
-                        AutoStopperMessages.startCancelled(serverName), elapsed));
                 case PROXY_SHUTDOWN -> {}
+                default -> sendFailure(source, restartFailureReason(serverName, outcome),
+                        OperatorFailureGuide.of(outcome), retryCommand, elapsed);
             }
         });
+    }
+
+    private Component restartFailureReason(String serverName, ManualRestartOutcome outcome) {
+        return switch (outcome) {
+            case PLAYERS_CONNECTED -> AutoStopperMessages.manualRestartRefusedPlayers(serverName,
+                    Math.max(1, lifecycleCoordinator.connectedPlayerCount(serverName)));
+            case WAITERS_PRESENT -> AutoStopperMessages.manualRestartRefusedWaiters(serverName);
+            case SERVER_STARTING -> AutoStopperMessages.serverAlreadyStarting();
+            case SERVER_STOPPING -> AutoStopperMessages.serverStopping(serverName);
+            case MAPPING_CHANGED -> AutoStopperMessages.mappingChanged(serverName);
+            case CONTAINER_MISSING -> AutoStopperMessages.containerMissing(serverName);
+            case DOCKER_INACCESSIBLE -> AutoStopperMessages.dockerUnavailable("restart", serverName);
+            case STOP_TIMED_OUT -> AutoStopperMessages.stopTimedOut(serverName);
+            case STOP_FAILED -> AutoStopperMessages.stopFailed(serverName);
+            case START_TIMED_OUT -> AutoStopperMessages.startTimedOut(serverName);
+            case SERVER_NOT_READY -> AutoStopperMessages.serverNotReady(serverName);
+            case OVERLOADED -> AutoStopperMessages.overloaded();
+            case CANCELLED -> AutoStopperMessages.startCancelled(serverName);
+            case START_FAILED, RESTARTED_AND_READY, PROXY_SHUTDOWN -> AutoStopperMessages.startFailed(serverName);
+        };
+    }
+
+    private void sendFailure(CommandSource source, Component reason, OperatorFailureGuide guide,
+            String retryCommand, Duration elapsed) {
+        source.sendMessage(AutoStopperMessages.operatorFailure(reason, guide, retryCommand, elapsed,
+                pluginVersion(), source instanceof Player));
+    }
+
+    private String pluginVersion() {
+        return pluginContainer.getDescription().getVersion().orElse("Unknown");
     }
 
     private void holdServer(CommandSource source, ServerMapping mapping) {
