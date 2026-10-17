@@ -14,6 +14,9 @@ All notable AutoStopper changes are documented here.
 - `/autostopper help` for operators, and `/autostopper status` when any server has failed, end with
   `Troubleshooting · Get help` links. Documentation links are pinned to the running release (#124).
 - `docs/troubleshooting.md` documents every manual command failure outcome (#124).
+- `docs/troubleshooting.md` has an outcome reference covering every `outcome=` code in lifecycle
+  log lines, including player connection outcomes, `NO_MAPPING`, `PROXY_SHUTDOWN`, and success
+  codes (#123).
 
 ### Changed
 

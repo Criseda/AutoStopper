@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OperatorFailureGuideTest {
 
     private static final Pattern HEADING = Pattern.compile("(?m)^#{1,6}\\s+(.+?)\\s*$");
+    private static final Pattern OUTCOME_ROW = Pattern.compile("(?m)^\\|\\s*`([A-Z_]+)`\\s*\\|");
 
     @Test
     void everyManualFailureOutcomeHasAGuide() {
@@ -79,9 +80,24 @@ class OperatorFailureGuideTest {
         }
     }
 
+    @Test
+    void everyTelemetryOutcomeIsDocumented() throws IOException {
+        Set<String> anchors = troubleshootingAnchors();
+        Set<String> rows = OUTCOME_ROW.matcher(troubleshootingMarkdown()).results()
+                .map(result -> result.group(1))
+                .collect(Collectors.toSet());
+        for (TelemetryOutcome outcome : TelemetryOutcome.values()) {
+            assertTrue(anchors.contains(outcome.name().toLowerCase(Locale.ROOT)) || rows.contains(outcome.name()),
+                    "docs/troubleshooting.md has no section or table row for " + outcome);
+        }
+    }
+
+    private static String troubleshootingMarkdown() throws IOException {
+        return Files.readString(Path.of(OperatorLinks.TROUBLESHOOTING_PATH), StandardCharsets.UTF_8);
+    }
+
     private static Set<String> troubleshootingAnchors() throws IOException {
-        String markdown = Files.readString(Path.of(OperatorLinks.TROUBLESHOOTING_PATH), StandardCharsets.UTF_8);
-        Matcher matcher = HEADING.matcher(markdown);
+        Matcher matcher = HEADING.matcher(troubleshootingMarkdown());
         return matcher.results()
                 .map(result -> githubSlug(result.group(1)))
                 .collect(Collectors.toSet());

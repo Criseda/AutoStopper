@@ -203,7 +203,7 @@ AutoStopper lifecycle completed: op=STARTUP server=survival origin=PLAYER_CONNEC
 | `op` | The completed operation type. | `STARTUP`, `MANUAL_START`, `MANUAL_STOP`, `AUTOMATIC_STOP`, `MANUAL_RESTART`, `CONNECTION_WAIT` |
 | `server` | The Velocity server name. | `survival`, `creative`, `lobby` |
 | `origin` | The initiator or source of the operation. | `PLAYER_CONNECTION`, `MANUAL_COMMAND`, `ACTIVITY_TRACKER`, `STATUS_POLL`, `INTERNAL` |
-| `outcome` | Typed terminal outcome classification. | `READY`, `STOPPED`, `CONNECTED`, `CONTAINER_MISSING`, `DOCKER_INACCESSIBLE`, `START_TIMED_OUT`, `STOP_TIMED_OUT`, `STATUS_TIMED_OUT`, `SERVER_NOT_READY`, `OVERLOADED`, `CANCELLED`, `PROXY_SHUTDOWN`, etc. |
+| `outcome` | Typed terminal outcome classification. | For example `READY`, `CONNECTED`, or `START_TIMED_OUT`. Every code is described in the [outcome reference](troubleshooting.md#outcome-reference). |
 | `elapsed_ms` | Monotonic elapsed execution duration in milliseconds. | Integer duration measured via high-precision monotonic clock (`System.nanoTime`). |
 | `waiters` | Number of affected or waiting players. | Peak waiter count during startup, remaining waiters for individual connection waits, or `0` for manual/inactivity operations. |
 
