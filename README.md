@@ -165,7 +165,8 @@ the backend containers in advance, and acceptance of the security boundary above
    check before connecting. `! Unavailable · Docker cannot be reached` or `! Failed` includes an
    operator-safe detail; raw Docker stderr remains only in the proxy log. Run
    `/autostopper status <server>` (or click a server name in game) for one server's startup stage,
-   hold, waiting players, activity, and the last failure with its remediation.
+   hold, waiting players, activity, the last failure with its remediation, and its last 10
+   lifecycle operations.
 
 Managed containers must already exist and use `restart: "no"` so Docker does not immediately undo
 an inactivity stop. Unmonitored hubs or lobbies are not intercepted or stopped by AutoStopper and
@@ -205,7 +206,7 @@ for the complete contract.
 |---|---|---|
 | `/autostopper`, `/as` | None | Shows the version, tagline, and Docs, GitHub, Modrinth, and Changelog links. |
 | `/autostopper help` | None | Lists the commands the source may use, grouped by purpose, with click-to-suggest and a permission hover for players. |
-| `/autostopper status [server]` | `autostopper.command.status` or `autostopper.admin` | Without a server, shows one row per mapped backend; players click a row for its detail. With a server, shows its state and startup stage, hold, waiting players, activity, and last failure with cause and fix. |
+| `/autostopper status [server]` | `autostopper.command.status` or `autostopper.admin` | Without a server, shows one row per mapped backend; players click a row for its detail. With a server, shows its state and startup stage, hold, waiting players, activity, last failure with cause and fix, and recent lifecycle operations. |
 | `/autostopper reload` | `autostopper.command.reload` or `autostopper.admin` | Atomically validates, applies, and preflights the new configuration. |
 | `/autostopper start <server>` | `autostopper.command.start` or `autostopper.admin` | Starts the mapped backend container and awaits verified readiness. |
 | `/autostopper stop <server>` | `autostopper.command.stop` or `autostopper.admin` | Stops the mapped backend container; refused if players or waiters are present. |

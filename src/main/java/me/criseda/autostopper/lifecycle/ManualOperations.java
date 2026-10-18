@@ -59,7 +59,8 @@ final class ManualOperations {
                         return new StartAdmission(null, entry.startupFuture().get(), null);
                     }
                     return new StartAdmission(entry, entry.beginStartup(
-                            ConnectionLifecycleStage.INSPECTING, runtime.now(), 0), null);
+                            ConnectionLifecycleStage.INSPECTING, runtime.now(), 0,
+                            TelemetryOrigin.MANUAL_COMMAND), null);
                 });
 
         CompletableFuture<ManualStartOutcome> result;
@@ -136,7 +137,8 @@ final class ManualOperations {
                     if (entry.is(ServerLifecycleState.STOPPED)) {
                         // Nothing to stop: go straight to the shared startup.
                         return new RestartAdmission(entry, null, entry.beginStartup(
-                                ConnectionLifecycleStage.INSPECTING, runtime.now(), 0), null);
+                                ConnectionLifecycleStage.INSPECTING, runtime.now(), 0,
+                                TelemetryOrigin.MANUAL_COMMAND), null);
                     }
                     return new RestartAdmission(entry, beginStop(entry), null, null);
                 });
@@ -247,7 +249,8 @@ final class ManualOperations {
             synchronized (entry) {
                 outcome = settleStop(entry, stop, result, "container stop during restart");
                 if (outcome == ManualStopOutcome.STOPPED) {
-                    startup = entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0);
+                    startup = entry.beginStartup(ConnectionLifecycleStage.STARTING, runtime.now(), 0,
+                            TelemetryOrigin.MANUAL_COMMAND);
                 }
             }
             assert entry.isUnlockedByCaller();

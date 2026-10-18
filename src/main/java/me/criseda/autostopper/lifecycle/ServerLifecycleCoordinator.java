@@ -13,15 +13,18 @@ import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
 import me.criseda.autostopper.telemetry.TelemetryOrigin;
 import me.criseda.autostopper.telemetry.TelemetryOutcome;
+import me.criseda.autostopper.telemetry.TelemetryRecord;
 import me.criseda.autostopper.telemetry.TelemetrySnapshot;
 import org.slf4j.Logger;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.LongSupplier;
@@ -290,6 +293,13 @@ public final class ServerLifecycleCoordinator {
             return;
         }
         holdRegistry.reconcileConfig(previous, current);
+        Set<String> serverNames = new HashSet<>(previous.serverNames());
+        serverNames.addAll(current.serverNames());
+        for (String serverName : serverNames) {
+            if (!previous.server(serverName).equals(current.server(serverName))) {
+                telemetry.forgetServer(serverName);
+            }
+        }
         for (String serverName : previous.serverNames()) {
             Optional<ServerMapping> currentMapping = current.server(serverName);
             runtime.update(serverName, entry -> {
@@ -317,6 +327,11 @@ public final class ServerLifecycleCoordinator {
         Objects.requireNonNull(mapping, "mapping");
         return runtime.read(mapping.serverName(), Optional.empty(),
                 entry -> entry.isRetired() || !entry.matches(mapping) ? Optional.empty() : Optional.of(entry.state()));
+    }
+
+    /** The server's recent completed lifecycle operations, newest first; see {@link LifecycleTelemetry}. */
+    public List<TelemetryRecord> recentOperations(String serverName) {
+        return telemetry.recentOperations(serverName);
     }
 
     public LifecycleStatusSnapshot statusSnapshot(ServerMapping mapping) {

@@ -5,6 +5,10 @@ import me.criseda.autostopper.messages.OperatorFailureGuide;
 import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
+import me.criseda.autostopper.telemetry.TelemetryOperationType;
+import me.criseda.autostopper.telemetry.TelemetryOrigin;
+import me.criseda.autostopper.telemetry.TelemetryOutcome;
+import me.criseda.autostopper.telemetry.TelemetryRecord;
 import net.kyori.adventure.text.Component;
 
 import java.lang.reflect.InvocationTargetException;
@@ -68,6 +72,11 @@ public final class MessageCompatibilityProbe {
         }
         if (type == Long.class || type == long.class) {
             return 1L;
+        }
+        if (type == List.class) {
+            return List.of(new TelemetryRecord(TelemetryOperationType.MANUAL_RESTART, "compatibility-probe",
+                    TelemetryOrigin.MANUAL_COMMAND, TelemetryOutcome.RESTARTED_AND_READY,
+                    Duration.ofSeconds(12), 0, Instant.EPOCH));
         }
         if (type == Instant.class) {
             return Instant.EPOCH.plusSeconds(60);

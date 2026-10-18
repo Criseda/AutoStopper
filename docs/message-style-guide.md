@@ -79,11 +79,15 @@ Server status · survival
   Last failure: 3m ago during server startup
   Cause: Docker operation failed
   Fix: Review proxy logs and Docker state, then retry.
+  Recent operations:
+    3m ago · Startup for a player · START_FAILED · 2m
+    1h 12m ago · Automatic stop after inactivity · STOPPED · 4.2s
 ```
 
 - **State** carries the startup stage while the server is waking: `checking the container`, `starting the container`, or `waiting for readiness`.
 - **Last failure** shows `none` when there is none. Players hover the age for the exact UTC timestamp; the console prints it inline (`3m ago (2026-10-06T21:11:45Z) during server startup`), so nothing depends on hover.
 - **Cause** and **Fix** are the safe detail and remediation; raw Docker stderr stays in `velocity.log` (§6).
+- **Recent operations** lists up to 10 completed startups, manual starts, stops, and restarts, and automatic stops, newest first: age, operation, who started it (`for a player`, `by command`, `after inactivity`, `by a status check`, `by the proxy`), the typed outcome exactly as `outcome=` in the `AutoStopper lifecycle completed:` log line, and the duration. Players hover the age for the exact time; the console prints it inline. Per-player connection waits are not listed. With no entries the line reads `Recent operations: none since the proxy started`.
 - A view containing a failure ends with the `Troubleshooting · Get help` footer (§7). An unmapped name gets the standard `Server <name> is not mapped in AutoStopper.` error.
 
 ### State Mapping Table

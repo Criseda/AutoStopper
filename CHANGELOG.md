@@ -22,6 +22,11 @@ All notable AutoStopper changes are documented here.
   fix. The console prints the exact failure time; players hover the age for it. It inspects only
   that server's container and tab-completes mapped server names. In game, clicking a server name in
   `/autostopper status` opens its detail view (#125).
+- `/autostopper status <server>` lists the server's last 10 completed lifecycle operations, newest
+  first: startups, manual starts, stops, and restarts, and automatic stops, each with its age, who
+  started it, its typed outcome (matching `outcome=` in `velocity.log`), and its duration. The
+  history is in memory only; a proxy restart clears it, and a reload clears it for servers whose
+  mapping was removed, added, or changed (#129).
 
 ### Changed
 
@@ -51,6 +56,9 @@ All notable AutoStopper changes are documented here.
 
 ### Fixed
 
+- A startup opened by `/autostopper start` or `/autostopper restart` now logs
+  `origin=MANUAL_COMMAND` in its `op=STARTUP` lifecycle line instead of `origin=PLAYER_CONNECTION`
+  (#129).
 - A startup whose next step throws unexpectedly now fails with the stage's error outcome, so the
   server becomes `FAILED` instead of staying in `STARTING` until the proxy restarts. A manual
   restart in that case reports `START_FAILED` instead of never completing (#118).

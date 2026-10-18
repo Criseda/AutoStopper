@@ -154,6 +154,12 @@ not eagerly readiness-probe every running backend.
 When a runtime hold is active on a server, `/autostopper status` displays a `held` badge (e.g.
 `● survival   Ready · held; active 2m ago`).
 
+`/autostopper status <server>` also lists the server's last 10 completed lifecycle operations
+(startups, manual starts, stops, and restarts, and automatic stops) with their initiator, outcome,
+and duration. Like runtime holds, this history is kept in memory only: a proxy restart clears it,
+and a reload clears it for every server whose mapping was removed, added, or changed. Servers whose
+mapping is unchanged keep their history across a reload.
+
 Raw Docker stderr is deliberately restricted to operator logs and is never copied into player
 messages.
 

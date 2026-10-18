@@ -4,6 +4,10 @@ import me.criseda.autostopper.lifecycle.ConnectionLifecycleStage;
 import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
+import me.criseda.autostopper.telemetry.TelemetryOperationType;
+import me.criseda.autostopper.telemetry.TelemetryOrigin;
+import me.criseda.autostopper.telemetry.TelemetryOutcome;
+import me.criseda.autostopper.telemetry.TelemetryRecord;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.event.ClickEvent;
@@ -223,6 +227,44 @@ class AutoStopperMessagesTest {
                 Optional.empty(), false, Optional.of(ConnectionLifecycleStage.CONNECTING));
 
         assertTrue(status.stage().isEmpty());
+    }
+
+    @Test
+    void statusDetailHistoryForPlayersHoversTheExactTime() {
+        Instant completed = Instant.parse("2026-08-15T12:00:00Z");
+        List<Component> lines = AutoStopperMessages.statusDetailHistory(List.of(new TelemetryRecord(
+                        TelemetryOperationType.MANUAL_RESTART, "survival", TelemetryOrigin.MANUAL_COMMAND,
+                        TelemetryOutcome.RESTARTED_AND_READY, Duration.ofMillis(12_400), 0, completed)),
+                completed.plusSeconds(150), true);
+
+        assertEquals(2, lines.size());
+        assertEquals("  Recent operations:", plainText(lines.get(0)));
+        assertEquals("    2m ago · Manual restart by command · RESTARTED_AND_READY · 12.4s", plainText(lines.get(1)));
+        TextComponent age = findText(lines.get(1), "2m ago");
+        assertNotNull(age);
+        assertEquals("2026-08-15T12:00:00Z", plainText((Component) age.hoverEvent().value()));
+        assertColor(lines.get(1), "RESTARTED_AND_READY", MessageTokens.ACTION);
+    }
+
+    @Test
+    void statusDetailHistoryCoversEveryOrigin() {
+        Instant at = Instant.EPOCH;
+        List<String> lines = AutoStopperMessages.statusDetailHistory(List.of(
+                new TelemetryRecord(TelemetryOperationType.STARTUP, "s", TelemetryOrigin.STATUS_POLL,
+                        TelemetryOutcome.READY, Duration.ZERO, 0, at),
+                new TelemetryRecord(TelemetryOperationType.STARTUP, "s", TelemetryOrigin.INTERNAL,
+                        TelemetryOutcome.PROXY_SHUTDOWN, Duration.ofMillis(800), 0, at)), at, false)
+                .stream().map(AutoStopperMessagesTest::plainText).toList();
+
+        assertEquals("    just now (1970-01-01T00:00:00Z) · Startup by a status check · READY · 0 ms", lines.get(1));
+        assertEquals("    just now (1970-01-01T00:00:00Z) · Startup by the proxy · PROXY_SHUTDOWN · 800 ms", lines.get(2));
+    }
+
+    @Test
+    void statusDetailHistoryWithoutOperations() {
+        assertEquals(List.of("  Recent operations: none since the proxy started"),
+                AutoStopperMessages.statusDetailHistory(List.of(), Instant.EPOCH, false).stream()
+                        .map(AutoStopperMessagesTest::plainText).toList());
     }
 
     private static String stateLine(ConnectionLifecycleStage stage) {
