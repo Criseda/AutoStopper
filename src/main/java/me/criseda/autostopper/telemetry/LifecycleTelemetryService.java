@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,6 +26,7 @@ public final class LifecycleTelemetryService implements LifecycleTelemetry {
             new ConcurrentHashMap<>();
     private final Map<TelemetryOperationType, DurationAggregate> durationAggregates =
             new ConcurrentHashMap<>();
+    private final OperationHistory history = new OperationHistory();
 
     public LifecycleTelemetryService(Logger logger) {
         this(logger, System::nanoTime, Clock.systemUTC());
@@ -75,6 +77,7 @@ public final class LifecycleTelemetryService implements LifecycleTelemetry {
         }
         try {
             updateAggregates(record.operation(), record.outcome(), record.elapsed().toNanos());
+            history.record(record);
             logCompletion(record);
         } catch (Throwable error) {
             safeLogObservationalError("recordOperation", error);
@@ -194,8 +197,19 @@ public final class LifecycleTelemetryService implements LifecycleTelemetry {
         return aggregate == null ? new DurationAggregate() : aggregate.snapshot();
     }
 
+    @Override
+    public List<TelemetryRecord> recentOperations(String serverName) {
+        return history.recent(serverName);
+    }
+
+    @Override
+    public void forgetServer(String serverName) {
+        history.forget(serverName);
+    }
+
     public void clear() {
         outcomeCounters.clear();
         durationAggregates.clear();
+        history.clear();
     }
 }

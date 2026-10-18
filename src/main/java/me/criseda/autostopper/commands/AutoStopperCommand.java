@@ -27,6 +27,7 @@ import net.kyori.adventure.text.Component;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -186,8 +187,14 @@ public class AutoStopperCommand implements SimpleCommand {
                 source.sendMessage(AutoStopperMessages.statusDetailCollectionFailed(serverName));
                 return;
             }
+            Instant now = clock.instant();
+            boolean isPlayer = source instanceof Player;
             for (Component line : AutoStopperMessages.statusDetail(status, minutesSinceActivity(serverName),
-                    clock.instant(), source instanceof Player)) {
+                    now, isPlayer)) {
+                source.sendMessage(line);
+            }
+            for (Component line : AutoStopperMessages.statusDetailHistory(
+                    lifecycleCoordinator.recentOperations(serverName), now, isPlayer)) {
                 source.sendMessage(line);
             }
             if (hasFailure(status)) {

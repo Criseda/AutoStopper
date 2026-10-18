@@ -3,6 +3,7 @@ package me.criseda.autostopper.lifecycle;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.operational.OperationalFailure;
+import me.criseda.autostopper.telemetry.TelemetryOrigin;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -44,6 +45,7 @@ final class LifecycleEntry {
     private boolean retired;
     private long revision;
     private long startupStartNanos;
+    private TelemetryOrigin startupOrigin = TelemetryOrigin.PLAYER_CONNECTION;
     private int peakWaiterCount;
     private boolean startupTelemetryRecorded;
 
@@ -168,12 +170,22 @@ final class LifecycleEntry {
 
     // --- Startup ---
 
-    /** Moves to STARTING and opens a new startup operation owned by the returned future. */
+    /** Opens a startup on behalf of a connecting player. */
     CompletableFuture<StartupOutcome> beginStartup(ConnectionLifecycleStage stage, long startNanos,
             int initialWaiterCount) {
+        return beginStartup(stage, startNanos, initialWaiterCount, TelemetryOrigin.PLAYER_CONNECTION);
+    }
+
+    /**
+     * Moves to STARTING and opens a new startup operation owned by the returned future. {@code origin}
+     * is whoever opened it, and is what the startup's telemetry reports.
+     */
+    CompletableFuture<StartupOutcome> beginStartup(ConnectionLifecycleStage stage, long startNanos,
+            int initialWaiterCount, TelemetryOrigin origin) {
         transition(ServerLifecycleState.STARTING);
         progressStage = stage;
         startupStartNanos = startNanos;
+        startupOrigin = origin;
         peakWaiterCount = initialWaiterCount;
         startupTelemetryRecorded = false;
         CompletableFuture<StartupOutcome> operation = new CompletableFuture<>();
@@ -192,6 +204,10 @@ final class LifecycleEntry {
 
     long startupStartNanos() {
         return startupStartNanos;
+    }
+
+    TelemetryOrigin startupOrigin() {
+        return startupOrigin;
     }
 
     int startupWaiterCount() {

@@ -8,7 +8,6 @@ import me.criseda.autostopper.readiness.ReadinessResult;
 import me.criseda.autostopper.server.ServerManager;
 import me.criseda.autostopper.telemetry.LifecycleTelemetry;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
-import me.criseda.autostopper.telemetry.TelemetryOrigin;
 import me.criseda.autostopper.telemetry.TelemetryOutcome;
 import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
@@ -220,7 +219,7 @@ final class StartupPipeline {
             if (entry.claimStartupTelemetry()) {
                 TelemetryOutcome teleOutcome = outcome.isReady() ? TelemetryOutcome.READY : outcome.toTelemetryOutcome();
                 telemetry.recordOperation(TelemetryOperationType.STARTUP, mapping.serverName(),
-                        TelemetryOrigin.PLAYER_CONNECTION, teleOutcome,
+                        entry.startupOrigin(), teleOutcome,
                         runtime.elapsedSince(entry.startupStartNanos()), entry.startupWaiterCount());
             }
             waiters = entry.finishStartup(outcome, outcome.isReady() ? null : new OperationalFailure(Instant.now(),

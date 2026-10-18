@@ -18,6 +18,10 @@ import me.criseda.autostopper.operational.OperationalStatusService;
 import me.criseda.autostopper.operational.PreflightSummary;
 import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.server.ActivityTracker;
+import me.criseda.autostopper.telemetry.TelemetryOperationType;
+import me.criseda.autostopper.telemetry.TelemetryOrigin;
+import me.criseda.autostopper.telemetry.TelemetryOutcome;
+import me.criseda.autostopper.telemetry.TelemetryRecord;
 import me.criseda.autostopper.testing.ComponentTestUtils;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
@@ -687,9 +691,36 @@ public class AutoStopperCommandTest {
         assertEquals("  Last failure: 3m ago (2026-08-12T12:02:00Z) during server startup", lines.get(5));
         assertEquals("  Cause: Docker operation failed", lines.get(6));
         assertEquals("  Fix: Review proxy logs and Docker state, then retry.", lines.get(7));
-        assertTrue(lines.get(8).contains("Troubleshooting:"));
-        assertEquals(9, lines.size());
+        assertEquals("  Recent operations: none since the proxy started", lines.get(8));
+        assertTrue(lines.get(9).contains("Troubleshooting:"));
+        assertEquals(10, lines.size());
         verify(operationalStatus, never()).collectStatuses(any());
+    }
+
+    @Test
+    public void testExecuteServerStatus_ListsRecentOperationsNewestFirst() {
+        grant(AutoStopperCommand.STATUS_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(operationalStatus.collectStatus(snapshot, "survival")).thenReturn(CompletableFuture.completedFuture(
+                operational(OperationalState.STOPPED)));
+        when(lifecycleCoordinator.recentOperations("survival")).thenReturn(List.of(
+                new TelemetryRecord(TelemetryOperationType.AUTOMATIC_STOP, "survival", TelemetryOrigin.ACTIVITY_TRACKER,
+                        TelemetryOutcome.STOPPED, java.time.Duration.ofMillis(4200), 0, NOW.minusSeconds(60)),
+                new TelemetryRecord(TelemetryOperationType.STARTUP, "survival", TelemetryOrigin.PLAYER_CONNECTION,
+                        TelemetryOutcome.READY, java.time.Duration.ofSeconds(31), 2, NOW.minusSeconds(3 * 3600))));
+
+        command.execute(mockInvocation(source, new String[]{"status", "survival"}));
+
+        ArgumentCaptor<Component> messages = ArgumentCaptor.forClass(Component.class);
+        verify(source, atLeastOnce()).sendMessage(messages.capture());
+        List<String> lines = messages.getAllValues().stream().map(ComponentTestUtils::plainText).toList();
+        assertEquals(List.of(
+                "  Recent operations:",
+                "    1m ago (2026-08-12T12:04:00Z) · Automatic stop after inactivity · STOPPED · 4.2s",
+                "    3h ago (2026-08-12T09:05:00Z) · Startup for a player · READY · 31s"),
+                lines.subList(6, 9));
+        assertEquals(9, lines.size(), "no footer without a failure");
     }
 
     @Test

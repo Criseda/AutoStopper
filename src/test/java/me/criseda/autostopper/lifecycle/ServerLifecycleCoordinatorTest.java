@@ -17,6 +17,7 @@ import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
 import me.criseda.autostopper.telemetry.TelemetryOrigin;
 import me.criseda.autostopper.telemetry.TelemetryOutcome;
+import me.criseda.autostopper.telemetry.TelemetryRecord;
 import me.criseda.autostopper.telemetry.TelemetrySnapshot;
 import net.kyori.adventure.text.Component;
 import org.junit.jupiter.api.BeforeEach;
@@ -1665,6 +1666,61 @@ class ServerLifecycleCoordinatorTest {
         assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.STOPPED));
         assertEquals(1, snapshot.operationCount(TelemetryOperationType.MANUAL_RESTART));
         assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.RESTARTED_AND_READY));
+    }
+
+    @Test
+    void manualOperations_AppearInRecentOperationsWithTheirInitiator() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+
+        assertEquals(ManualStartOutcome.READY, coordinator.requestManualStart(mapping).join());
+
+        List<TelemetryRecord> recent = coordinator.recentOperations("survival");
+        assertEquals(List.of(TelemetryOperationType.MANUAL_START, TelemetryOperationType.STARTUP),
+                recent.stream().map(TelemetryRecord::operation).toList());
+        assertEquals(List.of(TelemetryOrigin.MANUAL_COMMAND, TelemetryOrigin.MANUAL_COMMAND),
+                recent.stream().map(TelemetryRecord::origin).toList(),
+                "a startup opened by a command reports the command as its origin");
+    }
+
+    @Test
+    void playerStartup_ReportsPlayerConnectionOrigin() {
+        when(serverManager.getServerStatusAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
+        when(serverManager.startServerAsync(mapping))
+                .thenReturn(CompletableFuture.completedFuture(ContainerStatus.RUNNING));
+        PlayerHarness player = player("p1");
+
+        CompletableFuture<ConnectionOutcome> outcome = coordinator.requestConnection(player.player, targetServer, mapping);
+        player.complete(ConnectionRequestBuilder.Status.SUCCESS);
+        assertEquals(ConnectionOutcome.CONNECTED, outcome.join());
+
+        List<TelemetryRecord> recent = coordinator.recentOperations("survival");
+        assertEquals(1, recent.size(), "connection waits stay out of the history");
+        assertEquals(TelemetryOperationType.STARTUP, recent.get(0).operation());
+        assertEquals(TelemetryOrigin.PLAYER_CONNECTION, recent.get(0).origin());
+    }
+
+    @Test
+    void reconcileConfig_ForgetsHistoryForRemovedAndChangedMappingsOnly() {
+        LifecycleTelemetry telemetry = mock(LifecycleTelemetry.class);
+        coordinator = new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(),
+                new AutoStopperExecutor(), System::nanoTime, telemetry);
+        ServerMapping unchanged = new ServerMapping("lobby", "lobby-container");
+        ServerMapping removed = new ServerMapping("events", "events-container");
+        ServerMapping changed = new ServerMapping("survival", "survival-container");
+        ServerMapping replacement = new ServerMapping("survival", "survival-v2");
+        ServerMapping added = new ServerMapping("creative", "creative-container");
+
+        coordinator.reconcileConfig(new ConfigSnapshot(300, List.of(unchanged, removed, changed)),
+                new ConfigSnapshot(300, List.of(unchanged, replacement, added)));
+
+        verify(telemetry).forgetServer("events");
+        verify(telemetry).forgetServer("survival");
+        verify(telemetry).forgetServer("creative");
+        verify(telemetry, never()).forgetServer("lobby");
     }
 
     @Test

@@ -4,6 +4,9 @@ import me.criseda.autostopper.lifecycle.ConnectionLifecycleStage;
 import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
+import me.criseda.autostopper.telemetry.TelemetryOperationType;
+import me.criseda.autostopper.telemetry.TelemetryOrigin;
+import me.criseda.autostopper.telemetry.TelemetryRecord;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.ComponentLike;
 import net.kyori.adventure.text.TextComponent;
@@ -346,6 +349,70 @@ public final class AutoStopperMessages {
         lines.add(detailLine("Cause", Component.text(failure.detail(), MessageTokens.TEXT_PRIMARY)));
         lines.add(detailLine("Fix", Component.text(failure.remediation(), MessageTokens.TEXT_PRIMARY)));
         return List.copyOf(lines);
+    }
+
+    /**
+     * The {@code Recent operations} section of {@code /autostopper status <server>}: one line per completed
+     * operation, newest first, with its age, kind, initiator, typed outcome (as in {@code outcome=} log
+     * lines), and duration. Players hover the age for the exact time; the console gets it inline.
+     */
+    public static List<Component> statusDetailHistory(List<TelemetryRecord> operations, Instant now,
+            boolean isPlayer) {
+        Objects.requireNonNull(operations, "operations");
+        Objects.requireNonNull(now, "now");
+        if (operations.isEmpty()) {
+            return List.of(detailLine("Recent operations",
+                    Component.text("none since the proxy started", MessageTokens.TEXT_PRIMARY)));
+        }
+        List<Component> lines = new ArrayList<>();
+        lines.add(finish(Component.text("  Recent operations:", MessageTokens.TEXT_MUTED)));
+        for (TelemetryRecord operation : operations) {
+            String age = formatAgo(Duration.between(operation.completedAt(), now));
+            TextComponent.Builder line = Component.text()
+                    .append(Component.text("    ", MessageTokens.TEXT_MUTED));
+            if (isPlayer) {
+                line.append(finish(Component.text()
+                        .content(age)
+                        .color(MessageTokens.TEXT_MUTED)
+                        .hoverEvent(HoverEvent.showText(Component.text(operation.completedAt().toString(),
+                                MessageTokens.TEXT_PRIMARY)))));
+            } else {
+                line.append(Component.text(age + " (" + operation.completedAt() + ")", MessageTokens.TEXT_MUTED));
+            }
+            line.append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED))
+                    .append(Component.text(operationLabel(operation.operation()) + " "
+                            + originLabel(operation.origin()), MessageTokens.TEXT_PRIMARY))
+                    .append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED))
+                    .append(Component.text(operation.outcome().name(), MessageTokens.ACTION))
+                    .append(Component.text(" " + MessageTokens.SEPARATOR + " "
+                            + formatElapsed(operation.elapsed()), MessageTokens.TEXT_MUTED));
+            lines.add(finish(line));
+        }
+        return List.copyOf(lines);
+    }
+
+    private static String operationLabel(TelemetryOperationType operation) {
+        return switch (operation) {
+            case STARTUP -> "Startup";
+            case MANUAL_START -> "Manual start";
+            case MANUAL_STOP -> "Manual stop";
+            case MANUAL_RESTART -> "Manual restart";
+            case AUTOMATIC_STOP -> "Automatic stop";
+            case CONNECTION_WAIT -> "Connection";
+            case STATUS_CHECK -> "Status check";
+            case CONTAINER_START -> "Container start";
+            case READINESS_CHECK -> "Readiness check";
+        };
+    }
+
+    private static String originLabel(TelemetryOrigin origin) {
+        return switch (origin) {
+            case PLAYER_CONNECTION -> "for a player";
+            case MANUAL_COMMAND -> "by command";
+            case ACTIVITY_TRACKER -> "after inactivity";
+            case STATUS_POLL -> "by a status check";
+            case INTERNAL -> "by the proxy";
+        };
     }
 
     private static Component detailLine(String label, Component value) {

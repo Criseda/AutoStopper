@@ -1,6 +1,7 @@
 package me.criseda.autostopper.telemetry;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
  * Service contract for recording authoritative lifecycle operation and intermediate stage telemetry.
@@ -55,7 +56,22 @@ public interface LifecycleTelemetry {
     TelemetrySnapshot snapshot();
 
     /**
-     * Resets all in-memory telemetry aggregates.
+     * Returns the server's recent completed startups, manual operations, and automatic stops, newest
+     * first. The list is an immutable snapshot.
+     */
+    default List<TelemetryRecord> recentOperations(String serverName) {
+        return List.of();
+    }
+
+    /**
+     * Drops the recent-operation history of one server, for example when its mapping is removed or
+     * changed by a reload.
+     */
+    default void forgetServer(String serverName) {
+    }
+
+    /**
+     * Resets all in-memory telemetry aggregates and recent-operation history.
      */
     void clear();
 }

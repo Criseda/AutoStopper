@@ -26,6 +26,37 @@ import static org.mockito.Mockito.*;
 class LifecycleTelemetryServiceTest {
 
     @Test
+    @DisplayName("feeds server-level completions into the per-server history and clears it with the aggregates")
+    void feedsAndClearsRecentOperations() {
+        LifecycleTelemetryService service = new LifecycleTelemetryService(mock(Logger.class), () -> 0L,
+                Clock.fixed(Instant.ofEpochSecond(42), ZoneId.of("UTC")));
+
+        service.recordOperation(TelemetryOperationType.MANUAL_STOP, "survival", TelemetryOrigin.MANUAL_COMMAND,
+                TelemetryOutcome.STOPPED, Duration.ofSeconds(4), 0);
+        service.recordOperation(TelemetryOperationType.CONNECTION_WAIT, "survival", TelemetryOrigin.PLAYER_CONNECTION,
+                TelemetryOutcome.CONNECTED, Duration.ofSeconds(1), 1);
+        service.recordStage(TelemetryOperationType.STATUS_CHECK, "survival", TelemetryOutcome.STOPPED,
+                Duration.ofMillis(20));
+
+        List<TelemetryRecord> recent = service.recentOperations("survival");
+        assertEquals(1, recent.size());
+        assertEquals(TelemetryOperationType.MANUAL_STOP, recent.get(0).operation());
+        assertEquals(TelemetryOrigin.MANUAL_COMMAND, recent.get(0).origin());
+        assertEquals(TelemetryOutcome.STOPPED, recent.get(0).outcome());
+        assertEquals(Duration.ofSeconds(4), recent.get(0).elapsed());
+        assertEquals(Instant.ofEpochSecond(42), recent.get(0).completedAt());
+
+        service.forgetServer("survival");
+        assertTrue(service.recentOperations("survival").isEmpty());
+
+        service.recordOperation(TelemetryOperationType.STARTUP, "survival", TelemetryOrigin.PLAYER_CONNECTION,
+                TelemetryOutcome.READY, Duration.ofSeconds(9), 1);
+        service.clear();
+        assertTrue(service.recentOperations("survival").isEmpty());
+        assertEquals(0, service.operationCount(TelemetryOperationType.STARTUP));
+    }
+
+    @Test
     @DisplayName("records authoritative operation, updates count and duration aggregates")
     void recordsAuthoritativeOperation() {
         Logger logger = mock(Logger.class);
