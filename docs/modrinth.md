@@ -36,9 +36,9 @@ playing on.
 
 1. Pick a complete, pinned example and copy it:
    [Java 21 / Velocity 3.5.1](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-legacy),
-   [Java 25 / Velocity 4.0](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-stable)
+   [Java 25 / Velocity 4.2](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-stable)
    (recommended), or
-   [Java 25 / Velocity 4.1 preview](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-preview).
+   [Java 25 / Velocity 4.2.1 preview](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-preview).
 2. Put the downloaded, unchanged JAR in `velocity_server/plugins/AutoStopper.jar`.
 3. Start the stack once, then edit `velocity_server/plugins/autostopper/config.yml`.
 4. Map each Velocity server name to its existing Docker container:
@@ -87,14 +87,16 @@ Every value is configurable and validated as one atomic snapshot. See the
 
 ## Tested support
 
-One Java 21 JAR is tested on three complete runtime lines. Keep the proxy image and Velocity build
+One Java 21 JAR is tested on five complete runtime lines. Keep the proxy image and Velocity build
 from one row together.
 
 | Line | Proxy image | Java | Velocity |
 |---|---|---|---|
 | Legacy (minimum) | `itzg/mc-proxy:2026.8.0-java21` | 21 | 3.5.1 build 615 |
-| Stable (production) | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.0.0 build 6 |
-| Preview (snapshot) | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.1.0-SNAPSHOT build 16 |
+| Stable 4.0 (production) | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.0.0 build 6 |
+| Stable 4.1 (production) | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.1.0 build 22 |
+| Stable 4.2 (recommended) | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.2.0 build 30 |
+| Preview (snapshot) | `itzg/mc-proxy:2026.8.0-java25` | 25 | 4.2.1-SNAPSHOT build 41 |
 
 Velocity 4 needs Java 25. The preview line tracks a PaperMC snapshot and is not a production
 baseline. The full release candidate runs against a real Purpur 1.21.4 backend with actual protocol

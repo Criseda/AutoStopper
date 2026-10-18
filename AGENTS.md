@@ -12,7 +12,7 @@ Production code is under `src/main/java/me/criseda/autostopper` in responsibilit
 
 - `.\mvnw.cmd verify` (Windows) or `./mvnw verify` (POSIX) is the canonical local verification entry point.
 - `.\mvnw.cmd package` creates the shaded plugin JAR under `target/`.
-- `.\smoke\run-smoke.ps1` tests all pinned Velocity profiles; use `-Profile legacy`, `stable`, or `preview` to select one.
+- `.\smoke\run-smoke.ps1` tests all pinned Velocity profiles; use `-Profile legacy`, `stable-4.0`, `stable-4.1`, `stable`, or `preview` to select one.
 
 Use JDK 21+.
 

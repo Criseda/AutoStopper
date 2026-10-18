@@ -1,7 +1,7 @@
-# Stable example: Java 25 and Velocity 4.0.0
+# Stable example: Java 25 and Velocity 4.2.0
 
 This pinned example is the recommended production line. It uses
-`itzg/mc-proxy:2026.8.0-java25`, Velocity 4.0.0 build 6, and Java 25. Velocity 4.x requires at
+`itzg/mc-proxy:2026.8.0-java25`, Velocity 4.2.0 build 30, and Java 25. Velocity 4.x requires at
 least Java 25; do not run this build on Java 21.
 
 > **DANGER — HOST-ROOT-EQUIVALENT ACCESS:** `docker-compose.yml` mounts

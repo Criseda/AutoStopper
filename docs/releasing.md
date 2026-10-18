@@ -3,7 +3,7 @@
 AutoStopper publishes one release artifact through the protected
 [`Validated release`](../.github/workflows/release.yml) workflow. The workflow rebuilds the tagged
 commit once, runs deterministic CI, dependency review, and the live Docker/Minecraft gate on the
-pinned stable Velocity 4.0.0 line against that JAR, then sends the preserved byte sequence to
+pinned stable Velocity 4.2.0 line against that JAR, then sends the preserved byte sequence to
 GitHub Releases and Modrinth. A release is not complete until both public downloads have been
 re-read and verified against the candidate.
 

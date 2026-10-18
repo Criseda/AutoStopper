@@ -1,6 +1,6 @@
-# AutoStopper example - preview support line (Java 25 + Velocity 4.1 snapshot)
-# Matches the support matrix defined in issues #3 and #61. Velocity 4.1 is a
-# PaperMC snapshot; prefer the stable 4.0.0 example for production. The
+# AutoStopper example - preview support line (Java 25 + Velocity 4.2.1 snapshot)
+# Matches the support matrix defined in issues #3 and #61. Velocity 4.2.1 is a
+# PaperMC snapshot; prefer the stable 4.2.0 example for production. The
 # mc-proxy image Java version and the pinned Velocity build must be upgraded
 # together.
 services:
@@ -10,8 +10,8 @@ services:
     environment:
       TYPE: "VELOCITY"
       ONLINE_MODE: "true"
-      VELOCITY_VERSION: "4.1.0-SNAPSHOT"
-      VELOCITY_BUILD_ID: "16"
+      VELOCITY_VERSION: "4.2.1-SNAPSHOT"
+      VELOCITY_BUILD_ID: "41"
       REPLACE_ENV_VARIABLES: "true"
     ports:
       - "25565:25577"

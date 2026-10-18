@@ -1,7 +1,7 @@
-# Preview example: Java 25 and Velocity 4.1
+# Preview example: Java 25 and Velocity 4.2.1 snapshot
 
-This pinned example validates the next stable 4.x line ahead of release. It uses
-`itzg/mc-proxy:2026.8.0-java25`, Velocity 4.1.0-SNAPSHOT build 16, and Java 25. Velocity 4.1 is a
+This pinned example validates the next 4.x patch release ahead of its release. It uses
+`itzg/mc-proxy:2026.8.0-java25`, Velocity 4.2.1-SNAPSHOT build 41, and Java 25. Velocity 4.2.1 is a
 PaperMC snapshot; it is not a production baseline. Velocity 4.x requires at least Java 25; do not
 run this build on Java 21. For production, prefer the [stable example](../velocity-stable/).
 
