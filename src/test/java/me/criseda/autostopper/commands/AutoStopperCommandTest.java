@@ -29,7 +29,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Map;
@@ -41,6 +43,7 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class AutoStopperCommandTest {
+    private static final Instant NOW = Instant.parse("2026-08-12T12:05:00Z");
 
     @Mock
     private AutoStopperConfig config;
@@ -81,7 +84,7 @@ public class AutoStopperCommandTest {
 
         command = new AutoStopperCommand(
                 config, activityTracker, lifecycleCoordinator,
-                operationalStatus, pluginContainer);
+                operationalStatus, pluginContainer, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -157,7 +160,7 @@ public class AutoStopperCommandTest {
         assertEquals(List.of(
                 "AutoStopper Commands",
                 "General",
-                "  /autostopper status · Show the status of every mapped server",
+                "  /autostopper status [server] · Show every mapped server, or one server in detail",
                 "  /autostopper reload · Reload and validate the configuration",
                 "Lifecycle",
                 "  /autostopper start <server> · Start a mapped server and wait until it is ready",
@@ -596,7 +599,7 @@ public class AutoStopperCommandTest {
     }
 
     @Test
-    public void testExecuteStatusCommand_IncludesSafeLastFailureAndRemediation() {
+    public void testExecuteStatusCommand_IncludesSafeLastFailureAge() {
         grant(AutoStopperCommand.STATUS_PERMISSION);
         ConfigSnapshot snapshot = snapshot("survival");
         when(config.snapshot()).thenReturn(snapshot);
@@ -615,9 +618,132 @@ public class AutoStopperCommandTest {
         String status = plainText(messages.getAllValues().get(1));
         assertTrue(plainText(messages.getAllValues().get(2)).contains("Troubleshooting:"));
         assertTrue(status.contains("Unavailable · Docker cannot be reached"));
-        assertTrue(status.contains("2026-08-12T12:00:00Z"));
-        assertTrue(status.contains("Grant Docker socket access"));
+        assertTrue(status.contains("last failure 5m ago during startup preflight: permission denied accessing Docker"),
+                status);
+        assertFalse(status.contains("2026-08-12T12:00:00Z"), "the overview shows relative time only");
+        assertFalse(status.contains("Grant Docker socket access"), "the remediation moves to the detail view");
         assertFalse(status.contains("/var/run/docker.sock"));
+    }
+
+    @Test
+    public void testExecuteStatusCommand_PlayerRowsOpenTheDetailView() {
+        Player player = mock(Player.class);
+        when(player.getPermissionValue(AutoStopperCommand.STATUS_PERMISSION)).thenReturn(Tristate.TRUE);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(operationalStatus.collectStatuses(snapshot)).thenReturn(CompletableFuture.completedFuture(
+                Map.of("survival", operational(OperationalState.STOPPED))));
+
+        command.execute(mockInvocation(player, new String[]{"status"}));
+
+        ArgumentCaptor<Component> messages = ArgumentCaptor.forClass(Component.class);
+        verify(player, times(2)).sendMessage(messages.capture());
+        TextComponent name = findText(messages.getAllValues().get(1), "survival");
+        assertNotNull(name);
+        assertEquals(ClickEvent.runCommand("/autostopper status survival"), name.clickEvent());
+        assertNotNull(name.hoverEvent());
+    }
+
+    @Test
+    public void testExecuteStatusCommand_ConsoleRowsHaveNoClickEvent() {
+        grant(AutoStopperCommand.STATUS_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(operationalStatus.collectStatuses(snapshot)).thenReturn(CompletableFuture.completedFuture(
+                Map.of("survival", operational(OperationalState.STOPPED))));
+
+        command.execute(mockInvocation(source, new String[]{"status"}));
+
+        ArgumentCaptor<Component> messages = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(messages.capture());
+        TextComponent name = findText(messages.getAllValues().get(1), "survival");
+        assertNotNull(name);
+        assertNull(name.clickEvent());
+    }
+
+    @Test
+    public void testExecuteServerStatus_ConsoleShowsEveryDetailWithExactFailureTime() {
+        grant(AutoStopperCommand.STATUS_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(activityTracker.getLastActivity("survival")).thenReturn(NOW.minusSeconds(420));
+        when(activityTracker.getMinutesSinceActivity("survival")).thenReturn(7L);
+        OperationalFailure failure = new OperationalFailure(
+                Instant.parse("2026-08-12T12:02:00Z"), "server startup",
+                "Docker operation failed", "Review proxy logs and Docker state, then retry.");
+        when(operationalStatus.collectStatus(snapshot, "survival")).thenReturn(CompletableFuture.completedFuture(
+                new OperationalServerStatus(OperationalState.FAILED, 0, Optional.of(failure), true)));
+
+        command.execute(mockInvocation(source, new String[]{"status", "survival"}));
+
+        ArgumentCaptor<Component> messages = ArgumentCaptor.forClass(Component.class);
+        verify(source, atLeastOnce()).sendMessage(messages.capture());
+        List<String> lines = messages.getAllValues().stream().map(ComponentTestUtils::plainText).toList();
+        assertEquals("Server status · survival", lines.get(0));
+        assertEquals("  State: ! Failed", lines.get(1));
+        assertEquals("  Hold: held, automatic stop paused", lines.get(2));
+        assertEquals("  Waiting: no players", lines.get(3));
+        assertEquals("  Activity: active 7m ago", lines.get(4));
+        assertEquals("  Last failure: 3m ago (2026-08-12T12:02:00Z) during server startup", lines.get(5));
+        assertEquals("  Cause: Docker operation failed", lines.get(6));
+        assertEquals("  Fix: Review proxy logs and Docker state, then retry.", lines.get(7));
+        assertTrue(lines.get(8).contains("Troubleshooting:"));
+        assertEquals(9, lines.size());
+        verify(operationalStatus, never()).collectStatuses(any());
+    }
+
+    @Test
+    public void testExecuteServerStatus_UnmappedServerDoesNotCollect() {
+        grant(AutoStopperCommand.STATUS_PERMISSION);
+        when(config.snapshot()).thenReturn(snapshot("survival"));
+
+        command.execute(mockInvocation(source, new String[]{"status", "lobby"}));
+
+        ArgumentCaptor<Component> captor = ArgumentCaptor.forClass(Component.class);
+        verify(source).sendMessage(captor.capture());
+        assertEquals("AutoStopper ! Server lobby is not mapped in AutoStopper.", plainText(captor.getValue()));
+        verifyNoInteractions(operationalStatus);
+    }
+
+    @Test
+    public void testExecuteServerStatus_CollectionFailure() {
+        grant(AutoStopperCommand.STATUS_PERMISSION);
+        ConfigSnapshot snapshot = snapshot("survival");
+        when(config.snapshot()).thenReturn(snapshot);
+        when(operationalStatus.collectStatus(snapshot, "survival")).thenReturn(
+                CompletableFuture.failedFuture(new IllegalStateException("configuration changed")));
+
+        command.execute(mockInvocation(source, new String[]{"status", "survival"}));
+
+        ArgumentCaptor<Component> messages = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(2)).sendMessage(messages.capture());
+        assertEquals("AutoStopper ! Could not collect the status of server survival.",
+                plainText(messages.getAllValues().get(1)));
+        assertFalse(plainText(messages.getAllValues().get(1)).contains("configuration changed"));
+    }
+
+    @Test
+    public void testExecuteServerStatus_PermissionDeniedDoesNotCollect() {
+        deny(AutoStopperCommand.STATUS_PERMISSION);
+
+        command.execute(mockInvocation(source, new String[]{"status", "survival"}));
+
+        assertPermissionDenied("view AutoStopper status");
+        verifyNoInteractions(operationalStatus);
+    }
+
+    @Test
+    public void testSuggest_ServerNamesForStatus() {
+        grant(AutoStopperCommand.STATUS_PERMISSION);
+        when(config.snapshot()).thenReturn(snapshot("survival", "creative"));
+
+        assertEquals(List.of("creative", "survival"),
+                command.suggest(mockInvocation(source, new String[]{"status", ""})));
+    }
+
+    @Test
+    public void testSuggest_NoServerNamesForStatusWithoutPermission() {
+        assertTrue(command.suggest(mockInvocation(source, new String[]{"status", ""})).isEmpty());
     }
 
     @Test

@@ -185,7 +185,7 @@ Every value is configurable, validated as one atomic snapshot, and documented in
 |---|---|
 | `/autostopper` or `/as` | Public plugin information |
 | `/autostopper help` | Public, permission-filtered help |
-| `/autostopper status` | `autostopper.command.status` or `autostopper.admin` |
+| `/autostopper status [server]` | `autostopper.command.status` or `autostopper.admin` |
 | `/autostopper reload` | `autostopper.command.reload` or `autostopper.admin` |
 
 AutoStopper does not register or replace Velocity's `/server` command and exposes no manual start or

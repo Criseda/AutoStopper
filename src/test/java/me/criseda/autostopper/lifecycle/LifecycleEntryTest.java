@@ -322,6 +322,19 @@ class LifecycleEntryTest {
     }
 
     @Test
+    void snapshotCarriesTheStartupStageOnlyWhileStarting() {
+        entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 0, 0);
+        assertEquals(Optional.of(ConnectionLifecycleStage.INSPECTING), entry.snapshot().stage());
+
+        entry.advanceStartup(ConnectionLifecycleStage.WAITING_FOR_READINESS);
+        assertEquals(Optional.of(ConnectionLifecycleStage.WAITING_FOR_READINESS), entry.snapshot().stage());
+
+        entry.finishStartup(StartupOutcome.READY_RUNNING, null);
+        assertEquals(ConnectionLifecycleStage.CONNECTING, entry.progressStage());
+        assertTrue(entry.snapshot().stage().isEmpty(), "READY carries no startup stage");
+    }
+
+    @Test
     void drainForShutdownDetachesEverythingInFlight() {
         CompletableFuture<StartupOutcome> startup = entry.beginStartup(ConnectionLifecycleStage.INSPECTING, 42, 1);
         CompletableFuture<Void> operation = new CompletableFuture<>();

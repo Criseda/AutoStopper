@@ -8,21 +8,34 @@ import java.util.Optional;
  * permission checks, and fuzzy matching all read from here, so a description is written once.
  */
 enum AutoStopperSubcommand {
-    HELP("help", null, null, false, "Show this command list", null),
-    STATUS("status", AutoStopperCommand.STATUS_PERMISSION, Group.GENERAL, false,
-            "Show the status of every mapped server", "view AutoStopper status"),
-    RELOAD("reload", AutoStopperCommand.RELOAD_PERMISSION, Group.GENERAL, false,
+    HELP("help", null, null, Argument.NONE, "Show this command list", null),
+    STATUS("status", AutoStopperCommand.STATUS_PERMISSION, Group.GENERAL, Argument.OPTIONAL,
+            "Show every mapped server, or one server in detail", "view AutoStopper status"),
+    RELOAD("reload", AutoStopperCommand.RELOAD_PERMISSION, Group.GENERAL, Argument.NONE,
             "Reload and validate the configuration", "reload AutoStopper configuration"),
-    START("start", AutoStopperCommand.START_PERMISSION, Group.LIFECYCLE, true,
+    START("start", AutoStopperCommand.START_PERMISSION, Group.LIFECYCLE, Argument.REQUIRED,
             "Start a mapped server and wait until it is ready", "start a server"),
-    STOP("stop", AutoStopperCommand.STOP_PERMISSION, Group.LIFECYCLE, true,
+    STOP("stop", AutoStopperCommand.STOP_PERMISSION, Group.LIFECYCLE, Argument.REQUIRED,
             "Stop a mapped server that has no players", "stop a server"),
-    RESTART("restart", AutoStopperCommand.RESTART_PERMISSION, Group.LIFECYCLE, true,
+    RESTART("restart", AutoStopperCommand.RESTART_PERMISSION, Group.LIFECYCLE, Argument.REQUIRED,
             "Restart a mapped server that has no players", "restart a server"),
-    HOLD("hold", AutoStopperCommand.HOLD_PERMISSION, Group.HOLDS, true,
+    HOLD("hold", AutoStopperCommand.HOLD_PERMISSION, Group.HOLDS, Argument.REQUIRED,
             "Keep a server from stopping automatically", "hold a server"),
-    RELEASE("release", AutoStopperCommand.RELEASE_PERMISSION, Group.HOLDS, true,
+    RELEASE("release", AutoStopperCommand.RELEASE_PERMISSION, Group.HOLDS, Argument.REQUIRED,
             "Let a held server stop automatically again", "release a server hold");
+
+    /** Whether a subcommand takes a mapped server name as its second argument. */
+    enum Argument {
+        NONE(""),
+        REQUIRED(" <server>"),
+        OPTIONAL(" [server]");
+
+        private final String usageSuffix;
+
+        Argument(String usageSuffix) {
+            this.usageSuffix = usageSuffix;
+        }
+    }
 
     /** Help menu sections, in display order. */
     enum Group {
@@ -44,16 +57,16 @@ enum AutoStopperSubcommand {
     private final String label;
     private final String permission;
     private final Group group;
-    private final boolean takesServer;
+    private final Argument argument;
     private final String description;
     private final String deniedAction;
 
-    AutoStopperSubcommand(String label, String permission, Group group, boolean takesServer,
+    AutoStopperSubcommand(String label, String permission, Group group, Argument argument,
             String description, String deniedAction) {
         this.label = label;
         this.permission = permission;
         this.group = group;
-        this.takesServer = takesServer;
+        this.argument = argument;
         this.description = description;
         this.deniedAction = deniedAction;
     }
@@ -86,12 +99,17 @@ enum AutoStopperSubcommand {
         return group;
     }
 
-    boolean takesServer() {
-        return takesServer;
+    Argument argument() {
+        return argument;
+    }
+
+    /** Whether a server name may follow, so tab completion offers mapped servers. */
+    boolean acceptsServer() {
+        return argument != Argument.NONE;
     }
 
     String usage() {
-        return "/autostopper " + label + (takesServer ? " <server>" : "");
+        return "/autostopper " + label + argument.usageSuffix;
     }
 
     String description() {

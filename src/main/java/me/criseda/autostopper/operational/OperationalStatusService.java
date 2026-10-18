@@ -59,7 +59,7 @@ public final class OperationalStatusService {
         }
         reconcileConfig(snapshot);
         ConfigurationView expectedConfiguration = configuration;
-        Map<String, LifecycleStatusSnapshot> lifecycleAtStart = captureLifecycle(snapshot);
+        Map<String, LifecycleStatusSnapshot> lifecycleAtStart = captureLifecycle(snapshot.servers());
         long generation = preflightGeneration.incrementAndGet();
         CompletableFuture<Map<String, ContainerInspection>> future;
         try {
@@ -76,7 +76,7 @@ public final class OperationalStatusService {
             if (preflightGeneration.get() != generation) {
                 return summarize(snapshot, inspections);
             }
-            applyObservations(snapshot, inspections, context,
+            applyObservations(snapshot, snapshot.servers(), inspections, context,
                     expectedConfiguration, lifecycleAtStart);
             PreflightSummary summary = summarize(snapshot, inspections);
             logSummary(context, snapshot, inspections, summary);
@@ -101,7 +101,7 @@ public final class OperationalStatusService {
             return CompletableFuture.failedFuture(
                     new IllegalStateException("configuration changed before status collection"));
         }
-        Map<String, LifecycleStatusSnapshot> lifecycleAtStart = captureLifecycle(snapshot);
+        Map<String, LifecycleStatusSnapshot> lifecycleAtStart = captureLifecycle(snapshot.servers());
         CompletableFuture<Map<String, ContainerInspection>> inspectionsFuture;
         try {
             inspectionsFuture = Objects.requireNonNull(serverManager.inspectContainersAsync(snapshot),
@@ -115,7 +115,7 @@ public final class OperationalStatusService {
                 throw new IllegalStateException("configuration changed during status collection");
             }
             Map<String, LifecycleStatusSnapshot> acceptedObservations =
-                    applyObservations(snapshot, inspections, "status check",
+                    applyObservations(snapshot, snapshot.servers(), inspections, "status check",
                             expectedConfiguration, lifecycleAtStart);
             Map<String, OperationalServerStatus> result = new LinkedHashMap<>();
             for (ServerMapping mapping : snapshot.servers()) {
@@ -124,6 +124,51 @@ public final class OperationalStatusService {
                         acceptedObservations.get(mapping.serverName())));
             }
             return result;
+        });
+    }
+
+    /**
+     * Collects the status of one mapped server, inspecting only its container. The future fails when
+     * {@code serverName} is not mapped in {@code snapshot} or the configuration changes meanwhile.
+     */
+    public CompletableFuture<OperationalServerStatus> collectStatus(ConfigSnapshot snapshot, String serverName) {
+        if (shutdown.get()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("operational status service is shut down"));
+        }
+        Optional<ServerMapping> found = snapshot.server(serverName);
+        if (found.isEmpty()) {
+            return CompletableFuture.failedFuture(
+                    new IllegalArgumentException("server is not mapped: " + serverName));
+        }
+        ServerMapping mapping = found.get();
+        ConfigurationView expectedConfiguration = configuration;
+        if (!expectedConfiguration.matches(snapshot)) {
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("configuration changed before status collection"));
+        }
+        List<ServerMapping> mappings = List.of(mapping);
+        Map<String, LifecycleStatusSnapshot> lifecycleAtStart = captureLifecycle(mappings);
+        CompletableFuture<ContainerInspection> inspectionFuture;
+        try {
+            inspectionFuture = Objects.requireNonNull(serverManager.inspectContainerAsync(mapping),
+                    "inspectContainerAsync returned null");
+            track(inspectionFuture);
+        } catch (RuntimeException error) {
+            return CompletableFuture.failedFuture(error);
+        }
+        return inspectionFuture.thenApply(inspection -> {
+            if (configuration != expectedConfiguration) {
+                throw new IllegalStateException("configuration changed during status collection");
+            }
+            Map<String, ContainerInspection> inspections = new LinkedHashMap<>();
+            if (inspection != null) {
+                inspections.put(serverName, inspection);
+            }
+            Map<String, LifecycleStatusSnapshot> acceptedObservations =
+                    applyObservations(snapshot, mappings, inspections, "status check",
+                            expectedConfiguration, lifecycleAtStart);
+            return compose(mapping, inspection, acceptedObservations.get(serverName));
         });
     }
 
@@ -173,7 +218,8 @@ public final class OperationalStatusService {
                     "Retry the status command to collect a current observation."));
         }
         boolean held = lifecycleCoordinator.isHeld(serverName);
-        return new OperationalServerStatus(state, lifecycle.waitingPlayers(), latest, held);
+        return new OperationalServerStatus(state, lifecycle.waitingPlayers(), latest, held,
+                state == OperationalState.STARTING ? lifecycle.stage() : Optional.empty());
     }
 
     private OperationalState determineState(Optional<ServerLifecycleState> lifecycle,
@@ -214,7 +260,7 @@ public final class OperationalStatusService {
     }
 
     private Map<String, LifecycleStatusSnapshot> applyObservations(ConfigSnapshot snapshot,
-            Map<String, ContainerInspection> inspections, String context,
+            List<ServerMapping> observedMappings, Map<String, ContainerInspection> inspections, String context,
             ConfigurationView expectedConfiguration,
             Map<String, LifecycleStatusSnapshot> lifecycleAtStart) {
         if (configuration != expectedConfiguration || !expectedConfiguration.matches(snapshot)) {
@@ -222,7 +268,7 @@ public final class OperationalStatusService {
         }
         Instant observedAt = clock.instant();
         Map<String, LifecycleStatusSnapshot> accepted = new LinkedHashMap<>();
-        for (ServerMapping mapping : snapshot.servers()) {
+        for (ServerMapping mapping : observedMappings) {
             if (configuration != expectedConfiguration) {
                 break;
             }
@@ -325,9 +371,9 @@ public final class OperationalStatusService {
         }
     }
 
-    private Map<String, LifecycleStatusSnapshot> captureLifecycle(ConfigSnapshot snapshot) {
+    private Map<String, LifecycleStatusSnapshot> captureLifecycle(List<ServerMapping> mappings) {
         Map<String, LifecycleStatusSnapshot> result = new LinkedHashMap<>();
-        for (ServerMapping mapping : snapshot.servers()) {
+        for (ServerMapping mapping : mappings) {
             result.put(mapping.serverName(), lifecycleCoordinator.statusSnapshot(mapping));
         }
         return Map.copyOf(result);
