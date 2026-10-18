@@ -78,7 +78,7 @@ Every value is configurable and validated as one atomic snapshot. See the
 |---|---|
 | `/autostopper`, `/as` | Everyone |
 | `/autostopper help` | Everyone, filtered to what you can use |
-| `/autostopper status` | `autostopper.command.status` |
+| `/autostopper status [server]` | `autostopper.command.status` |
 | `/autostopper start`, `stop`, `restart` `<server>` | `autostopper.command.start`, `.stop`, `.restart` |
 | `/autostopper hold`, `release` `<server>` | `autostopper.command.hold`, `.release` |
 | `/autostopper reload` | `autostopper.command.reload` |

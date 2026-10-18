@@ -1,5 +1,6 @@
 package me.criseda.autostopper.messages;
 
+import me.criseda.autostopper.lifecycle.ConnectionLifecycleStage;
 import me.criseda.autostopper.operational.OperationalFailure;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
@@ -11,6 +12,10 @@ import net.kyori.adventure.text.event.HoverEvent;
 import net.kyori.adventure.text.format.TextColor;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 
 /**
@@ -249,62 +254,18 @@ public final class AutoStopperMessages {
 
     public static Component operationalStatus(String serverName, OperationalServerStatus status,
             Long minutesSinceActivity) {
-        Objects.requireNonNull(status, "status");
-        String glyph;
-        TextColor glyphColor;
-        String stateLabel;
-        TextColor stateColor;
+        return operationalStatus(serverName, status, minutesSinceActivity, Instant.now(), false);
+    }
 
-        switch (status.state()) {
-            case READY -> {
-                glyph = MessageTokens.DOT_READY;
-                glyphColor = MessageTokens.SUCCESS;
-                stateLabel = "Ready";
-                stateColor = MessageTokens.SUCCESS;
-            }
-            case STARTING -> {
-                glyph = MessageTokens.DOT_PROGRESS;
-                glyphColor = MessageTokens.PROGRESS_WARNING;
-                stateLabel = "Waking";
-                stateColor = MessageTokens.PROGRESS_WARNING;
-            }
-            case RUNNING_UNVERIFIED -> {
-                glyph = MessageTokens.DOT_PROGRESS;
-                glyphColor = MessageTokens.PROGRESS_WARNING;
-                stateLabel = "Running · readiness unverified";
-                stateColor = MessageTokens.PROGRESS_WARNING;
-            }
-            case STOPPING -> {
-                glyph = MessageTokens.DOT_PROGRESS;
-                glyphColor = MessageTokens.PROGRESS_WARNING;
-                stateLabel = "Stopping";
-                stateColor = MessageTokens.PROGRESS_WARNING;
-            }
-            case STOPPED -> {
-                glyph = MessageTokens.DOT_STOPPED;
-                glyphColor = MessageTokens.TEXT_MUTED;
-                stateLabel = "Sleeping";
-                stateColor = MessageTokens.TEXT_MUTED;
-            }
-            case FAILED -> {
-                glyph = MessageTokens.MARK_ATTENTION;
-                glyphColor = MessageTokens.FAILURE;
-                stateLabel = "Failed";
-                stateColor = MessageTokens.FAILURE;
-            }
-            case DOCKER_UNAVAILABLE -> {
-                glyph = MessageTokens.MARK_ATTENTION;
-                glyphColor = MessageTokens.FAILURE;
-                stateLabel = "Unavailable · Docker cannot be reached";
-                stateColor = MessageTokens.FAILURE;
-            }
-            default -> {
-                glyph = MessageTokens.MARK_ATTENTION;
-                glyphColor = MessageTokens.FAILURE;
-                stateLabel = status.state().name();
-                stateColor = MessageTokens.FAILURE;
-            }
-        }
+    /**
+     * One overview row. Players can click the server name to open {@code /autostopper status <server>};
+     * the last failure shows its age, with the remediation left to the detail view.
+     */
+    public static Component operationalStatus(String serverName, OperationalServerStatus status,
+            Long minutesSinceActivity, Instant now, boolean isPlayer) {
+        Objects.requireNonNull(status, "status");
+        Objects.requireNonNull(now, "now");
+        StatePresentation presentation = StatePresentation.of(status.state());
 
         StringBuilder detailBuilder = new StringBuilder();
         if (status.held()) {
@@ -316,17 +277,134 @@ public final class AutoStopperMessages {
         if (status.state() == OperationalState.READY || status.state() == OperationalState.RUNNING_UNVERIFIED) {
             appendDetail(detailBuilder, formatActivity(minutesSinceActivity));
         }
-        status.lastFailure().ifPresent(failure -> appendDetail(detailBuilder, failureDetail(failure)));
+        status.lastFailure().ifPresent(failure -> appendDetail(detailBuilder, failureDetail(failure, now)));
 
         String detail = detailBuilder.isEmpty() ? null : detailBuilder.toString();
-        return formatStatusRow(serverName, glyph, glyphColor, stateLabel, stateColor, detail);
+        return formatStatusRow(serverName, presentation.glyph(), presentation.glyphColor(),
+                presentation.label(), presentation.color(), detail, isPlayer);
+    }
+
+    public static Component statusDetailHeader(String serverName) {
+        return finish(Component.text()
+                .append(Component.text("Server status", MessageTokens.BRAND))
+                .append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED))
+                .append(serverNameComponent(serverName)));
+    }
+
+    public static Component statusDetailCollectionFailed(String serverName) {
+        return finish(Component.text()
+                .append(brandAttention())
+                .append(Component.text("Could not collect the status of server ", MessageTokens.FAILURE))
+                .append(argument(serverName))
+                .append(Component.text(".", MessageTokens.FAILURE)));
+    }
+
+    /**
+     * The lines of {@code /autostopper status <server>}, without the header: state and startup stage,
+     * hold, waiting players, activity, and the last failure. Players hover the failure age for the exact
+     * time; the console gets the exact time inline.
+     */
+    public static List<Component> statusDetail(OperationalServerStatus status, Long minutesSinceActivity,
+            Instant now, boolean isPlayer) {
+        Objects.requireNonNull(status, "status");
+        Objects.requireNonNull(now, "now");
+        StatePresentation presentation = StatePresentation.of(status.state());
+        List<Component> lines = new ArrayList<>();
+
+        TextComponent.Builder state = Component.text()
+                .append(Component.text(presentation.glyph() + " ", presentation.glyphColor()))
+                .append(Component.text(presentation.label(), presentation.color()));
+        status.stage().map(AutoStopperMessages::stageLabel).ifPresent(stage -> state
+                .append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(stage, MessageTokens.TEXT_PRIMARY)));
+        lines.add(detailLine("State", finish(state)));
+        lines.add(detailLine("Hold", Component.text(status.held()
+                ? "held, automatic stop paused" : "none", MessageTokens.TEXT_PRIMARY)));
+        lines.add(detailLine("Waiting", Component.text(status.waitingPlayers() > 0
+                ? formatWaiters(status.waitingPlayers()) : "no players", MessageTokens.TEXT_PRIMARY)));
+        lines.add(detailLine("Activity", Component.text(formatActivity(minutesSinceActivity),
+                MessageTokens.TEXT_PRIMARY)));
+
+        if (status.lastFailure().isEmpty()) {
+            lines.add(detailLine("Last failure", Component.text("none", MessageTokens.TEXT_PRIMARY)));
+            return List.copyOf(lines);
+        }
+        OperationalFailure failure = status.lastFailure().get();
+        String age = formatAgo(Duration.between(failure.timestamp(), now));
+        TextComponent.Builder when = Component.text();
+        if (isPlayer) {
+            when.append(finish(Component.text()
+                    .content(age)
+                    .color(MessageTokens.FAILURE)
+                    .hoverEvent(HoverEvent.showText(Component.text(failure.timestamp().toString(),
+                            MessageTokens.TEXT_PRIMARY)))));
+        } else {
+            when.append(Component.text(age + " (" + failure.timestamp() + ")", MessageTokens.FAILURE));
+        }
+        when.append(Component.text(" during " + failure.context(), MessageTokens.TEXT_MUTED));
+        lines.add(detailLine("Last failure", finish(when)));
+        lines.add(detailLine("Cause", Component.text(failure.detail(), MessageTokens.TEXT_PRIMARY)));
+        lines.add(detailLine("Fix", Component.text(failure.remediation(), MessageTokens.TEXT_PRIMARY)));
+        return List.copyOf(lines);
+    }
+
+    private static Component detailLine(String label, Component value) {
+        return finish(Component.text()
+                .append(Component.text("  " + label + ": ", MessageTokens.TEXT_MUTED))
+                .append(value));
+    }
+
+    private static String stageLabel(ConnectionLifecycleStage stage) {
+        return switch (stage) {
+            case INSPECTING -> "checking the container";
+            case STARTING -> "starting the container";
+            case WAITING_FOR_READINESS -> "waiting for readiness";
+            case CONNECTING -> "connecting players";
+            case SUCCEEDED, FAILED -> stage.name().toLowerCase(Locale.ROOT);
+        };
+    }
+
+    /** Glyph, label, and colors for one operational state, shared by the overview and the detail view. */
+    private record StatePresentation(String glyph, TextColor glyphColor, String label, TextColor color) {
+        static StatePresentation of(OperationalState state) {
+            return switch (state) {
+                case READY -> new StatePresentation(MessageTokens.DOT_READY, MessageTokens.SUCCESS,
+                        "Ready", MessageTokens.SUCCESS);
+                case STARTING -> new StatePresentation(MessageTokens.DOT_PROGRESS, MessageTokens.PROGRESS_WARNING,
+                        "Waking", MessageTokens.PROGRESS_WARNING);
+                case RUNNING_UNVERIFIED -> new StatePresentation(MessageTokens.DOT_PROGRESS,
+                        MessageTokens.PROGRESS_WARNING, "Running · readiness unverified",
+                        MessageTokens.PROGRESS_WARNING);
+                case STOPPING -> new StatePresentation(MessageTokens.DOT_PROGRESS, MessageTokens.PROGRESS_WARNING,
+                        "Stopping", MessageTokens.PROGRESS_WARNING);
+                case STOPPED -> new StatePresentation(MessageTokens.DOT_STOPPED, MessageTokens.TEXT_MUTED,
+                        "Sleeping", MessageTokens.TEXT_MUTED);
+                case FAILED -> new StatePresentation(MessageTokens.MARK_ATTENTION, MessageTokens.FAILURE,
+                        "Failed", MessageTokens.FAILURE);
+                case DOCKER_UNAVAILABLE -> new StatePresentation(MessageTokens.MARK_ATTENTION,
+                        MessageTokens.FAILURE, "Unavailable · Docker cannot be reached", MessageTokens.FAILURE);
+            };
+        }
     }
 
     private static Component formatStatusRow(String serverName, String glyph, TextColor glyphColor,
             String stateLabel, TextColor stateColor, String detail) {
+        return formatStatusRow(serverName, glyph, glyphColor, stateLabel, stateColor, detail, false);
+    }
+
+    private static Component formatStatusRow(String serverName, String glyph, TextColor glyphColor,
+            String stateLabel, TextColor stateColor, String detail, boolean clickable) {
+        TextComponent.Builder name = Component.text()
+                .content(serverName)
+                .color(MessageTokens.ACTION);
+        if (clickable) {
+            name.clickEvent(ClickEvent.runCommand("/autostopper status " + serverName))
+                    .hoverEvent(HoverEvent.showText(Component.text("Click to show details for " + serverName,
+                            MessageTokens.TEXT_PRIMARY)));
+        }
         TextComponent.Builder row = Component.text()
                 .append(Component.text(glyph + " ", glyphColor))
-                .append(Component.text(serverName, MessageTokens.ACTION))
+                .append(finish(name))
                 .append(Component.text("   ", MessageTokens.TEXT_MUTED))
                 .append(Component.text(stateLabel, stateColor));
         if (detail != null && !detail.isEmpty()) {
@@ -898,27 +976,38 @@ public final class AutoStopperMessages {
         if (minutesSinceActivity == null) {
             return "no activity recorded";
         }
-        if (minutesSinceActivity == 0) {
-            return "active just now";
+        return "active " + formatAgo(Duration.ofMinutes(minutesSinceActivity));
+    }
+
+    /**
+     * The relative time used by every status view: {@code just now}, {@code 5m ago}, {@code 1h 15m ago},
+     * or {@code 2d 3h ago}. A negative age, from clock skew, reads as {@code just now}.
+     */
+    public static String formatAgo(Duration age) {
+        long minutes = Math.max(0, age.toMinutes());
+        if (minutes == 0) {
+            return "just now";
         }
-        if (minutesSinceActivity < 60) {
-            return "active " + minutesSinceActivity + "m ago";
+        if (minutes < 60) {
+            return minutes + "m ago";
         }
-        long hours = minutesSinceActivity / 60;
-        long remainingMinutes = minutesSinceActivity % 60;
-        if (remainingMinutes > 0) {
-            return "active " + hours + "h " + remainingMinutes + "m ago";
+        long hours = minutes / 60;
+        if (hours < 24) {
+            long remainingMinutes = minutes % 60;
+            return remainingMinutes > 0 ? hours + "h " + remainingMinutes + "m ago" : hours + "h ago";
         }
-        return "active " + hours + "h ago";
+        long days = hours / 24;
+        long remainingHours = hours % 24;
+        return remainingHours > 0 ? days + "d " + remainingHours + "h ago" : days + "d ago";
     }
 
     public static String formatWaiters(int count) {
         return count == 1 ? "1 player waiting" : count + " players waiting";
     }
 
-    private static String failureDetail(OperationalFailure failure) {
-        return "last failure " + failure.timestamp() + " during " + failure.context()
-                + ": " + failure.detail() + " Remediation: " + failure.remediation();
+    private static String failureDetail(OperationalFailure failure, Instant now) {
+        return "last failure " + formatAgo(Duration.between(failure.timestamp(), now))
+                + " during " + failure.context() + ": " + failure.detail();
     }
 
     private static void appendDetail(StringBuilder target, String detail) {

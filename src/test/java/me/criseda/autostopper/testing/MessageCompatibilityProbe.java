@@ -14,6 +14,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 
 /** Exercises every public message factory when loaded with a pinned Velocity runtime. */
@@ -25,7 +26,8 @@ public final class MessageCompatibilityProbe {
         Method[] factories = Arrays.stream(AutoStopperMessages.class.getDeclaredMethods())
                 .filter(method -> Modifier.isPublic(method.getModifiers()))
                 .filter(method -> Modifier.isStatic(method.getModifiers()))
-                .filter(method -> method.getReturnType() == Component.class)
+                .filter(method -> method.getReturnType() == Component.class
+                        || method.getReturnType() == List.class)
                 .sorted(Comparator.comparing(Method::toGenericString))
                 .toArray(Method[]::new);
         if (factories.length == 0) {
@@ -38,8 +40,11 @@ public final class MessageCompatibilityProbe {
                     .toArray();
             try {
                 Object message = factory.invoke(null, arguments);
-                if (!(message instanceof Component)) {
-                    throw new IllegalStateException(factory + " did not return an Adventure component");
+                boolean components = message instanceof Component
+                        || (message instanceof List<?> lines && !lines.isEmpty()
+                                && lines.stream().allMatch(Component.class::isInstance));
+                if (!components) {
+                    throw new IllegalStateException(factory + " did not return Adventure components");
                 }
             } catch (IllegalAccessException error) {
                 throw new IllegalStateException("Cannot invoke public message factory " + factory, error);
@@ -63,6 +68,9 @@ public final class MessageCompatibilityProbe {
         }
         if (type == Long.class || type == long.class) {
             return 1L;
+        }
+        if (type == Instant.class) {
+            return Instant.EPOCH.plusSeconds(60);
         }
         if (type == Duration.class) {
             return Duration.ofSeconds(1);

@@ -126,7 +126,7 @@ Run `/autostopper reload` after editing. A successful reload:
 4. inspects every mapped container off-thread.
 
 The command reports how many mappings are healthy or degraded. Use `/autostopper status` for each
-mapping's state and safe remediation. Syntax, type, range, unknown-server, and duplicate-mapping
+mapping's state, and `/autostopper status <server>` for one mapping's safe remediation. Syntax, type, range, unknown-server, and duplicate-mapping
 errors are also written to the proxy log. A failed reload never partially applies valid-looking
 entries from the rejected file.
 
@@ -141,7 +141,7 @@ entries from the rejected file.
 | `READY` | Docker reports the container running and AutoStopper has completed readiness for the current mapping lifecycle. |
 | `RUNNING_UNVERIFIED` | Docker reports the container running, but AutoStopper has not verified configured readiness in the current lifecycle generation. Player or manual demand performs readiness before connection. |
 | `STOPPING` | An automatic inactivity stop is in progress. |
-| `FAILED` | The latest Docker or lifecycle observation failed. The line includes its safe detail and remediation. |
+| `FAILED` | The latest Docker or lifecycle observation failed. The line includes its age and safe detail; `/autostopper status <server>` adds the remediation. |
 | `DOCKER_UNAVAILABLE` | The Docker CLI, daemon, or socket permission boundary is unavailable. |
 
 Active `STARTING` and `STOPPING` operations take precedence while their coordinator-owned work is

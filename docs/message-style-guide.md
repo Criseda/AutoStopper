@@ -59,8 +59,32 @@ Server status
 ! modded     Unavailable · Docker cannot be reached
 ◐ lobby      Running · readiness unverified · active 5m ago
 ◐ minigames  Stopping
-! backup     Failed · status check timed out
+! backup     Failed · last failure 3m ago during server startup: Docker operation failed
 ```
+
+- **Relative time:** every age in a status view (activity and last failure) uses one formatter: `just now`, `5m ago`, `1h 15m ago`, `2d 3h ago`. The overview never prints raw ISO-8601 timestamps.
+- **Last failure:** an overview row shows the failure's age, context, and safe detail. The remediation lives in the per-server view, so the row stays one line.
+- **Click (players):** clicking a server name runs `/autostopper status <server>`; the hover says `Click to show details for <server>`. Status is read-only, so rows run the command instead of suggesting it as help entries do (§5). Console rows have no click or hover.
+
+### Per-server detail
+
+`/autostopper status <server>` shows one labelled line per fact, read from a single container inspection:
+
+```text
+Server status · survival
+  State: ◐ Waking · waiting for readiness
+  Hold: none
+  Waiting: 2 players waiting
+  Activity: no activity recorded
+  Last failure: 3m ago during server startup
+  Cause: Docker operation failed
+  Fix: Review proxy logs and Docker state, then retry.
+```
+
+- **State** carries the startup stage while the server is waking: `checking the container`, `starting the container`, or `waiting for readiness`.
+- **Last failure** shows `none` when there is none. Players hover the age for the exact UTC timestamp; the console prints it inline (`3m ago (2026-10-06T21:11:45Z) during server startup`), so nothing depends on hover.
+- **Cause** and **Fix** are the safe detail and remediation; raw Docker stderr stays in `velocity.log` (§6).
+- A view containing a failure ends with the `Troubleshooting · Get help` footer (§7). An unmapped name gets the standard `Server <name> is not mapped in AutoStopper.` error.
 
 ### State Mapping Table
 
@@ -81,7 +105,7 @@ Server status
 - `/autostopper` provides a calm overview: the version, the signature tagline, a `Docs · GitHub · Modrinth · Changelog` link row, and a pointer to `/autostopper help`. For players the version opens that release's notes (the releases list on development builds). These public project links go to every source; the console gets one `Label: <url>` line per link.
 - `/autostopper help` lists only commands the invoking source has permission to execute, under `General`, `Lifecycle`, and `Holds` headings; a heading with no permitted command is omitted. Descriptions are imperative ("Start a mapped server…") and come from the single subcommand definition in [`AutoStopperSubcommand.java`](../src/main/java/me/criseda/autostopper/commands/AutoStopperSubcommand.java), which also drives usage messages and tab completion.
 - A source with no operator command sees `You have no AutoStopper operator commands.` followed by the project link row.
-- **Player Affordances:** For player sources, help entries suggest the command on click, and their hover shows the description, the granting permission (`autostopper.command.<name> or autostopper.admin`), and `Click to suggest this command`.
+- **Player Affordances:** For player sources, help entries suggest the command on click (status rows are the read-only exception, §4), and their hover shows the description, the granting permission (`autostopper.command.<name> or autostopper.admin`), and `Click to suggest this command`.
 - **Console Fallback:** For console sources, output is complete and copyable plain text.
 - **Fuzzy Matching:** Typos (e.g. `/autostopper statsu`) provide nearest-match suggestions (`Did you mean /autostopper status?`) with click-to-suggest affordances.
 
@@ -90,7 +114,7 @@ Server status
 ## 6. Player vs. Operator Boundary
 
 - **Player Messages:** Sanitized, clear, and actionable. Never expose Docker container names, container IDs, socket paths, daemon URLs, or stack traces.
-- **Operator Diagnostics:** `/autostopper status` and reload reports provide safe failure contexts and suggested remediation (e.g. *Start Docker daemon* or *Check backend listener*).
+- **Operator Diagnostics:** `/autostopper status <server>` and reload reports provide safe failure contexts and suggested remediation (e.g. *Start Docker daemon* or *Check backend listener*).
 - **Raw Infrastructure Logs:** Raw Docker stderr, process exit codes, and stack traces belong exclusively in server operator logs (`velocity.log`).
 
 ---

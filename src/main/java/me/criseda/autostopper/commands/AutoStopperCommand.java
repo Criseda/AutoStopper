@@ -25,6 +25,7 @@ import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ActivityTrackerService;
 import net.kyori.adventure.text.Component;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
@@ -47,16 +48,25 @@ public class AutoStopperCommand implements SimpleCommand {
     private final ServerLifecycleCoordinator lifecycleCoordinator;
     private final OperationalStatusService operationalStatus;
     private final PluginContainer pluginContainer;
+    private final Clock clock;
 
     public AutoStopperCommand(ConfigProvider config,
             ActivityTrackerService activityTracker,
             ServerLifecycleCoordinator lifecycleCoordinator, OperationalStatusService operationalStatus,
             PluginContainer pluginContainer) {
+        this(config, activityTracker, lifecycleCoordinator, operationalStatus, pluginContainer, Clock.systemUTC());
+    }
+
+    AutoStopperCommand(ConfigProvider config,
+            ActivityTrackerService activityTracker,
+            ServerLifecycleCoordinator lifecycleCoordinator, OperationalStatusService operationalStatus,
+            PluginContainer pluginContainer, Clock clock) {
         this.config = config;
         this.activityTracker = activityTracker;
         this.lifecycleCoordinator = lifecycleCoordinator;
         this.operationalStatus = operationalStatus;
         this.pluginContainer = pluginContainer;
+        this.clock = clock;
     }
 
     @Override
@@ -91,7 +101,8 @@ public class AutoStopperCommand implements SimpleCommand {
             sendPermissionDenied(source, subcommand.deniedAction());
             return;
         }
-        if (!subcommand.takesServer()) {
+        if (subcommand.argument() == AutoStopperSubcommand.Argument.NONE
+                || (subcommand.argument() == AutoStopperSubcommand.Argument.OPTIONAL && args.length < 2)) {
             switch (subcommand) {
                 case HELP -> showHelp(source, isPlayer);
                 case STATUS -> showStatus(source);
@@ -113,6 +124,7 @@ public class AutoStopperCommand implements SimpleCommand {
             return;
         }
         switch (subcommand) {
+            case STATUS -> showServerStatus(source, mapping.get());
             case START -> startServer(source, mapping.get());
             case STOP -> stopServer(source, mapping.get());
             case RESTART -> restartServer(source, mapping.get());
@@ -166,6 +178,24 @@ public class AutoStopperCommand implements SimpleCommand {
         });
     }
 
+    private void showServerStatus(CommandSource source, ServerMapping mapping) {
+        String serverName = mapping.serverName();
+        source.sendMessage(AutoStopperMessages.statusDetailHeader(serverName));
+        operationalStatus.collectStatus(config.snapshot(), serverName).whenComplete((status, error) -> {
+            if (error != null || status == null) {
+                source.sendMessage(AutoStopperMessages.statusDetailCollectionFailed(serverName));
+                return;
+            }
+            for (Component line : AutoStopperMessages.statusDetail(status, minutesSinceActivity(serverName),
+                    clock.instant(), source instanceof Player)) {
+                source.sendMessage(line);
+            }
+            if (hasFailure(status)) {
+                source.sendMessage(AutoStopperMessages.operatorHelpFooter(pluginVersion(), source instanceof Player));
+            }
+        });
+    }
+
     private static boolean hasFailure(OperationalServerStatus status) {
         return status != null && (status.lastFailure().isPresent()
                 || status.state() == OperationalState.FAILED
@@ -174,9 +204,13 @@ public class AutoStopperCommand implements SimpleCommand {
 
     private void sendServerStatus(CommandSource source, String serverName,
             OperationalServerStatus status) {
-        Long minutes = activityTracker.getLastActivity(serverName) == null
+        source.sendMessage(AutoStopperMessages.operationalStatus(serverName, status,
+                minutesSinceActivity(serverName), clock.instant(), source instanceof Player));
+    }
+
+    private Long minutesSinceActivity(String serverName) {
+        return activityTracker.getLastActivity(serverName) == null
                 ? null : activityTracker.getMinutesSinceActivity(serverName);
-        source.sendMessage(AutoStopperMessages.operationalStatus(serverName, status, minutes));
     }
 
     private void reloadConfig(CommandSource source) {
@@ -365,7 +399,7 @@ public class AutoStopperCommand implements SimpleCommand {
         if (args.length == 2) {
             Optional<AutoStopperSubcommand> subcommand = AutoStopperSubcommand.byLabel(args[0]);
             String input = args[1].toLowerCase(Locale.ROOT);
-            if (subcommand.isPresent() && subcommand.get().takesServer() && isPermitted(source, subcommand.get())) {
+            if (subcommand.isPresent() && subcommand.get().acceptsServer() && isPermitted(source, subcommand.get())) {
                 return config.snapshot().serverNames().stream()
                         .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(input))
                         .sorted()
