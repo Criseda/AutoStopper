@@ -4,6 +4,8 @@ All notable AutoStopper changes are documented here.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-18
+
 ### Added
 
 - Failed `/autostopper start`, `stop`, and `restart` commands now state the cause in chat. In game,
@@ -120,7 +122,6 @@ All notable AutoStopper changes are documented here.
 
 ### Changed
 
-- Velocity 4.1.0 (build 22) and 4.2.0 (build 30) are now tested stable runtimes alongside 4.0.0, with 4.2.0 the recommended production line and the stable example. The preview line now validates Velocity 4.2.1-SNAPSHOT (build 41). The packaged-runtime CI matrix, smoke profiles (`stable-4.0`, `stable-4.1`, `stable`, `preview`), release-candidate E2E, and release metadata were updated to match. Pull requests run only `legacy`, `stable`, and `preview`; the release gate also runs `stable-4.0` and `stable-4.1` (#134).
 - Operational status now reconciles Docker observations lazily with mapping-aware lifecycle
   revisions. Active transitions remain authoritative, stopped/degraded Docker state overrides
   stale quiescent state, and results captured before reload, mapping replacement, or newer
@@ -161,7 +162,6 @@ All notable AutoStopper changes are documented here.
 
 ### Changed
 
-- Velocity 4.1.0 (build 22) and 4.2.0 (build 30) are now tested stable runtimes alongside 4.0.0, with 4.2.0 the recommended production line and the stable example. The preview line now validates Velocity 4.2.1-SNAPSHOT (build 41). The packaged-runtime CI matrix, smoke profiles (`stable-4.0`, `stable-4.1`, `stable`, `preview`), release-candidate E2E, and release metadata were updated to match. Pull requests run only `legacy`, `stable`, and `preview`; the release gate also runs `stable-4.0` and `stable-4.1` (#134).
 - Generated inactivity timeout and public documentation now agree on `300` seconds.
 - New installations generate no monitored mappings instead of controlling example containers by
   default.
@@ -192,6 +192,7 @@ mappings, pinned examples, and Docker security boundary all require operator rev
 
 - Last 1.x migration source and prototype release tag.
 
+[2.2.0]: https://github.com/Criseda/AutoStopper/compare/2.1.1...2.2.0
 [2.1.1]: https://github.com/Criseda/AutoStopper/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/Criseda/AutoStopper/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/Criseda/AutoStopper/compare/1.1.2...2.0.0
