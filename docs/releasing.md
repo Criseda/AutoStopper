@@ -18,8 +18,10 @@ Keep these controls configured outside the repository:
 - allow self-approval only while AutoStopper has a sole maintainer; require independent approval
   when a second active maintainer is available;
 - store `MODRINTH_TOKEN` only as an environment secret in `release`; and
-- give the Modrinth token only `VERSION_CREATE` and `VERSION_WRITE` access to AutoStopper project
-  `PG4gqnzX`. It does not need repository, organization, or account-wide administration access.
+- give the Modrinth token only `PROJECT_READ`, `PROJECT_WRITE`, `VERSION_CREATE`, `VERSION_READ`,
+  and `VERSION_WRITE` access to AutoStopper project `PG4gqnzX`. `PROJECT_WRITE` is needed to update
+  the project description. The publisher never deletes versions or files, and it does not need
+  `VERSION_DELETE`, collection, repository, organization, or account-wide administration access.
 
 The workflow's generated GitHub token receives read-only permissions until the environment-approved
 publication job, where normal publication grants only `actions: read` and `contents: write`;
@@ -76,7 +78,24 @@ Publication is deliberately non-replacing:
 - the publisher contains no delete, retag, asset-replace, or Modrinth-file-replace operation.
 
 Modrinth is listed immediately before the GitHub draft is made public. The final step re-fetches
-both destinations and verifies the public state.
+both destinations and verifies the public state, then updates the Modrinth project description (see
+below).
+
+## Modrinth project page
+
+The Modrinth description is [`modrinth.md`](modrinth.md), published as written apart from link
+pinning. `prepare-candidate` validates it, pins its `docs/` links and images to the release tag,
+and stores the result as
+`modrinth-project-body.md` in the candidate bundle with its digest in the release manifest. The
+publisher writes it only after the GitHub release and the Modrinth version have both been verified
+live, so a failed release never leaves the page ahead of the downloads. It then re-fetches the
+project and fails the job if the body does not match. A body that already matches is left untouched,
+so reruns do not mutate it, and a body edited by hand on Modrinth is restored by the next release.
+
+Release preflight and CI reject a page that names a specific product version, links to a missing
+file, drops the Docker socket warning, or disagrees with the tested runtimes in
+`release/release-metadata.json`. There is nothing to edit per release. See
+[`modrinth-listing.md`](modrinth-listing.md) for the validation rules and for the diagram sources.
 
 ## Release notes
 
@@ -130,6 +149,7 @@ evidence; all available attempts must still be byte-identical. Safe states resum
 | Matching GitHub draft exists | Missing matching assets are uploaded; the draft is verified and resumed. |
 | Matching unlisted Modrinth version exists | It is verified and promoted without a replacement upload. |
 | One matching public destination exists | It is verified without mutation and the other destination is completed. |
+| Both downloads are live but the Modrinth page update failed | Rerun publication; only the project description is written. |
 | Existing metadata, hash, or downloaded bytes differ | Stop. Preserve logs, treat it as a release incident, and use a new corrected version after investigation. |
 
 Never recover by moving, deleting, or recreating a stable tag, overwriting an asset, or weakening

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="640" viewBox="0 0 1400 640" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2433"/>
+      <stop offset="1" stop-color="#131a26"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8cb2c5"/>
+    </marker>
+  </defs>
+  <rect width="1400" height="640" rx="24" fill="url(#bg)"/>
+  <text x="60" y="68" font-size="30" font-weight="700" fill="#e5e9f0">You choose what sleeps</text>
+  <text x="60" y="102" font-size="18" fill="#8892b0">Only servers listed in monitored_servers are ever started or stopped. Everything else is left alone.</text>
+
+  <!-- Players -->
+  <g>
+    <rect x="50" y="250" width="200" height="150" rx="16" fill="#232d40" stroke="#8cb2c5"/>
+    <text x="150" y="304" font-size="22" font-weight="700" text-anchor="middle" fill="#e5e9f0">Players</text>
+    <text x="150" y="334" font-size="16" text-anchor="middle" fill="#b8c0d6">Any Minecraft client,</text>
+    <text x="150" y="356" font-size="16" text-anchor="middle" fill="#b8c0d6">no mods needed</text>
+  </g>
+  <path d="M250 325 H330" stroke="#8cb2c5" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- Velocity -->
+  <g>
+    <rect x="330" y="190" width="330" height="270" rx="18" fill="#232d40" stroke="#8cb2c5" stroke-width="2"/>
+    <text x="495" y="236" font-size="24" font-weight="700" text-anchor="middle" fill="#e5e9f0">Velocity proxy</text>
+    <rect x="360" y="262" width="270" height="164" rx="12" fill="#8cb2c5" fill-opacity="0.16" stroke="#8cb2c5"/>
+    <text x="495" y="300" font-size="22" font-weight="700" text-anchor="middle" fill="#8cb2c5">AutoStopper</text>
+    <text x="495" y="332" font-size="16" text-anchor="middle" fill="#e5e9f0">Wakes mapped servers</text>
+    <text x="495" y="356" font-size="16" text-anchor="middle" fill="#e5e9f0">Waits for real readiness</text>
+    <text x="495" y="380" font-size="16" text-anchor="middle" fill="#e5e9f0">Stops idle ones</text>
+    <text x="495" y="408" font-size="14" text-anchor="middle" fill="#8892b0">Java 21 plugin, one JAR</text>
+  </g>
+
+  <!-- Docker -->
+  <path d="M660 325 H760" stroke="#8cb2c5" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <text x="710" y="308" font-size="14" text-anchor="middle" fill="#8892b0">docker.sock</text>
+  <g>
+    <rect x="760" y="130" width="590" height="400" rx="18" fill="#8892b0" fill-opacity="0.07" stroke="#8892b0" stroke-opacity="0.55"/>
+    <text x="786" y="166" font-size="16" font-weight="700" letter-spacing="2" fill="#8892b0">DOCKER HOST</text>
+
+    <rect x="790" y="190" width="530" height="86" rx="14" fill="#232d40" stroke="#8892b0"/>
+    <circle cx="826" cy="233" r="9" fill="#8cb2c5"/>
+    <text x="852" y="228" font-size="20" font-weight="700" fill="#e5e9f0">lobby</text>
+    <text x="852" y="254" font-size="15" fill="#b8c0d6">Not in monitored_servers: always on, never touched</text>
+    <text x="1296" y="238" font-size="15" font-weight="700" text-anchor="end" fill="#8cb2c5">UNMONITORED</text>
+
+    <rect x="790" y="296" width="530" height="86" rx="14" fill="#232d40" stroke="#a3be8c"/>
+    <circle cx="826" cy="339" r="9" fill="#a3be8c"/>
+    <text x="852" y="334" font-size="20" font-weight="700" fill="#e5e9f0">survival</text>
+    <text x="852" y="360" font-size="15" fill="#b8c0d6">Mapped: running now, players online</text>
+    <text x="1296" y="344" font-size="15" font-weight="700" text-anchor="end" fill="#a3be8c">READY</text>
+
+    <rect x="790" y="402" width="530" height="86" rx="14" fill="#232d40" stroke="#8892b0" stroke-dasharray="6 5"/>
+    <circle cx="826" cy="445" r="9" fill="none" stroke="#8892b0" stroke-width="2"/>
+    <text x="852" y="440" font-size="20" font-weight="700" fill="#e5e9f0">creative</text>
+    <text x="852" y="466" font-size="15" fill="#b8c0d6">Mapped: asleep until a player asks for it</text>
+    <text x="1296" y="450" font-size="15" font-weight="700" text-anchor="end" fill="#8892b0">SLEEPING</text>
+  </g>
+
+  <!-- footer -->
+  <g>
+    <rect x="50" y="556" width="1300" height="56" rx="12" fill="#ebcb8b" fill-opacity="0.12" stroke="#ebcb8b" stroke-opacity="0.6"/>
+    <text x="76" y="590" font-size="17" fill="#ebcb8b">Docker socket access is effectively root on the host. Use a dedicated host or VM and trusted plugins only.</text>
+  </g>
+</svg>
