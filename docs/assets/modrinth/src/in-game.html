@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AutoStopper in-game messages</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    width: 1400px;
+    height: 560px;
+    background: linear-gradient(135deg, #1b2433, #131a26);
+    font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #e5e9f0;
+    padding: 44px 60px;
+    border-radius: 24px;
+  }
+  h1 { margin: 0 0 8px; font-size: 30px; }
+  p.sub { margin: 0 0 30px; font-size: 18px; color: #8892b0; }
+  .panels { display: flex; gap: 28px; }
+  .panel { flex: 1; }
+  .label {
+    font-size: 15px; font-weight: 700; letter-spacing: 2px; margin-bottom: 12px;
+    text-transform: uppercase;
+  }
+  .player .label { color: #a3be8c; }
+  .operator .label { color: #8cb2c5; }
+  .chat {
+    background: rgba(0, 0, 0, 0.55);
+    border: 2px solid rgba(255, 255, 255, 0.10);
+    border-radius: 10px;
+    padding: 18px 20px;
+    font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 19px;
+    line-height: 1.55;
+    min-height: 232px;
+  }
+  .line { white-space: pre; }
+  .brand { color: #8cb2c5; }
+  .muted { color: #8892b0; }
+  .primary { color: #e5e9f0; }
+  .action { color: #70d6ff; }
+  .ok { color: #a3be8c; }
+  .warn { color: #ebcb8b; }
+  .bad { color: #bf616a; }
+  .gap { height: 12px; }
+  .caption { margin-top: 14px; font-size: 16px; color: #b8c0d6; }
+</style>
+</head>
+<body>
+  <h1>What it looks like in game</h1>
+  <p class="sub">Clear progress for players, honest state for operators. Raw Docker output never reaches chat.</p>
+  <div class="panels">
+    <div class="panel player">
+      <div class="label">A player joins a sleeping server</div>
+      <div class="chat">
+        <div class="line"><span class="brand">AutoStopper</span><span class="muted"> › </span><span class="primary">Checking server </span><span class="action">survival</span><span class="muted">…</span></div>
+        <div class="line"><span class="brand">AutoStopper</span><span class="muted"> › </span><span class="warn">Waking </span><span class="action">survival</span><span class="warn">…</span></div>
+        <div class="line"><span class="brand">AutoStopper</span><span class="muted"> › </span><span class="primary">Waiting for server </span><span class="action">survival</span><span class="primary"> to become ready…</span></div>
+        <div class="line"><span class="brand">AutoStopper</span><span class="muted"> › </span><span class="primary">Connecting you to server </span><span class="action">survival</span><span class="primary">…</span></div>
+        <div class="line"><span class="brand">AutoStopper</span><span class="ok"> ✓ Connected to </span><span class="action">survival</span><span class="muted"> · 18.4s</span></div>
+      </div>
+      <div class="caption">No client mod, no special command. Everyone waiting shares one start.</div>
+    </div>
+    <div class="panel operator">
+      <div class="label">An operator runs /autostopper status</div>
+      <div class="chat">
+        <div class="line"><span class="brand">Server status</span></div>
+        <div class="line"><span class="ok">● </span><span class="action">survival</span>   <span class="ok">Ready</span><span class="muted"> · active 2m ago</span></div>
+        <div class="line"><span class="warn">◐ </span><span class="action">minigames</span>   <span class="warn">Waking</span><span class="muted"> · 2 players waiting</span></div>
+        <div class="line"><span class="muted">○ </span><span class="action">creative</span>   <span class="muted">Sleeping</span></div>
+        <div class="line"><span class="bad">! </span><span class="action">events</span>   <span class="bad">Unavailable · Docker cannot be reached</span></div>
+        <div class="gap"></div>
+        <div class="line"><span class="muted">Troubleshooting · Get help</span></div>
+      </div>
+      <div class="caption">A failed server ends the list with troubleshooting and help links.</div>
+    </div>
+  </div>
+</body>
+</html>

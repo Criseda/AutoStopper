@@ -1,8 +1,11 @@
 """Validated, idempotent release support for AutoStopper.
 
-The publisher deliberately has no replace or delete operation. Existing GitHub
-or Modrinth state is either byte-for-byte compatible with the candidate or the
-release fails for a maintainer to investigate.
+The publisher deliberately has no replace or delete operation for releases or
+files. Existing GitHub or Modrinth release state is either byte-for-byte
+compatible with the candidate or the release fails for a maintainer to
+investigate. The Modrinth project description is the one in-place update: it is
+derived from the tagged ``docs/modrinth.md`` and written only after both
+downloads are verified live.
 """
 
 from __future__ import annotations
@@ -38,6 +41,12 @@ REQUIRED_RELEASE_JOBS = {
     "Release / exact Docker Minecraft candidate / Release candidate / Docker Minecraft E2E",
 }
 PUBLISH_RELEASE_JOB = "Release / publish GitHub and Modrinth"
+MODRINTH_BODY_SOURCE = "docs/modrinth.md"
+MODRINTH_BODY_FILE = "modrinth-project-body.md"
+MODRINTH_BODY_LIMIT = 65536
+MARKDOWN_TARGET = re.compile(r"(!?)\[[^\]\n]*\]\(([^)\s]+)[^)]*\)")
+HTML_TARGET = re.compile(r"""\b(?:src|href)\s*=\s*["']([^"']+)["']""", re.IGNORECASE)
+VERSIONED_PRODUCT_NAME = re.compile(r"AutoStopper[ -]v?\d+\.\d+\.\d+")
 
 
 class ReleaseError(RuntimeError):
@@ -259,6 +268,7 @@ def validate_source(repository: Path, version: str, previous_tag: str) -> str:
         raise ReleaseError(
             "release metadata does not match the live candidate test matrix"
         )
+    modrinth_project_body_source(repository, metadata)
 
     return changelog_section(repository, version, previous_tag)
 
@@ -294,6 +304,91 @@ def _absolute_release_links(content: str, repository: str, tag: str) -> str:
         "](docs/",
         f"](https://github.com/{repository}/blob/{tag}/docs/",
     )
+
+
+def modrinth_project_body_source(
+    repository: Path, metadata: dict[str, Any] | None = None
+) -> str:
+    """Return the validated, version-independent Modrinth project description.
+
+    ``docs/modrinth.md`` is published verbatim, so it must not carry reviewer
+    notes or per-release text, must keep every link either absolute HTTPS or a
+    repository-relative ``docs/`` path that exists, and must agree with the
+    tested runtime matrix in ``release-metadata.json``.
+    """
+    path = repository / MODRINTH_BODY_SOURCE
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ReleaseError(f"Cannot read {MODRINTH_BODY_SOURCE}: {error}") from error
+    if not content.strip():
+        raise ReleaseError(f"{MODRINTH_BODY_SOURCE} is empty")
+    if len(content) > MODRINTH_BODY_LIMIT:
+        raise ReleaseError(
+            f"{MODRINTH_BODY_SOURCE} is {len(content)} characters, "
+            f"over Modrinth's {MODRINTH_BODY_LIMIT} limit"
+        )
+    versioned = VERSIONED_PRODUCT_NAME.search(content)
+    if versioned:
+        raise ReleaseError(
+            f"{MODRINTH_BODY_SOURCE} must stay version independent, "
+            f"found {versioned.group(0)!r}"
+        )
+
+    for match in HTML_TARGET.finditer(content):
+        if not match.group(1).startswith("https://"):
+            raise ReleaseError(
+                f"{MODRINTH_BODY_SOURCE} HTML target {match.group(1)!r} "
+                "must be absolute HTTPS"
+            )
+    for match in MARKDOWN_TARGET.finditer(content):
+        is_image, target = match.group(1) == "!", match.group(2)
+        if target.startswith("https://"):
+            continue
+        relative = target.split("#", 1)[0]
+        required_prefix = "docs/assets/" if is_image else "docs/"
+        if (
+            not relative.startswith(required_prefix)
+            or ".." in relative.split("/")
+            or not (repository / relative).is_file()
+        ):
+            raise ReleaseError(
+                f"{MODRINTH_BODY_SOURCE} target {target!r} must be an https URL "
+                f"or an existing {required_prefix} file"
+            )
+
+    for required in ("/var/run/docker.sock", "root"):
+        if required not in content:
+            raise ReleaseError(
+                f"{MODRINTH_BODY_SOURCE} must keep the Docker socket security "
+                f"warning (missing {required!r})"
+            )
+    runtimes = (metadata or load_metadata(repository))["velocityRuntimes"]
+    for runtime in runtimes:
+        for key in ("image", "version"):
+            if runtime[key] not in content:
+                raise ReleaseError(
+                    f"{MODRINTH_BODY_SOURCE} does not mention tested "
+                    f"{runtime['line']} runtime {key} {runtime[key]!r}"
+                )
+    return content
+
+
+def render_modrinth_project_body(content: str, repository: str, tag: str) -> str:
+    """Pin repository-relative targets to the released tag."""
+
+    def rewrite(match: re.Match[str]) -> str:
+        is_image, target = match.group(1) == "!", match.group(2)
+        if target.startswith("https://"):
+            return match.group(0)
+        base = (
+            f"https://raw.githubusercontent.com/{repository}/{tag}/"
+            if is_image
+            else f"https://github.com/{repository}/blob/{tag}/"
+        )
+        return match.group(0).replace(f"({target}", f"({base}{target}", 1)
+
+    return MARKDOWN_TARGET.sub(rewrite, content)
 
 
 def prepare_candidate(
@@ -363,6 +458,12 @@ def prepare_candidate(
         modrinth_notes.encode("utf-8")
     )
     (output_directory / "release-notes.md").write_bytes(github_notes.encode("utf-8"))
+    project_body = render_modrinth_project_body(
+        modrinth_project_body_source(repository_path, metadata),
+        repository_name,
+        version,
+    )
+    (output_directory / MODRINTH_BODY_FILE).write_bytes(project_body.encode("utf-8"))
 
     manifest = {
         "schemaVersion": 1,
@@ -396,6 +497,7 @@ def prepare_candidate(
         },
         "releaseNotesSha256": digest_bytes(github_notes.encode("utf-8")),
         "modrinthChangelogSha256": digest_bytes(modrinth_notes.encode("utf-8")),
+        "modrinthProjectBodySha256": digest_bytes(project_body.encode("utf-8")),
     }
     (output_directory / "release-manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -451,6 +553,14 @@ def verify_candidate(
         raise ReleaseError(
             "Modrinth changelog digest does not match the release manifest"
         )
+    try:
+        project_body = (candidate_directory / MODRINTH_BODY_FILE).read_bytes()
+    except OSError as error:
+        raise ReleaseError(f"Cannot read {MODRINTH_BODY_FILE}: {error}") from error
+    if digest_bytes(project_body) != manifest.get("modrinthProjectBodySha256"):
+        raise ReleaseError(
+            "Modrinth project body digest does not match the release manifest"
+        )
     return manifest
 
 
@@ -503,6 +613,7 @@ def select_candidate(
         f"AutoStopper-{version}.jar.sha256",
         f"AutoStopper-{version}.jar.sha512",
         "modrinth-changelog.md",
+        MODRINTH_BODY_FILE,
         "release-manifest.json",
         "release-notes.md",
     }
@@ -677,6 +788,9 @@ class ReleasePublisher:
         self.modrinth_notes = (self.directory / "modrinth-changelog.md").read_text(
             encoding="utf-8"
         )
+        self.modrinth_body = (self.directory / MODRINTH_BODY_FILE).read_text(
+            encoding="utf-8"
+        )
 
     def publish(self) -> None:
         self._verify_modrinth_project()
@@ -714,9 +828,10 @@ class ReleasePublisher:
 
         final_modrinth = self._find_modrinth_version(required=True)
         final_github = self._get_github_release(required=True)
-        self._verify_modrinth_project()
+        project = self._verify_modrinth_project()
         self._verify_modrinth(final_modrinth, expected_status="listed")
         self._verify_github(final_github, expected_draft=False)
+        self._sync_modrinth_project_body(project)
 
     def _get_github_release(self, *, required: bool = False) -> dict[str, Any] | None:
         tag = urllib.parse.quote(self.version, safe="")
@@ -897,7 +1012,7 @@ class ReleasePublisher:
             return None
         return matches[0]
 
-    def _verify_modrinth_project(self) -> None:
+    def _verify_modrinth_project(self) -> dict[str, Any]:
         project_id = self.manifest["compatibility"]["modrinth"]["projectId"]
         response = self.client.request(
             "GET", f"{MODRINTH_API}/project/{project_id}", token=self.modrinth_token
@@ -918,6 +1033,32 @@ class ReleasePublisher:
                 raise ReleaseError(
                     f"Modrinth project {key} is {project.get(key)!r}, expected {value!r}"
                 )
+        return project
+
+    def _sync_modrinth_project_body(self, project: dict[str, Any]) -> None:
+        """Publish the project description once both downloads are verified live.
+
+        Running last means a failed release never leaves the page ahead of the
+        downloads. The step is idempotent: a matching body is left untouched.
+        """
+        if project.get("body") == self.modrinth_body:
+            return
+        project_id = self.manifest["compatibility"]["modrinth"]["projectId"]
+        response = self.client.request(
+            "PATCH",
+            f"{MODRINTH_API}/project/{project_id}",
+            token=self.modrinth_token,
+            body=json.dumps({"body": self.modrinth_body}).encode("utf-8"),
+            content_type="application/json",
+        )
+        if response.status != 204:
+            raise ReleaseError(
+                f"Unexpected Modrinth project body update status {response.status}"
+            )
+        if self._verify_modrinth_project().get("body") != self.modrinth_body:
+            raise ReleaseError(
+                "Modrinth project body does not match the candidate after update"
+            )
 
     @staticmethod
     def _multipart(

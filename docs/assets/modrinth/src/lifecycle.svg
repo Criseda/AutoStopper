@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="620" viewBox="0 0 1400 620" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2433"/>
+      <stop offset="1" stop-color="#131a26"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8cb2c5"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#a3be8c"/>
+    </marker>
+    <marker id="arrowSleep" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#8892b0"/>
+    </marker>
+  </defs>
+  <rect width="1400" height="620" rx="24" fill="url(#bg)"/>
+  <text x="60" y="68" font-size="30" font-weight="700" fill="#e5e9f0">One cycle: wake on demand, sleep when empty</text>
+  <text x="60" y="102" font-size="18" fill="#8892b0">Every step has a bounded deadline. Players are only connected once Minecraft answers.</text>
+
+  <!-- WAKE lane -->
+  <rect x="40" y="136" width="1320" height="214" rx="18" fill="#a3be8c" fill-opacity="0.08" stroke="#a3be8c" stroke-opacity="0.45"/>
+  <text x="64" y="170" font-size="16" font-weight="700" letter-spacing="2" fill="#a3be8c">WAKE</text>
+
+  <g>
+    <rect x="64" y="200" width="228" height="120" rx="14" fill="#232d40" stroke="#8cb2c5"/>
+    <circle cx="96" cy="232" r="14" fill="#8cb2c5"/>
+    <text x="96" y="238" font-size="16" font-weight="700" text-anchor="middle" fill="#131a26">1</text>
+    <text x="120" y="238" font-size="20" font-weight="700" fill="#e5e9f0">Player joins</text>
+    <text x="84" y="270" font-size="16" fill="#b8c0d6">Normal Velocity routing</text>
+    <text x="84" y="294" font-size="16" fill="#b8c0d6">to a mapped backend</text>
+  </g>
+  <g>
+    <rect x="352" y="200" width="228" height="120" rx="14" fill="#232d40" stroke="#8cb2c5"/>
+    <circle cx="384" cy="232" r="14" fill="#8cb2c5"/>
+    <text x="384" y="238" font-size="16" font-weight="700" text-anchor="middle" fill="#131a26">2</text>
+    <text x="408" y="238" font-size="20" font-weight="700" fill="#e5e9f0">Inspect</text>
+    <text x="372" y="270" font-size="16" fill="#b8c0d6">Is the container</text>
+    <text x="372" y="294" font-size="16" fill="#b8c0d6">already running?</text>
+  </g>
+  <g>
+    <rect x="640" y="200" width="228" height="120" rx="14" fill="#232d40" stroke="#ebcb8b"/>
+    <circle cx="672" cy="232" r="14" fill="#ebcb8b"/>
+    <text x="672" y="238" font-size="16" font-weight="700" text-anchor="middle" fill="#131a26">3</text>
+    <text x="696" y="238" font-size="20" font-weight="700" fill="#e5e9f0">Start</text>
+    <text x="660" y="270" font-size="16" fill="#b8c0d6">One shared start for</text>
+    <text x="660" y="294" font-size="16" fill="#b8c0d6">everyone who is waiting</text>
+  </g>
+  <g>
+    <rect x="928" y="200" width="228" height="120" rx="14" fill="#232d40" stroke="#ebcb8b"/>
+    <circle cx="960" cy="232" r="14" fill="#ebcb8b"/>
+    <text x="960" y="238" font-size="16" font-weight="700" text-anchor="middle" fill="#131a26">4</text>
+    <text x="984" y="238" font-size="20" font-weight="700" fill="#e5e9f0">Wait for ready</text>
+    <text x="948" y="270" font-size="16" fill="#b8c0d6">Minecraft status reply,</text>
+    <text x="948" y="294" font-size="16" fill="#b8c0d6">Docker health, or both</text>
+  </g>
+  <g>
+    <rect x="1190" y="200" width="150" height="120" rx="14" fill="#a3be8c" fill-opacity="0.18" stroke="#a3be8c"/>
+    <circle cx="1220" cy="232" r="14" fill="#a3be8c"/>
+    <text x="1220" y="238" font-size="16" font-weight="700" text-anchor="middle" fill="#131a26">5</text>
+    <text x="1244" y="238" font-size="20" font-weight="700" fill="#e5e9f0">Connect</text>
+    <text x="1208" y="270" font-size="16" fill="#b8c0d6">Players go</text>
+    <text x="1208" y="294" font-size="16" fill="#b8c0d6">straight in</text>
+  </g>
+  <path d="M292 260 H348" stroke="#8cb2c5" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M580 260 H636" stroke="#8cb2c5" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M868 260 H924" stroke="#8cb2c5" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <path d="M1156 260 H1186" stroke="#8cb2c5" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <!-- shortcut when already running -->
+  <path d="M466 200 C466 160 1264 150 1264 196" stroke="#a3be8c" stroke-width="2.5" stroke-dasharray="7 6" fill="none" marker-end="url(#arrowGreen)"/>
+  <text x="866" y="162" font-size="15" font-style="italic" text-anchor="middle" fill="#a3be8c">already running and ready: connect immediately</text>
+
+  <!-- SLEEP lane -->
+  <rect x="40" y="384" width="1320" height="196" rx="18" fill="#8892b0" fill-opacity="0.08" stroke="#8892b0" stroke-opacity="0.45"/>
+  <text x="64" y="418" font-size="16" font-weight="700" letter-spacing="2" fill="#8892b0">SLEEP</text>
+
+  <g>
+    <rect x="64" y="440" width="300" height="108" rx="14" fill="#232d40" stroke="#8892b0"/>
+    <text x="88" y="478" font-size="20" font-weight="700" fill="#e5e9f0">Everyone leaves</text>
+    <text x="88" y="508" font-size="16" fill="#b8c0d6">The inactivity timer starts</text>
+    <text x="88" y="530" font-size="16" fill="#b8c0d6">(5 minutes by default)</text>
+  </g>
+  <g>
+    <rect x="460" y="440" width="300" height="108" rx="14" fill="#232d40" stroke="#8892b0"/>
+    <text x="484" y="478" font-size="20" font-weight="700" fill="#e5e9f0">Still empty at timeout</text>
+    <text x="484" y="508" font-size="16" fill="#b8c0d6">Safety checks run first:</text>
+    <text x="484" y="530" font-size="16" fill="#b8c0d6">no players, no holds, no waiters</text>
+  </g>
+  <g>
+    <rect x="856" y="440" width="300" height="108" rx="14" fill="#232d40" stroke="#8892b0"/>
+    <text x="880" y="478" font-size="20" font-weight="700" fill="#e5e9f0">Graceful docker stop</text>
+    <text x="880" y="508" font-size="16" fill="#b8c0d6">Honors the container stop</text>
+    <text x="880" y="530" font-size="16" fill="#b8c0d6">grace period; capped retries</text>
+  </g>
+  <g>
+    <rect x="1190" y="440" width="150" height="108" rx="14" fill="#8892b0" fill-opacity="0.2" stroke="#8892b0"/>
+    <text x="1265" y="488" font-size="22" font-weight="700" text-anchor="middle" fill="#e5e9f0">Asleep</text>
+    <text x="1265" y="518" font-size="15" text-anchor="middle" fill="#b8c0d6">waits for the</text>
+    <text x="1265" y="538" font-size="15" text-anchor="middle" fill="#b8c0d6">next player</text>
+  </g>
+  <path d="M364 494 H456" stroke="#8892b0" stroke-width="3" fill="none" marker-end="url(#arrowSleep)"/>
+  <path d="M760 494 H852" stroke="#8892b0" stroke-width="3" fill="none" marker-end="url(#arrowSleep)"/>
+  <path d="M1156 494 H1186" stroke="#8892b0" stroke-width="3" fill="none" marker-end="url(#arrowSleep)"/>
+
+  <!-- connect -> leave -->
+  <path d="M1265 320 V352 H214 V436" stroke="#8892b0" stroke-width="2.5" stroke-dasharray="7 6" fill="none" marker-end="url(#arrowSleep)"/>
+  <text x="740" y="372" font-size="15" font-style="italic" text-anchor="middle" fill="#8892b0">later, when the last player disconnects</text>
+</svg>

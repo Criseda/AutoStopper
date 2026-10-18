@@ -13,6 +13,8 @@ from release_lib import (
     GITHUB_API,
     MINECRAFT_RELEASE_VERSIONS,
     MODRINTH_API,
+    MODRINTH_BODY_FILE,
+    MODRINTH_BODY_SOURCE,
     PUBLISH_RELEASE_JOB,
     REQUIRED_RELEASE_JOBS,
     ReleaseError,
@@ -20,10 +22,12 @@ from release_lib import (
     Response,
     expand_minecraft_range,
     load_metadata,
+    modrinth_project_body_source,
     parse_version,
     pom_version,
     prepare_candidate,
     previous_stable_tag,
+    render_modrinth_project_body,
     select_candidate,
     validate_recovery_run,
     validate_source,
@@ -52,15 +56,20 @@ class FakeHttpClient:
         self.modrinth_notes = (directory / "modrinth-changelog.md").read_text(
             encoding="utf-8"
         )
+        self.modrinth_body = (directory / MODRINTH_BODY_FILE).read_text(
+            encoding="utf-8"
+        )
         self.github_release = None
         self.additional_github_releases: list[dict] = []
         self.github_assets: dict[str, bytes] = {}
         self.modrinth_version = None
+        self.discard_project_body_updates = False
         self.modrinth_project = {
             "id": "PG4gqnzX",
             "project_type": "mod",
             "client_side": "unsupported",
             "server_side": "required",
+            "body": "Stale page copy\n",
         }
         self.mutations: list[tuple[str, str]] = []
 
@@ -125,6 +134,12 @@ class FakeHttpClient:
         if method == "GET" and url == f"{MODRINTH_API}/project/PG4gqnzX":
             self.assert_modrinth_token(kwargs)
             return self.response(200, self.modrinth_project)
+        if method == "PATCH" and url == f"{MODRINTH_API}/project/PG4gqnzX":
+            self.assert_modrinth_token(kwargs)
+            self.mutations.append((method, url))
+            if not self.discard_project_body_updates:
+                self.modrinth_project["body"] = json.loads(kwargs["body"])["body"]
+            return self.response(204)
         if method == "GET" and url == f"{MODRINTH_API}/project/PG4gqnzX/version":
             self.assert_modrinth_token(kwargs)
             versions = [self.modrinth_version] if self.modrinth_version else []
@@ -192,6 +207,9 @@ def candidate(directory: Path) -> dict:
     (directory / "modrinth-changelog.md").write_text(
         "Curated Modrinth notes\n", encoding="utf-8"
     )
+    (directory / MODRINTH_BODY_FILE).write_text(
+        "# Curated Modrinth page\n", encoding="utf-8"
+    )
     return {
         "repository": "Criseda/AutoStopper",
         "tag": "2.0.0",
@@ -236,6 +254,8 @@ def verified_candidate(directory: Path, note: str = "Curated GitHub notes\n") ->
     )
     (directory / "release-notes.md").write_bytes(note.encode("utf-8"))
     (directory / "modrinth-changelog.md").write_bytes(modrinth_note.encode("utf-8"))
+    project_body = "# Curated Modrinth page\n"
+    (directory / MODRINTH_BODY_FILE).write_bytes(project_body.encode("utf-8"))
     manifest = {
         "schemaVersion": 1,
         "repository": "Criseda/AutoStopper",
@@ -250,6 +270,7 @@ def verified_candidate(directory: Path, note: str = "Curated GitHub notes\n") ->
         },
         "releaseNotesSha256": hashlib.sha256(note.encode()).hexdigest(),
         "modrinthChangelogSha256": hashlib.sha256(modrinth_note.encode()).hexdigest(),
+        "modrinthProjectBodySha256": hashlib.sha256(project_body.encode()).hexdigest(),
     }
     (directory / "release-manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -388,11 +409,143 @@ class PublisherTest(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "hashes"):
             self.publisher.publish()
 
+    def test_project_body_is_published_after_both_downloads_are_live(self) -> None:
+        self.publisher.publish()
+
+        self.assertEqual(self.client.modrinth_body, self.client.modrinth_project["body"])
+        patch = ("PATCH", f"{MODRINTH_API}/project/PG4gqnzX")
+        self.assertEqual(1, self.client.mutations.count(patch))
+        self.assertLess(
+            self.client.mutations.index(
+                ("PATCH", f"{GITHUB_API}/repos/Criseda/AutoStopper/releases/7")
+            ),
+            self.client.mutations.index(patch),
+        )
+
+    def test_matching_project_body_is_not_rewritten(self) -> None:
+        self.client.modrinth_project["body"] = self.client.modrinth_body
+        self.publisher.publish()
+        self.assertNotIn(
+            ("PATCH", f"{MODRINTH_API}/project/PG4gqnzX"), self.client.mutations
+        )
+
+    def test_stale_project_body_is_repaired_on_resume(self) -> None:
+        self.publisher.publish()
+        self.client.modrinth_project["body"] = "Edited by hand\n"
+        self.publisher.publish()
+        self.assertEqual(self.client.modrinth_body, self.client.modrinth_project["body"])
+
+    def test_unapplied_project_body_update_fails_the_release(self) -> None:
+        self.client.discard_project_body_updates = True
+        with self.assertRaisesRegex(ReleaseError, "does not match the candidate"):
+            self.publisher.publish()
+
+    def test_failed_release_never_updates_project_body(self) -> None:
+        self.publisher.publish()
+        self.client.modrinth_project["body"] = "Edited by hand\n"
+        self.client.modrinth_version["files"][0]["hashes"]["sha512"] = "0" * 128
+        with self.assertRaisesRegex(ReleaseError, "hashes"):
+            self.publisher.publish()
+        self.assertEqual("Edited by hand\n", self.client.modrinth_project["body"])
+
     def test_conflicting_modrinth_project_side_is_rejected_without_upload(self) -> None:
         self.client.modrinth_project["client_side"] = "optional"
         with self.assertRaisesRegex(ReleaseError, "client_side"):
             self.publisher.publish()
         self.assertEqual([], self.client.mutations)
+
+
+class ModrinthProjectBodyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        real, _, _ = repository_release_context()
+        shutil.copytree(real / "docs", self.root / "docs")
+        shutil.copytree(real / "release", self.root / "release")
+        self.page = self.root / MODRINTH_BODY_SOURCE
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def edit(self, old: str, new: str) -> None:
+        content = self.page.read_text(encoding="utf-8")
+        self.assertIn(old, content)
+        self.page.write_text(content.replace(old, new, 1), encoding="utf-8")
+
+    def test_repository_page_is_valid(self) -> None:
+        repository, _, _ = repository_release_context()
+        self.assertTrue(modrinth_project_body_source(repository))
+
+    def test_rejects_version_specific_text(self) -> None:
+        self.edit("# Stop paying", "# AutoStopper 2.1.1 stops paying")
+        with self.assertRaisesRegex(ReleaseError, "version independent"):
+            modrinth_project_body_source(self.root)
+
+    def test_rejects_missing_relative_link(self) -> None:
+        self.edit("(docs/security.md)", "(docs/missing.md)")
+        with self.assertRaisesRegex(ReleaseError, "existing docs/ file"):
+            modrinth_project_body_source(self.root)
+
+    def test_rejects_traversal_and_non_docs_links(self) -> None:
+        self.edit("(docs/security.md)", "(docs/../README.md)")
+        with self.assertRaisesRegex(ReleaseError, "existing docs/ file"):
+            modrinth_project_body_source(self.root)
+
+    def test_rejects_image_outside_assets(self) -> None:
+        self.edit("(docs/assets/modrinth/lifecycle.png)", "(docs/security.md)")
+        with self.assertRaisesRegex(ReleaseError, r"docs/assets/ file"):
+            modrinth_project_body_source(self.root)
+
+    def test_rejects_insecure_or_relative_html_targets(self) -> None:
+        self.edit("# Stop paying", '<img src="docs/assets/x.png">\n\n# Stop paying')
+        with self.assertRaisesRegex(ReleaseError, "absolute HTTPS"):
+            modrinth_project_body_source(self.root)
+
+    def test_requires_docker_socket_warning(self) -> None:
+        content = self.page.read_text(encoding="utf-8")
+        self.page.write_text(
+            content.replace("/var/run/docker.sock", "the Docker socket"),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ReleaseError, "security warning"):
+            modrinth_project_body_source(self.root)
+
+    def test_requires_tested_runtime_matrix(self) -> None:
+        self.edit("3.5.1 build 615", "3.4.0 build 615")
+        content = self.page.read_text(encoding="utf-8").replace("3.5.1", "3.4.0")
+        self.page.write_text(content, encoding="utf-8")
+        with self.assertRaisesRegex(ReleaseError, "legacy runtime version"):
+            modrinth_project_body_source(self.root)
+
+    def test_rejects_oversized_page(self) -> None:
+        self.page.write_text(
+            self.page.read_text(encoding="utf-8") + "x" * 70000, encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ReleaseError, "limit"):
+            modrinth_project_body_source(self.root)
+
+    def test_rendering_pins_images_and_links_to_the_tag(self) -> None:
+        rendered = render_modrinth_project_body(
+            "![Alt text](docs/assets/modrinth/a.png)\n"
+            "[Guide](docs/security.md#warning) and [Site](https://example.test/x)\n",
+            "Criseda/AutoStopper",
+            "2.2.0",
+        )
+        self.assertEqual(
+            "![Alt text](https://raw.githubusercontent.com/Criseda/AutoStopper/2.2.0/"
+            "docs/assets/modrinth/a.png)\n"
+            "[Guide](https://github.com/Criseda/AutoStopper/blob/2.2.0/"
+            "docs/security.md#warning) and [Site](https://example.test/x)\n",
+            rendered,
+        )
+
+    def test_rendered_repository_page_has_no_relative_targets(self) -> None:
+        repository, _, _ = repository_release_context()
+        rendered = render_modrinth_project_body(
+            modrinth_project_body_source(repository), "Criseda/AutoStopper", "2.2.0"
+        )
+        self.assertNotIn("](docs/", rendered)
+        self.assertIn("/2.2.0/docs/assets/modrinth/lifecycle.png)", rendered)
 
 
 class CandidateSelectionTest(unittest.TestCase):
