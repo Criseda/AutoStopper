@@ -4,6 +4,17 @@ All notable AutoStopper changes are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- AutoStopper talks to the Docker Engine API directly over the Unix socket or plain TCP, so the
+  proxy no longer needs the Docker CLI. The new `docker.backend` (`auto`, `api`, `cli`) and
+  `docker.endpoint` (`auto`, `unix://…`, `tcp://…`) settings are validated on load and reload.
+  `backend: auto` uses the API, finding the daemon through `DOCKER_HOST`, then an
+  `autostopper-docker` socket-proxy sidecar, then `/var/run/docker.sock`. It falls back to the CLI
+  for `ssh://` or TLS `DOCKER_HOST`, a selected Docker context, or Windows. The selected backend
+  and endpoint are logged and shown at the end of `/autostopper status`. Existing deployments that
+  mount the Docker socket keep working unchanged (#143).
+
 ## [2.2.0] - 2026-10-18
 
 ### Added

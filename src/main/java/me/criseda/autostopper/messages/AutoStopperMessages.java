@@ -255,6 +255,13 @@ public final class AutoStopperMessages {
                 "Failed", MessageTokens.FAILURE, "status check failed");
     }
 
+    /** The overview footer naming how Docker is reached, for example the Engine API endpoint. */
+    public static Component statusDockerAccess(String description) {
+        return finish(Component.text()
+                .append(Component.text("Docker: ", MessageTokens.TEXT_MUTED))
+                .append(Component.text(description, MessageTokens.TEXT_PRIMARY)));
+    }
+
     public static Component operationalStatus(String serverName, OperationalServerStatus status,
             Long minutesSinceActivity) {
         return operationalStatus(serverName, status, minutesSinceActivity, Instant.now(), false);

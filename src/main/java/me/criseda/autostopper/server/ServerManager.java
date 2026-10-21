@@ -77,6 +77,11 @@ public class ServerManager {
         return dockerManager.startContainer(mapping.containerName());
     }
 
+    /** How Docker is reached, for operator output. Never blocks. */
+    public String dockerAccess() {
+        return dockerManager.describeAccess();
+    }
+
     public ContainerStatus stopServer(String serverName) {
         Optional<ServerMapping> mapping = getServerMapping(serverName);
         if (mapping.isEmpty()) {

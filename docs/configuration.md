@@ -29,9 +29,17 @@ stop_retry:
   initial_backoff_seconds: 60
   max_backoff_seconds: 300
 
+# How AutoStopper reaches Docker. backend: auto | api | cli
+# endpoint: auto | unix:///path/docker.sock | tcp://host:port
+docker:
+  backend: auto
+  endpoint: auto
+
 # Add only server names already registered in Velocity.
 monitored_servers: []
 ```
+
+Configuration files from before 2.3.0 have no `docker` section; it defaults to `auto` for both keys.
 
 All duration fields must be positive whole numbers in their documented unit. Duplicate YAML keys
 are rejected. A reload validates the entire candidate before it becomes active: any error rejects
@@ -44,6 +52,7 @@ the whole file and retains the previous immutable configuration.
 | `inactivity_timeout_seconds` | No | `300` | Seconds with no connected players before a running monitored server becomes eligible for an automatic stop. Maximum `2147483647`. The scan runs once per minute, so a stop is not guaranteed at the exact second. |
 | `shutdown_timeout_seconds` | No | `10` | Hard deadline in seconds for cancelling AutoStopper schedules, lifecycle requests, readiness checks, Docker processes, and worker threads when Velocity shuts down. It does not stop backend containers. Maximum `2147483647`. |
 | `stop_retry` | No | See below | Bounded policy for failed or timed-out inactivity stops. |
+| `docker` | No | See below | How AutoStopper reaches Docker: backend and endpoint. |
 | `monitored_servers` | No | `[]` | Explicit one-to-one Velocity server and Docker container mappings. Only these servers are managed. |
 
 ## Stop retry policy
@@ -115,6 +124,54 @@ three explicit strategies:
 If `target_host` and `target_port` are omitted, the address registered for `server_name` in
 Velocity is used. In Compose, an explicit service DNS name such as `purpur:25565` avoids accidental
 use of a host-facing address that is not reachable from the proxy container.
+
+## Docker access
+
+| Field | Default | Contract |
+|---|---:|---|
+| `docker.backend` | `auto` | `api` talks to the Docker Engine API directly. `cli` runs the `docker` CLI (deprecated; planned for removal in 3.0.0). `auto` uses `api`, unless the Docker CLI is pointed somewhere the API backend cannot follow (see below). |
+| `docker.endpoint` | `auto` | `auto`, `unix:///absolute/path/docker.sock`, or `tcp://host:port` (port defaults to `2375`). Must be `auto` with `backend: cli`, because the Docker CLI reads `DOCKER_HOST` instead. |
+
+The Engine API backend needs no Docker CLI in the proxy container. It speaks plain HTTP over the
+Unix socket or TCP, uses unversioned API paths so the daemon's own API version applies, and reads
+status, health, and the stop grace period from a single `GET /containers/{name}/json`. Stops do
+not send `?t=`: the daemon waits for the container's own `StopTimeout`, as `docker stop` does, and
+AutoStopper's deadline is that grace period (at most 10 minutes) plus the 10-second command
+timeout. TLS endpoints are not supported by the API backend.
+
+`endpoint: auto` resolves in this order on every Docker operation:
+
+1. `DOCKER_HOST`, when it is `unix://` or `tcp://` without TLS;
+2. `tcp://autostopper-docker:2375`, when the name `autostopper-docker` resolves (the socket-proxy
+   sidecar service name; the lookup waits at most 2 seconds);
+3. `unix:///var/run/docker.sock`.
+
+`backend: auto` falls back to the CLI backend when:
+
+- `DOCKER_HOST` uses `ssh://`, `npipe://`, or TLS (`DOCKER_TLS_VERIFY` or `DOCKER_CERT_PATH` set);
+- no `DOCKER_HOST` is set and a Docker context other than `default` is selected, through
+  `DOCKER_CONTEXT` or `currentContext` in the Docker CLI's `config.json`;
+- no `DOCKER_HOST` is set and the proxy runs on Windows.
+
+An explicit `endpoint` always selects the API backend. With `backend: api`, an unsupported
+`DOCKER_HOST` is ignored with a warning and contexts are not consulted.
+
+The selected backend and endpoint are logged as `Docker access: …` on the first Docker operation
+and after a reload that changes the `docker` section, and the resolved endpoint is logged when it
+changes. Every startup and reload preflight logs `AutoStopper <context> preflight Docker access: …`,
+and `/autostopper status` ends with a `Docker:` line. A reload that changes the `docker` section
+applies to the next Docker operation; operations already running finish on the previous backend.
+
+The API backend reports the same diagnostics as the CLI backend: a missing container is
+`CONTAINER_MISSING`; a socket the proxy may not open, or HTTP 401/403 from a socket proxy or
+authorization plugin, is `PERMISSION_DENIED`; a missing socket, refused connection, or unresolvable
+host is `DAEMON_UNAVAILABLE`; a request past its deadline is `TIMED_OUT`; anything else is
+`INDETERMINATE`. `CLI_MISSING` only occurs with the CLI backend. Docker response bodies are written
+to the proxy log only, never to chat.
+
+An existing 2.2.0 deployment that mounts `/var/run/docker.sock` into the proxy and gives the proxy
+user the socket's group keeps working unchanged: `auto` finds no sidecar and uses the same socket
+with the same permissions.
 
 ## Reload and preflight
 

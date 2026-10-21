@@ -149,6 +149,69 @@ public class AutoStopperConfigTest {
     }
 
     @Test
+    public void dockerAccessDefaultsToAutoAndIsWrittenToTheGeneratedConfig() throws IOException {
+        ConfigLoadResult result = config.loadConfig();
+
+        assertTrue(result.successful());
+        assertEquals(DockerSettings.defaults(), result.snapshot().docker());
+        String generated = Files.readString(configFile, StandardCharsets.UTF_8);
+        assertTrue(generated.contains("docker:\n  backend: auto\n  endpoint: auto\n"), generated);
+
+        writeConfig("monitored_servers: []\n");
+        assertEquals(DockerSettings.defaults(), config.loadConfig().snapshot().docker(),
+                "configurations from before 2.3.0 have no docker section");
+    }
+
+    @Test
+    public void dockerAccessIsParsed() throws IOException {
+        writeConfig("""
+                docker:
+                  backend: API
+                  endpoint: tcp://autostopper-docker:2375
+                monitored_servers: []
+                """);
+
+        DockerSettings docker = config.loadConfig().snapshot().docker();
+
+        assertEquals(DockerSettings.Backend.API, docker.backend());
+        assertEquals(DockerEndpoint.tcp("autostopper-docker", 2375), docker.endpoint().orElseThrow());
+
+        writeConfig("""
+                docker:
+                  backend: cli
+                  endpoint: auto
+                monitored_servers: []
+                """);
+        docker = config.loadConfig().snapshot().docker();
+        assertEquals(DockerSettings.Backend.CLI, docker.backend());
+        assertTrue(docker.endpoint().isEmpty());
+    }
+
+    @Test
+    public void invalidDockerAccessRetainsPreviousSnapshot() throws IOException {
+        loadInitialSnapshot();
+        ConfigSnapshot previous = config.snapshot();
+        for (String[] invalid : List.of(
+                new String[] {"docker: unix:///var/run/docker.sock\n", "docker: expected a mapping"},
+                new String[] {"docker:\n  backend: podman\n", "docker.backend: expected one of auto, api, cli"},
+                new String[] {"docker:\n  backend: 1\n", "docker.backend"},
+                new String[] {"docker:\n  endpoint: ssh://user@host\n", "docker.endpoint: expected auto"},
+                new String[] {"docker:\n  endpoint: unix://relative.sock\n", "docker.endpoint"},
+                new String[] {"docker:\n  endpoint: tcp://host:70000\n", "docker.endpoint"},
+                new String[] {"docker:\n  endpoint: 2375\n", "docker.endpoint"},
+                new String[] {"docker:\n  backend: cli\n  endpoint: tcp://host:2375\n",
+                        "docker.endpoint: must be auto when docker.backend is cli"})) {
+            writeConfig(invalid[0] + "monitored_servers: []\n");
+
+            ConfigLoadResult result = config.loadConfig();
+
+            assertFalse(result.successful(), invalid[0]);
+            assertSame(previous, config.snapshot(), invalid[0]);
+            assertTrue(result.errorSummary().contains(invalid[1]), result.errorSummary());
+        }
+    }
+
+    @Test
     public void readinessPolicyIsValidatedAndCapturedPerServer() throws IOException {
         writeConfig("""
                 inactivity_timeout_seconds: 600

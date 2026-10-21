@@ -173,6 +173,10 @@ public class AutoStopperCommand implements SimpleCommand {
                 sendServerStatus(source, serverName, status);
                 anyFailure |= hasFailure(status);
             }
+            String dockerAccess = operationalStatus.dockerAccess();
+            if (dockerAccess != null) {
+                source.sendMessage(AutoStopperMessages.statusDockerAccess(dockerAccess));
+            }
             if (anyFailure) {
                 source.sendMessage(AutoStopperMessages.operatorHelpFooter(pluginVersion(), source instanceof Player));
             }
