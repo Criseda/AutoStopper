@@ -27,6 +27,8 @@ services:
     networks:
       - minecraft
 
+  # Default topology, matching the examples: the stock proxy image reaches Docker
+  # only through the autostopper-docker socket proxy, found by endpoint auto.
   velocity:
     image: ${E2E_VELOCITY_IMAGE:-itzg/mc-proxy:2026.8.0-java25}
     container_name: ${E2E_VELOCITY_CONTAINER:?set E2E_VELOCITY_CONTAINER}
@@ -36,31 +38,71 @@ services:
       VELOCITY_VERSION: ${E2E_VELOCITY_VERSION:-4.2.0}
       VELOCITY_BUILD_ID: ${E2E_VELOCITY_BUILD_ID:-30}
       REPLACE_ENV_VARIABLES: "true"
-      AUTOSTOPPER_E2E_BACKEND_CONTAINER: ${E2E_BACKEND_CONTAINER}
-      AUTOSTOPPER_E2E_FAIL_STOP_ONCE: ${E2E_FAIL_STOP_ONCE:-false}
     ports:
       - "127.0.0.1:${E2E_VELOCITY_PORT:?set E2E_VELOCITY_PORT}:25577"
     volumes:
       - type: bind
         source: ${E2E_VELOCITY_DATA:?set E2E_VELOCITY_DATA}
         target: /server
-      # DANGER: This grants the disposable proxy host-root-equivalent Docker control.
-      # Run this fixture only on an isolated development/CI host; see e2e/README.md.
+    depends_on:
+      - autostopper-docker
+    restart: "no"
+    networks:
+      - minecraft
+      - autostopper-internal
+
+  # The socket proxy from the examples, with the same image and allowlist. The only
+  # difference: it talks to the test-only relay below instead of the host socket.
+  autostopper-docker:
+    image: ${E2E_SOCKET_PROXY_IMAGE:?set E2E_SOCKET_PROXY_IMAGE}
+    container_name: ${E2E_SOCKET_PROXY_CONTAINER:?set E2E_SOCKET_PROXY_CONTAINER}
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=velocity
+      - -allowGET=^(/v[0-9.]+)?/(_ping|containers/[a-zA-Z0-9_.-]+/json)$
+      - -allowPOST=^(/v[0-9.]+)?/containers/[a-zA-Z0-9_.-]+/(start|stop)$
+      - -socketpath=/run/autostopper-e2e/docker.sock
+    volumes:
+      - docker-api-relay:/run/autostopper-e2e:ro
+    depends_on:
+      docker-api-fault-proxy:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - autostopper-internal
+
+  # TEST ONLY: records every Engine API call that passed the allowlist and fails the
+  # first stop of E2E_FAIL_STOP_CONTAINER. It has no network; it only relays between
+  # the shared socket and the host Docker socket. Never copy it into an example.
+  docker-api-fault-proxy:
+    image: ${E2E_CLIENT_IMAGE:?set E2E_CLIENT_IMAGE}
+    container_name: ${E2E_FAULT_PROXY_CONTAINER:?set E2E_FAULT_PROXY_CONTAINER}
+    user: "0:0"
+    entrypoint: ["node", "/e2e/docker-api-fault-proxy.js"]
+    environment:
+      E2E_FAIL_STOP_CONTAINER: ${E2E_FAIL_STOP_CONTAINER:-}
+    volumes:
+      # DANGER: host-root-equivalent Docker control for this disposable relay. Run the
+      # fixture only on an isolated development/CI host; see e2e/README.md.
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock
       - type: bind
-        source: ${E2E_ENTRYPOINT:?set E2E_ENTRYPOINT}
-        target: /e2e/docker-entrypoint.sh
+        source: ${E2E_FAULT_PROXY:?set E2E_FAULT_PROXY}
+        target: /e2e/docker-api-fault-proxy.js
         read_only: true
-      - type: bind
-        source: ${E2E_DOCKER_WRAPPER:?set E2E_DOCKER_WRAPPER}
-        target: /e2e/docker-cli-wrapper.sh
-        read_only: true
-    entrypoint: ["/bin/bash", "/e2e/docker-entrypoint.sh"]
+      - docker-api-relay:/run/autostopper-e2e
+    network_mode: none
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('fs').statSync('/run/autostopper-e2e/docker.sock')"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
     restart: "no"
-    networks:
-      - minecraft
 
   client:
     image: ${E2E_CLIENT_IMAGE:?set E2E_CLIENT_IMAGE}
@@ -75,3 +117,8 @@ services:
 networks:
   minecraft:
     driver: bridge
+  autostopper-internal:
+    internal: true
+
+volumes:
+  docker-api-relay:
