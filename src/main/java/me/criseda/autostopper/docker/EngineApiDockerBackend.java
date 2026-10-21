@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Talks to the Docker Engine API directly. One {@code GET /containers/{name}/json} answers status,
@@ -22,7 +23,7 @@ final class EngineApiDockerBackend implements DockerBackend {
     private final Logger logger;
     private final EngineApiTransport transport;
     private final EndpointSource endpoints;
-    private volatile DockerEndpoint lastEndpoint;
+    private final AtomicReference<DockerEndpoint> lastEndpoint = new AtomicReference<>();
 
     EngineApiDockerBackend(Logger logger, EngineApiTransport transport, EndpointSource endpoints) {
         this.logger = Objects.requireNonNull(logger, "logger");
@@ -264,16 +265,16 @@ final class EngineApiDockerBackend implements DockerBackend {
 
     @Override
     public String describe() {
-        DockerEndpoint resolved = lastEndpoint;
+        DockerEndpoint resolved = lastEndpoint.get();
         return "Engine API, " + endpoints.describe(resolved);
     }
 
     private EngineApiResponse send(String method, String path, Duration timeout) throws EngineApiException {
         long deadline = System.nanoTime() + timeout.toNanos();
         DockerEndpoint endpoint = endpoints.resolve(deadline);
-        DockerEndpoint previous = lastEndpoint;
+        // Swap atomically so concurrent operations log each endpoint change once.
+        DockerEndpoint previous = lastEndpoint.getAndSet(endpoint);
         if (!endpoint.equals(previous)) {
-            lastEndpoint = endpoint;
             logger.info("Docker Engine API endpoint: {}", endpoints.describe(endpoint));
         }
         return transport.exchange(endpoint, method, path, deadline);
