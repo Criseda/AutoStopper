@@ -22,6 +22,8 @@ from release_lib import (
     Response,
     expand_minecraft_range,
     load_metadata,
+    MODRINTH_INSTALL_PIN_FILES,
+    modrinth_install_pins,
     modrinth_project_body_source,
     parse_version,
     pom_version,
@@ -29,6 +31,7 @@ from release_lib import (
     previous_stable_tag,
     render_modrinth_project_body,
     select_candidate,
+    validate_modrinth_install_pins,
     validate_recovery_run,
     validate_source,
     verify_candidate,
@@ -302,6 +305,43 @@ class VersionTest(unittest.TestCase):
         repository, version, _ = repository_release_context()
         with self.assertRaisesRegex(ReleaseError, "previousTag"):
             validate_source(repository, version, "1.1.1")
+
+
+class ModrinthInstallPinTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        for relative in MODRINTH_INSTALL_PIN_FILES:
+            self.write(relative, 'MODRINTH_PROJECTS: "autostopper:2.3.0"\n')
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def write(self, relative: str, content: str) -> None:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    def test_repository_pins_agree(self) -> None:
+        repository, _, _ = repository_release_context()
+        pins = modrinth_install_pins(repository)
+        self.assertEqual(set(MODRINTH_INSTALL_PIN_FILES), set(pins))
+        self.assertEqual(1, len(set(pins.values())), pins)
+
+    def test_release_version_must_match_every_pin(self) -> None:
+        validate_modrinth_install_pins(self.root, "2.3.0")
+        self.write("examples/velocity-preview/docker-compose.yml",
+                   'MODRINTH_PROJECTS: "autostopper:2.2.0"\n')
+        with self.assertRaisesRegex(ReleaseError, "velocity-preview.*autostopper:2.2.0.*expected 2.3.0"):
+            validate_modrinth_install_pins(self.root, "2.3.0")
+
+    def test_missing_or_duplicate_pin_is_rejected(self) -> None:
+        self.write("README.md", "Download the JAR manually.\n")
+        with self.assertRaisesRegex(ReleaseError, "README.md must pin exactly one.*found 0"):
+            modrinth_install_pins(self.root)
+        self.write("README.md", 'MODRINTH_PROJECTS: "autostopper:2.3.0"\n' * 2)
+        with self.assertRaisesRegex(ReleaseError, "found 2"):
+            modrinth_install_pins(self.root)
 
 
 class MinecraftRangeTest(unittest.TestCase):

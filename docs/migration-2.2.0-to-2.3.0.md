@@ -28,6 +28,10 @@ first two, so 2.3.0 uses the same socket with the same group permissions.
    docker compose up -d
    ```
 
+   To have the proxy install it from Modrinth instead, delete `AutoStopper.jar` and add
+   `MODRINTH_PROJECTS: "autostopper:2.3.0"` and `MINECRAFT_VERSION: "1.21.4"` to the Velocity
+   service's `environment`, as in the examples. Do not keep both: Velocity would load only one copy.
+
 3. **Check the proxy log.** Expect, with your context and mapping count:
 
    ```text

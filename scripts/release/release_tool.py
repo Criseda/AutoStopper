@@ -17,6 +17,7 @@ from release_lib import (
     previous_stable_tag,
     select_candidate,
     validate_recovery_run,
+    validate_modrinth_install_pins,
     validate_source,
     verify_candidate,
 )
@@ -100,6 +101,7 @@ def main() -> int:
         print(previous_stable_tag(tags(arguments.repository), arguments.version))
     elif arguments.command == "validate-source":
         validate_source(arguments.repository, arguments.version, arguments.previous_tag)
+        validate_modrinth_install_pins(arguments.repository, arguments.version)
         print(f"Release source metadata agrees on {arguments.version}")
     elif arguments.command == "prepare-candidate":
         manifest = prepare_candidate(

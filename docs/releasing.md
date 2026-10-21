@@ -36,6 +36,9 @@ been exposed.
    `minecraftVersionRange` endpoints in `release/release-metadata.json` when the supported
    Minecraft range changes. The source Velocity descriptor must remain `${project.version}`.
    Do not hand-edit the Modrinth game-version selector; the workflow derives it from the range.
+   Bump the pinned `MODRINTH_PROJECTS: "autostopper:X.Y.Z"` in the three examples and the README
+   installation step. Release preflight (`validate-source`) rejects a tag whose version differs
+   from those pins, and CI requires the four pins to agree.
 2. Merge only after the protected `master` checks pass. Do not tag an unmerged branch commit.
 3. From a clean, current `master`, create a numeric tag with no `v` prefix at the exact merged
    commit, then push only that tag:
