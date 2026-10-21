@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "artifactName": "AutoStopper-{version}.jar",
-  "previousTag": "2.1.1",
+  "previousTag": "2.2.0",
   "javaBytecode": 21,
   "velocityRuntimes": [
     {
