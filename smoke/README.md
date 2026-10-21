@@ -57,7 +57,12 @@ SnakeYAML, absent Velocity-provided libraries, and unexpected classes.
 ./mvnw verify -Psystem-tests
 ./mvnw verify -Psystem-tests -Dvelocity.system.profiles=stable
 ./mvnw verify -Psystem-tests -Dvelocity.system.profiles=preview
+./smoke/run-smoke.sh preview
 ```
+
+`run-smoke.ps1` and `run-smoke.sh` are equivalent: both take an optional profile (`legacy`,
+`stable-4.0`, `stable-4.1`, `stable`, `preview`, or `all`, the default) and run the Maven command
+above from the repository root.
 
 Startup and shutdown are bounded. Runtime logs are retained under
 `target/velocity-system-tests/logs/`; disposable fixture directories and test

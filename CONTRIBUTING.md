@@ -147,6 +147,7 @@ package layout under `src/test/java`, and keep shared helpers in `testing/`.
 
   ```sh
   ./mvnw verify -Psystem-tests -Dvelocity.system.profiles=preview
+  ./smoke/run-smoke.sh stable
   ```
 
 - **Release-candidate E2E** is a protected release gate, not an ordinary pull-request check. It
