@@ -21,7 +21,7 @@
   <a href="#installation">Installation</a> ·
   <a href="docs/configuration.md">Configuration</a> ·
   <a href="docs/troubleshooting.md">Troubleshooting</a> ·
-  <a href="docs/migration-1.1.2-to-2.0.0.md">Migration</a> ·
+  <a href="docs/migration-2.2.0-to-2.3.0.md">Migration</a> ·
   <a href="docs/releasing.md">Releasing</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="CODE_OF_CONDUCT.md">Code of Conduct</a> ·
@@ -52,18 +52,18 @@ Velocity's event and command workers.
 ## Security boundary
 
 > [!WARNING]
-> **Docker socket access is host-root-equivalent.** The tested installation mounts
-> `/var/run/docker.sock` into the Velocity container. Any process that can use that socket can
-> control the Docker host with privileges effectively equivalent to root. Adding the `bungeecord`
-> user to the socket's group changes which user can reach the socket; it does **not** create
-> ordinary non-root isolation. Treat a compromise of Velocity, AutoStopper, another proxy plugin,
-> or the proxy container as a compromise of the Docker host.
+> **Docker socket access is host-root-equivalent.** In the examples, Velocity does not get the
+> socket. A small `autostopper-docker` socket proxy holds `/var/run/docker.sock` as root and lets
+> Velocity only inspect, start, and stop containers. That limits what a compromised proxy can do
+> through Docker, but it can still stop or start any container on the host and read their
+> environment variables, unless you pin the allowlist to your backend names. If you mount the
+> socket into Velocity directly instead, any process in the proxy has full root-equivalent control
+> of the Docker host.
 
 Use a dedicated host or VM where practical, install only trusted proxy plugins, restrict host and
-Compose-file access, do not expose the Docker API over TCP, and grant the proxy access only on a
-host whose containers it is allowed to control. A read-only socket mount is not sufficient because
-AutoStopper must start and stop containers. See [Docker socket security](docs/security.md) before
-installing. To report a suspected vulnerability privately, see [SECURITY.md](SECURITY.md).
+Compose-file access, and never publish the Docker API or the socket proxy's port. See
+[Docker socket security](docs/security.md) before installing. To report a suspected vulnerability
+privately, see [SECURITY.md](SECURITY.md).
 
 ## Supported runtimes
 
@@ -103,29 +103,39 @@ rewrites an existing one.
 ## Installation
 
 Prerequisites are Docker Engine with Linux containers and Docker Compose v2, enough access to create
-the backend containers in advance, and acceptance of the security boundary above.
+the backend containers in advance, and acceptance of the security boundary above. The examples need
+no custom entrypoint and no host-specific values such as group IDs.
 
 1. Copy one complete support-line directory to the Docker host. Do not combine the Java 21 image
    from the legacy example with the Java 25 Velocity 4.x builds from the stable or preview
    examples.
 2. Download the 2.2.0 JAR from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) or
    [Modrinth](https://modrinth.com/plugin/autostopper) after it is published. Put the unchanged JAR
-   at `velocity_server/plugins/AutoStopper.jar` inside the copied example directory.
-3. Review the socket mount and entrypoint in `docker-compose.yml`, then start the stack:
+   at `velocity_server/plugins/AutoStopper.jar` inside the copied example directory. These
+   examples need AutoStopper 2.3.0 or newer; for 2.2.0 or earlier, use the
+   [examples from that release](https://github.com/Criseda/AutoStopper/tree/2.2.0/examples).
+3. Review the `autostopper-docker` socket proxy in `docker-compose.yml`, then start the stack:
 
    ```sh
    docker compose up -d
    ```
 
 4. Add every managed backend to the `[servers]` section of
-   `velocity_server/velocity.toml`. The key must exactly match AutoStopper's `server_name`:
+   `velocity_server/velocity.toml`. The key must exactly match AutoStopper's `server_name`.
+   Remove Velocity's sample servers and the sample entries under `[forced-hosts]`, which name them:
 
    ```toml
    [servers]
    purpur = "purpur:25565"
    fabric = "fabric:25565"
    try = ["purpur"]
+
+   [forced-hosts]
    ```
+
+   Velocity disconnects a waiting player after `read-timeout` (30 seconds by default, under
+   `[advanced]`). If a backend can take longer to become ready, raise it, for example
+   `read-timeout = 180000`.
 
 5. Edit the generated lowercase data path
    `velocity_server/plugins/autostopper/config.yml`. Start with one mapping if desired:
@@ -158,20 +168,56 @@ the backend containers in advance, and acceptance of the security boundary above
    docker compose ps
    ```
 
+   The log should show `Docker Engine API endpoint: endpoint auto: tcp://autostopper-docker:2375
+   (socket-proxy sidecar)` and a healthy preflight.
    In Velocity, `/autostopper status` reports each monitored server with clear state badges such as
    `● Ready`, `○ Sleeping`, `◐ Waking`, or `◐ Running · readiness unverified`.
    `Running · readiness unverified` means Docker reports the container running but AutoStopper has not
    completed this process generation's configured readiness check; normal player demand performs that
    check before connecting. `! Unavailable · Docker cannot be reached` or `! Failed` includes an
-   operator-safe detail; raw Docker stderr remains only in the proxy log. Run
+   operator-safe detail; raw Docker errors remain only in the proxy log. Run
    `/autostopper status <server>` (or click a server name in game) for one server's startup stage,
    hold, waiting players, activity, the last failure with its remediation, and its last 10
-   lifecycle operations.
+   lifecycle operations. The overview ends with a `Docker:` line showing how AutoStopper reaches
+   Docker.
 
 Managed containers must already exist and use `restart: "no"` so Docker does not immediately undo
 an inactivity stop. Unmonitored hubs or lobbies are not intercepted or stopped by AutoStopper and
 may retain `restart: unless-stopped`. AutoStopper honors each container's stop grace period, so give
 backends with large worlds enough time to save, for example `stop_grace_period: 60s`.
+
+Upgrading from 2.2.0? The JAR is a drop-in replacement, and the
+[migration guide](docs/migration-2.2.0-to-2.3.0.md) shows how to move an entrypoint deployment to
+the socket proxy.
+
+### Alternatives
+
+The socket proxy is the recommended setup. AutoStopper also works without it; see
+[Docker access](docs/configuration.md#docker-access) for how it finds Docker.
+
+- **Mount the socket directly.** Remove the `autostopper-docker` service, mount
+  `/var/run/docker.sock` into Velocity, and run Velocity as the image's `bungeecord` user with the
+  socket's group. Find the group ID with `stat -c '%g' /var/run/docker.sock`, then add to the
+  Velocity service:
+
+  ```yaml
+  user: "1000:1000"
+  group_add:
+    - "<socket group ID>"
+  volumes:
+    - ./velocity_server:/server
+    - /var/run/docker.sock:/var/run/docker.sock
+  ```
+
+  The image skips its own ownership fix when it does not start as root, so run
+  `sudo chown -R 1000:1000 velocity_server` once. `group_add` has no effect without `user`,
+  because the image drops supplementary groups when it switches users. This gives Velocity
+  host-root-equivalent access.
+- **Velocity outside Docker.** Run the proxy as a user in the `docker` group. AutoStopper uses
+  `/var/run/docker.sock`, or `DOCKER_HOST` when it is a `unix://` or plain `tcp://` address.
+- **The Docker CLI backend.** Set `docker.backend: cli` when the daemon is reached in a way the
+  Engine API backend does not support, such as `ssh://` or TLS. The proxy then needs the `docker`
+  CLI. This backend is deprecated and planned for removal in 3.0.0.
 
 ## Behavior
 

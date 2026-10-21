@@ -40,7 +40,8 @@ playing on.
    (recommended), or
    [Java 25 / Velocity 4.2.1 preview](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-preview).
 2. Put the downloaded, unchanged JAR in `velocity_server/plugins/AutoStopper.jar`.
-3. Start the stack once, then edit `velocity_server/plugins/autostopper/config.yml`.
+3. Run `docker compose up -d`. The example uses the stock proxy image with no custom entrypoint
+   and no host-specific values. Then edit `velocity_server/plugins/autostopper/config.yml`.
 4. Map each Velocity server name to its existing Docker container:
 
    ```yaml
@@ -54,10 +55,12 @@ playing on.
 Managed containers must already exist and use `restart: "no"`, otherwise Docker can undo a
 successful idle stop. Leave always-on servers out of `monitored_servers`.
 
-> **Docker security warning.** The tested install mounts `/var/run/docker.sock` into Velocity.
-> Access to that socket is effectively root on the Docker host, and adding the proxy user to the
-> socket group is not ordinary non-root isolation. Prefer a dedicated host or VM, install only
-> trusted plugins, and read the [security guidance](docs/security.md) first.
+> **Docker security warning.** Access to `/var/run/docker.sock` is effectively root on the Docker
+> host. The examples keep it out of Velocity: a small socket proxy holds the socket and lets
+> Velocity only inspect, start and stop containers. Velocity can still stop or start any container
+> and read container environment variables unless you pin the proxy to your backends. Prefer a
+> dedicated host or VM, install only trusted plugins, and read the
+> [security guidance](docs/security.md) first.
 
 ## Sensible defaults
 
@@ -109,6 +112,8 @@ status request, but only that backend is exercised directly.
 - [Troubleshooting](docs/troubleshooting.md) covers every failure outcome you can see in chat or logs
 - [Configuration reference](docs/configuration.md)
 - [Security guidance](docs/security.md)
+- [Migrating from 2.2.0 to 2.3.0](docs/migration-2.2.0-to-2.3.0.md) (drop-in; optional move to the
+  socket proxy)
 - [Migrating from 1.1.2 to 2.0.0](docs/migration-1.1.2-to-2.0.0.md)
 - [Full installation guide](https://github.com/Criseda/AutoStopper#installation)
 - [Changelog](https://github.com/Criseda/AutoStopper/blob/master/CHANGELOG.md)

@@ -5,9 +5,10 @@ This pinned example is the minimum supported (floor) line. It uses
 stable Velocity 4.x line, prefer the [stable example](../velocity-stable/). Do not substitute the
 Java 25 / Velocity 4.x values from the stable or preview examples piecemeal.
 
-> **DANGER — HOST-ROOT-EQUIVALENT ACCESS:** `docker-compose.yml` mounts
-> `/var/run/docker.sock` into Velocity. Socket-group access is not ordinary non-root isolation.
-> Read the complete [security guidance](../../docs/security.md) before starting the stack.
+> **Docker access:** `docker-compose.yml` runs an `autostopper-docker` socket proxy that holds
+> `/var/run/docker.sock` as root and lets Velocity only inspect, start, and stop containers.
+> Velocity uses the stock image with no custom entrypoint and no socket mount. Read the complete
+> [security guidance](../../docs/security.md) before starting the stack.
 
 Follow the repository [installation guide](../../README.md#installation). Put the release JAR at
 `velocity_server/plugins/AutoStopper.jar`; the plugin configuration is generated at

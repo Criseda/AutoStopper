@@ -15,6 +15,22 @@ All notable AutoStopper changes are documented here.
   and endpoint are logged and shown at the end of `/autostopper status`. Existing deployments that
   mount the Docker socket keep working unchanged (#143).
 
+### Changed
+
+- The examples give Velocity Docker access through an `autostopper-docker` socket proxy
+  (`wollomatic/socket-proxy`, pinned by digest) on an internal network. The proxy allows only
+  container inspect, start, and stop, and only from the `velocity` service. Velocity runs the stock
+  `itzg/mc-proxy` image with no custom entrypoint, no socket mount, and no host-specific values.
+  The README, security, troubleshooting, and configuration docs describe this setup, and a new
+  [2.2.0 to 2.3.0 migration guide](docs/migration-2.2.0-to-2.3.0.md) covers moving an existing
+  deployment. The custom `docker-entrypoint.sh` pattern and the Docker CLI backend
+  (`docker.backend: cli`) are deprecated and planned for removal in 3.0.0. Mounting the socket
+  directly remains supported (#144).
+
+### Removed
+
+- `docker-entrypoint.sh` from the examples. Existing deployments that use it keep working (#144).
+
 ## [2.2.0] - 2026-10-18
 
 ### Added

@@ -4,6 +4,29 @@
 # mc-proxy image Java version and the pinned Velocity build must be upgraded
 # together.
 services:
+  # Docker access for AutoStopper. This socket proxy is the only service that
+  # mounts the Docker socket, and it lets Velocity inspect, start and stop
+  # containers and nothing else. It runs as root so it can open the socket
+  # without host-specific group IDs. Read ../../docs/security.md before use.
+  autostopper-docker:
+    image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    command:
+      - -listenip=0.0.0.0
+      # Only the velocity service may connect. The Docker host can reach
+      # internal networks too, so do not widen this to a CIDR.
+      - -allowfrom=velocity
+      - -allowGET=^(/v[0-9.]+)?/(_ping|containers/[a-zA-Z0-9_.-]+/json)$
+      - -allowPOST=^(/v[0-9.]+)?/containers/[a-zA-Z0-9_.-]+/(start|stop)$
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - autostopper-internal
+
   velocity:
     image: itzg/mc-proxy:2026.8.0-java25
     container_name: velocity-server
@@ -17,14 +40,13 @@ services:
       - "25565:25577"
     volumes:
       - ./velocity_server:/server
-      # DANGER: This grants the proxy host-root-equivalent Docker control.
-      # Read ../../docs/security.md and use an isolated/trusted host.
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./docker-entrypoint.sh:/docker-entrypoint.sh:ro
     networks:
       - mc-network
+      # AutoStopper finds the autostopper-docker service on this network.
+      - autostopper-internal
+    depends_on:
+      - autostopper-docker
     restart: unless-stopped
-    entrypoint: ["/bin/bash", "/docker-entrypoint.sh"]
 
   # Example Minecraft servers that can be managed by AutoStopper.
   # Backend server Java is independent of the proxy Java; only the proxy
@@ -62,3 +84,6 @@ services:
 networks:
   mc-network:
     driver: bridge
+  # No outside access: only the socket proxy and Velocity are attached.
+  autostopper-internal:
+    internal: true
