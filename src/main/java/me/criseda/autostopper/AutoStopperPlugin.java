@@ -150,7 +150,8 @@ public class AutoStopperPlugin {
     }
 
     protected ServerManager createServerManager(AutoStopperConfig config, AutoStopperExecutor executor) {
-        DockerManager dockerManager = new DockerManager(logger, new ProcessCommandRunner());
+        DockerManager dockerManager = new DockerManager(logger, new ProcessCommandRunner(),
+                () -> config.snapshot().docker());
         return new ServerManager(server, logger, config, dockerManager, executor);
     }
 

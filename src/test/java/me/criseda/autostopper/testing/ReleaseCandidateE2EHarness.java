@@ -487,6 +487,10 @@ public final class ReleaseCandidateE2EHarness {
                   max_attempts: 2
                   initial_backoff_seconds: 1
                   max_backoff_seconds: 1
+                # Failure injection and the command audit wrap the Docker CLI until #145 moves them
+                # to the Engine API.
+                docker:
+                  backend: cli
                 monitored_servers:
                   - server_name: backend
                     container_name: %s

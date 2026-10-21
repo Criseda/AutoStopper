@@ -3,8 +3,8 @@ package me.criseda.autostopper.docker;
 import java.util.Objects;
 
 /**
- * A Docker status result with a safe diagnostic. Raw process output deliberately never leaves
- * {@link DockerManager}.
+ * A Docker status result with a safe diagnostic. Raw CLI output and Engine API bodies deliberately
+ * never leave the Docker backends.
  */
 public record ContainerInspection(ContainerStatus status, DockerDiagnostic diagnostic,
         String detail, String remediation) {

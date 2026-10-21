@@ -4,6 +4,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 public final class ConfigSnapshot {
@@ -13,6 +14,7 @@ public final class ConfigSnapshot {
     private final int inactivityTimeoutSeconds;
     private final int shutdownTimeoutSeconds;
     private final StopRetrySettings stopRetry;
+    private final DockerSettings docker;
     private final List<ServerMapping> servers;
     private final Map<String, String> serverToContainer;
 
@@ -27,9 +29,15 @@ public final class ConfigSnapshot {
 
     public ConfigSnapshot(int inactivityTimeoutSeconds, int shutdownTimeoutSeconds,
             StopRetrySettings stopRetry, List<ServerMapping> servers) {
+        this(inactivityTimeoutSeconds, shutdownTimeoutSeconds, stopRetry, DockerSettings.defaults(), servers);
+    }
+
+    public ConfigSnapshot(int inactivityTimeoutSeconds, int shutdownTimeoutSeconds,
+            StopRetrySettings stopRetry, DockerSettings docker, List<ServerMapping> servers) {
         this.inactivityTimeoutSeconds = inactivityTimeoutSeconds;
         this.shutdownTimeoutSeconds = shutdownTimeoutSeconds;
         this.stopRetry = stopRetry;
+        this.docker = Objects.requireNonNull(docker, "docker");
         this.servers = List.copyOf(servers);
 
         Map<String, String> mapping = new LinkedHashMap<>();
@@ -53,6 +61,10 @@ public final class ConfigSnapshot {
 
     public StopRetrySettings stopRetry() {
         return stopRetry;
+    }
+
+    public DockerSettings docker() {
+        return docker;
     }
 
     public List<ServerMapping> servers() {

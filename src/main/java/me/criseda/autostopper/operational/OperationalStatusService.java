@@ -172,6 +172,11 @@ public final class OperationalStatusService {
         });
     }
 
+    /** How Docker is reached, as last selected by a Docker operation. Never blocks. */
+    public String dockerAccess() {
+        return serverManager.dockerAccess();
+    }
+
     public void reconcileConfig(ConfigSnapshot current) {
         Map<String, ServerMapping> mappings = mappings(current);
         synchronized (configurationLock) {
@@ -321,6 +326,9 @@ public final class OperationalStatusService {
 
     private void logSummary(String context, ConfigSnapshot snapshot,
             Map<String, ContainerInspection> inspections, PreflightSummary summary) {
+        if (!snapshot.servers().isEmpty()) {
+            logger.info("AutoStopper {} preflight Docker access: {}", context, serverManager.dockerAccess());
+        }
         if (summary.healthy()) {
             logger.info("AutoStopper {} preflight healthy: {} mapping(s) checked.",
                     context, summary.healthyMappings());

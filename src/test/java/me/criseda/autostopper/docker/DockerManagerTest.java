@@ -11,13 +11,17 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
+import me.criseda.autostopper.config.DockerSettings;
+
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Queue;
+import java.util.concurrent.atomic.AtomicReference;
 
 @ExtendWith(MockitoExtension.class)
 public class DockerManagerTest {
@@ -331,6 +335,32 @@ public class DockerManagerTest {
                 dockerManager.getContainerHealth("test-container", Duration.ofSeconds(1)));
         assertEquals(ContainerHealth.TIMED_OUT,
                 dockerManager.getContainerHealth("test-container", Duration.ofSeconds(1)));
+    }
+
+    @Test
+    public void testChangedSettingsSelectANewBackendForLaterOperations() {
+        AtomicReference<DockerSettings> settings = new AtomicReference<>(DockerSettings.defaults());
+        List<DockerSettings> selections = new ArrayList<>();
+        DockerManager manager = new DockerManager(logger, Duration.ofSeconds(10), settings::get, selected -> {
+            selections.add(selected);
+            return new DockerCliBackend(logger, commandRunner, "backend " + selections.size());
+        });
+        commandRunner.stage("inspect", completed(0, "true", ""));
+        commandRunner.stage("inspect", completed(0, "true", ""));
+        commandRunner.stage("inspect", completed(0, "false", ""));
+
+        assertTrue(manager.describeAccess().startsWith("not selected yet"));
+        manager.getContainerStatus("test-container");
+        manager.getContainerStatus("test-container");
+        assertEquals(List.of(DockerSettings.defaults()), selections, "unchanged settings reuse the backend");
+        assertEquals("backend 1", manager.describeAccess());
+
+        DockerSettings cli = new DockerSettings(DockerSettings.Backend.CLI, Optional.empty());
+        settings.set(cli);
+        assertEquals(ContainerStatus.STOPPED, manager.getContainerStatus("test-container"));
+        assertEquals(List.of(DockerSettings.defaults(), cli), selections);
+        assertEquals("backend 2", manager.describeAccess());
+        verify(logger).info("Docker access: {}", "backend 2");
     }
 
     private void assertOnlyInspectIssued() {

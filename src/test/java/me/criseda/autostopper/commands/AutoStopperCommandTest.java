@@ -307,6 +307,27 @@ public class AutoStopperCommandTest {
     }
 
     @Test
+    public void testExecuteStatusCommand_ShowsDockerAccessAfterTheRows() {
+        grant(AutoStopperCommand.STATUS_PERMISSION);
+        SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});
+
+        ConfigSnapshot snapshot = snapshot("server1");
+        when(config.snapshot()).thenReturn(snapshot);
+        CompletableFuture<Map<String, OperationalServerStatus>> statuses = new CompletableFuture<>();
+        when(operationalStatus.collectStatuses(snapshot)).thenReturn(statuses);
+        when(operationalStatus.dockerAccess())
+                .thenReturn("Engine API, endpoint auto: tcp://autostopper-docker:2375 (socket-proxy sidecar)");
+
+        command.execute(invocation);
+        statuses.complete(Map.of("server1", operational(OperationalState.STOPPED)));
+
+        ArgumentCaptor<Component> messageCaptor = ArgumentCaptor.forClass(Component.class);
+        verify(source, times(3)).sendMessage(messageCaptor.capture());
+        assertEquals("Docker: Engine API, endpoint auto: tcp://autostopper-docker:2375 (socket-proxy sidecar)",
+                plainText(messageCaptor.getAllValues().get(2)));
+    }
+
+    @Test
     public void testExecuteStatusCommand_DistinctTypedStates() {
         grant(AutoStopperCommand.STATUS_PERMISSION);
         SimpleCommand.Invocation invocation = mockInvocation(source, new String[]{"status"});

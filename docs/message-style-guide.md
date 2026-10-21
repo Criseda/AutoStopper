@@ -60,7 +60,10 @@ Server status
 ◐ lobby      Running · readiness unverified · active 5m ago
 ◐ minigames  Stopping
 ! backup     Failed · last failure 3m ago during server startup: Docker operation failed
+Docker: Engine API, endpoint auto: tcp://autostopper-docker:2375 (socket-proxy sidecar)
 ```
+
+- **Docker access footer:** after the rows, a muted `Docker:` label names the selected backend and endpoint, so operators can see which path AutoStopper uses without reading logs.
 
 - **Relative time:** every age in a status view (activity and last failure) uses one formatter: `just now`, `5m ago`, `1h 15m ago`, `2d 3h ago`. The overview never prints raw ISO-8601 timestamps.
 - **Last failure:** an overview row shows the failure's age, context, and safe detail. The remediation lives in the per-server view, so the row stays one line.

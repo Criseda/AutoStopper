@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
@@ -26,6 +27,7 @@ public class AutoStopperConfig implements ConfigProvider {
     private static final String TIMEOUT_KEY = "inactivity_timeout_seconds";
     private static final String SHUTDOWN_TIMEOUT_KEY = "shutdown_timeout_seconds";
     private static final String STOP_RETRY_KEY = "stop_retry";
+    private static final String DOCKER_KEY = "docker";
     private static final String SERVERS_KEY = "monitored_servers";
 
     private final Path dataDirectory;
@@ -110,11 +112,50 @@ public class AutoStopperConfig implements ConfigProvider {
                 SHUTDOWN_TIMEOUT_KEY, ConfigSnapshot.DEFAULT_SHUTDOWN_TIMEOUT_SECONDS,
                 Integer.MAX_VALUE, errors);
         StopRetrySettings stopRetry = parseStopRetry(root.get(STOP_RETRY_KEY), errors);
+        DockerSettings docker = parseDocker(root.get(DOCKER_KEY), errors);
         List<ServerMapping> mappings = parseMappings(root, errors);
         if (!errors.isEmpty()) {
             throw new ConfigValidationException(errors);
         }
-        return new ConfigSnapshot(timeout, shutdownTimeout, stopRetry, mappings);
+        return new ConfigSnapshot(timeout, shutdownTimeout, stopRetry, docker, mappings);
+    }
+
+    private DockerSettings parseDocker(Object value, List<String> errors) {
+        DockerSettings defaults = DockerSettings.defaults();
+        if (value == null) {
+            return defaults;
+        }
+        if (!(value instanceof Map<?, ?> docker)) {
+            errors.add(DOCKER_KEY + ": expected a mapping");
+            return defaults;
+        }
+        DockerSettings.Backend backend = DockerSettings.Backend.AUTO;
+        Object backendValue = docker.get("backend");
+        if (backendValue != null) {
+            Optional<DockerSettings.Backend> parsed = backendValue instanceof String name
+                    ? DockerSettings.Backend.fromConfigValue(name)
+                    : Optional.empty();
+            if (parsed.isEmpty()) {
+                errors.add(DOCKER_KEY + ".backend: expected one of auto, api, cli");
+                return defaults;
+            }
+            backend = parsed.get();
+        }
+        Optional<DockerEndpoint> endpoint = Optional.empty();
+        Object endpointValue = docker.get("endpoint");
+        if (endpointValue != null && !DockerSettings.AUTO.equals(endpointValue)) {
+            endpoint = endpointValue instanceof String text ? DockerEndpoint.parse(text) : Optional.empty();
+            if (endpoint.isEmpty()) {
+                errors.add(DOCKER_KEY + ".endpoint: expected auto, unix:///absolute/path or tcp://host:port");
+                return defaults;
+            }
+        }
+        if (backend == DockerSettings.Backend.CLI && endpoint.isPresent()) {
+            errors.add(DOCKER_KEY + ".endpoint: must be auto when docker.backend is cli; "
+                    + "the Docker CLI reads DOCKER_HOST instead");
+            return defaults;
+        }
+        return new DockerSettings(backend, endpoint);
     }
 
     private StopRetrySettings parseStopRetry(Object value, List<String> errors) {
@@ -337,6 +378,11 @@ public class AutoStopperConfig implements ConfigProvider {
             writer.write("  initial_backoff_seconds: "
                     + StopRetrySettings.DEFAULT_INITIAL_BACKOFF_SECONDS + "\n");
             writer.write("  max_backoff_seconds: " + StopRetrySettings.DEFAULT_MAX_BACKOFF_SECONDS + "\n\n");
+            writer.write("# How AutoStopper reaches Docker. backend: auto | api | cli\n");
+            writer.write("# endpoint: auto | unix:///path/docker.sock | tcp://host:port\n");
+            writer.write(DOCKER_KEY + ":\n");
+            writer.write("  backend: " + DockerSettings.AUTO + "\n");
+            writer.write("  endpoint: " + DockerSettings.AUTO + "\n\n");
             writer.write("# Add only server names already registered in Velocity.\n");
             writer.write(SERVERS_KEY + ": []\n\n");
             writer.write("# Example:\n");
@@ -362,6 +408,8 @@ public class AutoStopperConfig implements ConfigProvider {
         logger.info("- Stop retries: {} attempts, {}-{} second backoff",
                 snapshot.stopRetry().maxAttempts(), snapshot.stopRetry().initialBackoff().toSeconds(),
                 snapshot.stopRetry().maxBackoff().toSeconds());
+        logger.info("- Docker: backend {}, endpoint {}",
+                snapshot.docker().backend().configValue(), snapshot.docker().endpointConfigValue());
         logger.info("- Monitored servers: {}", String.join(", ", snapshot.serverNames()));
     }
 

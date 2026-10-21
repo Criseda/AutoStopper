@@ -1,11 +1,20 @@
 package me.criseda.autostopper.docker;
 
+import me.criseda.autostopper.config.DockerSettings;
+
 import org.slf4j.Logger;
 
 import java.time.Duration;
-import java.util.List;
-import java.util.Locale;
+import java.util.Objects;
+import java.util.OptionalLong;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
+/**
+ * Container operations with AutoStopper's deadline and stop-grace semantics. The transport is a
+ * {@link DockerBackend} chosen from the current {@link DockerSettings}; a reload that changes them
+ * takes effect on the next operation, while operations already running keep their backend.
+ */
 public final class DockerManager {
     private static final Duration DEFAULT_COMMAND_TIMEOUT = Duration.ofSeconds(10);
     /** Docker's stop grace period when a container does not configure StopTimeout. */
@@ -13,20 +22,50 @@ public final class DockerManager {
     /** Upper bound on how long AutoStopper waits for a container's own stop grace period. */
     static final Duration MAX_STOP_GRACE_PERIOD = Duration.ofMinutes(10);
     private final Logger logger;
-    private final CommandRunner commandRunner;
     private final Duration commandTimeout;
+    private final Supplier<DockerSettings> settings;
+    private final Function<DockerSettings, DockerBackend> backendFactory;
+    private final Object selectionLock = new Object();
+    private volatile Selection selection;
 
+    /** Uses the Docker CLI only, regardless of configuration. */
     public DockerManager(Logger logger, CommandRunner commandRunner) {
         this(logger, commandRunner, DEFAULT_COMMAND_TIMEOUT);
     }
 
+    /** Uses the Docker CLI only, regardless of configuration. */
     public DockerManager(Logger logger, CommandRunner commandRunner, Duration commandTimeout) {
+        this(logger, new DockerCliBackend(logger, commandRunner, "Docker CLI"), commandTimeout);
+    }
+
+    /** Selects the backend and endpoint from {@code settings} on first use and after each change. */
+    public DockerManager(Logger logger, CommandRunner commandRunner, Supplier<DockerSettings> settings) {
+        this(logger, DEFAULT_COMMAND_TIMEOUT, settings,
+                new DockerBackendSelector(logger, commandRunner)::select);
+    }
+
+    DockerManager(Logger logger, DockerBackend backend, Duration commandTimeout) {
+        this(logger, commandTimeout, DockerSettings::defaults, ignored -> backend);
+    }
+
+    DockerManager(Logger logger, Duration commandTimeout, Supplier<DockerSettings> settings,
+            Function<DockerSettings, DockerBackend> backendFactory) {
         if (commandTimeout.isNegative() || commandTimeout.isZero()) {
             throw new IllegalArgumentException("commandTimeout must be positive");
         }
         this.logger = logger;
-        this.commandRunner = commandRunner;
         this.commandTimeout = commandTimeout;
+        this.settings = Objects.requireNonNull(settings, "settings");
+        this.backendFactory = Objects.requireNonNull(backendFactory, "backendFactory");
+    }
+
+    /**
+     * Describes how Docker is reached, for operator output. Never blocks; before the first Docker
+     * operation no backend has been selected yet.
+     */
+    public String describeAccess() {
+        Selection current = selection;
+        return current == null ? "not selected yet (no Docker operation has run)" : current.backend().describe();
     }
 
     public ContainerStatus getContainerStatus(String containerName) {
@@ -43,125 +82,17 @@ public final class DockerManager {
 
     public ContainerInspection inspectContainer(String containerName, Duration timeout) {
         requirePositive(timeout, "timeout");
-        Duration effectiveTimeout = boundedCommandTimeout(timeout);
-        CommandOutput output = commandRunner.run(List.of(
-                "docker", "inspect", "-f", "{{.State.Running}}", containerName), effectiveTimeout);
-
-        switch (output.outcome()) {
-            case TIMED_OUT:
-                logger.warn("Timed out after {}ms checking status for container {}: {}",
-                        effectiveTimeout.toMillis(), containerName, output.stderr().trim());
-                return diagnostic(ContainerStatus.TIMED_OUT, DockerDiagnostic.TIMED_OUT,
-                        "Docker status check timed out",
-                        "Check Docker daemon responsiveness and host load, then retry.");
-            case SPAWN_FAILED:
-                logger.error("Could not execute docker inspect for container {}: {}",
-                        containerName, output.stderr());
-                if (isCliMissingError(output.stderr().toLowerCase(Locale.ROOT))) {
-                    return diagnostic(ContainerStatus.FAILED, DockerDiagnostic.CLI_MISSING,
-                            "Docker CLI could not be found",
-                            "Install the Docker CLI and ensure the proxy process can find it on PATH.");
-                }
-                return diagnostic(ContainerStatus.FAILED, DockerDiagnostic.INDETERMINATE,
-                        "Docker CLI could not be started",
-                        "Verify the Docker executable and proxy process permissions, then retry.");
-            default:
-                break;
-        }
-
-        if (output.exitCode() == 0) {
-            String state = output.stdout().trim();
-            if ("true".equalsIgnoreCase(state)) {
-                return ContainerInspection.healthy(ContainerStatus.RUNNING);
-            }
-            if ("false".equalsIgnoreCase(state)) {
-                return ContainerInspection.healthy(ContainerStatus.STOPPED);
-            }
-            logger.warn("Unexpected output from docker inspect for container {}: {} (Exit Code: {})",
-                    containerName, state, output.exitCode());
-            return diagnostic(ContainerStatus.FAILED, DockerDiagnostic.INDETERMINATE,
-                    "Docker returned an unexpected container state",
-                    "Run docker inspect for the configured container and verify its state.");
-        }
-
-        String stderr = output.stderr().trim().toLowerCase(Locale.ROOT);
-        if (stderr.contains("no such object") || stderr.contains("no such container")) {
-            logger.warn("Container {} does not exist: {}", containerName, output.stderr().trim());
-            return diagnostic(ContainerStatus.MISSING, DockerDiagnostic.CONTAINER_MISSING,
-                    "configured container does not exist",
-                    "Create the container or correct its container_name mapping.");
-        }
-        if (isPermissionDeniedError(stderr)) {
-            logger.warn("Docker daemon inaccessible while checking container {}: {}",
-                    containerName, output.stderr().trim());
-            return diagnostic(ContainerStatus.INACCESSIBLE, DockerDiagnostic.PERMISSION_DENIED,
-                    "permission denied accessing Docker",
-                    "Grant the proxy process access to the Docker socket or endpoint.");
-        }
-        if (isDaemonUnavailableError(stderr)) {
-            logger.warn("Docker daemon unavailable while checking container {}: {}",
-                    containerName, output.stderr().trim());
-            return diagnostic(ContainerStatus.INACCESSIBLE, DockerDiagnostic.DAEMON_UNAVAILABLE,
-                    "Docker daemon is unavailable",
-                    "Start Docker and verify the configured Docker endpoint is reachable.");
-        }
-        logger.warn("Could not check status for container {}: {} (Exit Code: {})",
-                containerName, output.stderr().trim(), output.exitCode());
-        return diagnostic(ContainerStatus.FAILED, DockerDiagnostic.INDETERMINATE,
-                "Docker status check failed",
-                "Run docker inspect for the configured container and review proxy logs.");
+        return backend().inspect(containerName, boundedCommandTimeout(timeout));
     }
 
     public ContainerHealth getContainerHealth(String containerName, Duration timeout) {
         requirePositive(timeout, "timeout");
-        Duration effectiveTimeout = boundedCommandTimeout(timeout);
-        CommandOutput output = commandRunner.run(List.of(
-                "docker", "inspect", "-f",
-                "{{if .State.Running}}{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}{{else}}stopped{{end}}",
-                containerName), effectiveTimeout);
-
-        switch (output.outcome()) {
-            case TIMED_OUT:
-                logger.warn("Timed out after {}ms checking health for container {}: {}",
-                        effectiveTimeout.toMillis(), containerName, output.stderr().trim());
-                return ContainerHealth.TIMED_OUT;
-            case SPAWN_FAILED:
-                logger.error("Could not execute docker health inspect for container {}: {}",
-                        containerName, output.stderr());
-                return ContainerHealth.FAILED;
-            default:
-                break;
-        }
-
-        if (output.exitCode() == 0) {
-            return switch (output.stdout().trim().toLowerCase(Locale.ROOT)) {
-                case "healthy" -> ContainerHealth.HEALTHY;
-                case "starting" -> ContainerHealth.STARTING;
-                case "unhealthy" -> ContainerHealth.UNHEALTHY;
-                case "none", "<no value>" -> ContainerHealth.NO_HEALTHCHECK;
-                case "stopped" -> ContainerHealth.STOPPED;
-                default -> {
-                    logger.warn("Unexpected health output for container {}: {}",
-                            containerName, output.stdout().trim());
-                    yield ContainerHealth.FAILED;
-                }
-            };
-        }
-
-        String stderr = output.stderr().trim().toLowerCase(Locale.ROOT);
-        if (stderr.contains("no such object") || stderr.contains("no such container")) {
-            return ContainerHealth.MISSING;
-        }
-        if (isInaccessibleError(stderr)) {
-            return ContainerHealth.INACCESSIBLE;
-        }
-        logger.warn("Could not inspect health for container {}: {} (Exit Code: {})",
-                containerName, output.stderr().trim(), output.exitCode());
-        return ContainerHealth.FAILED;
+        return backend().health(containerName, boundedCommandTimeout(timeout));
     }
 
     public ContainerStatus startContainer(String containerName) {
-        ContainerStatus status = getContainerStatus(containerName);
+        DockerBackend backend = backend();
+        ContainerStatus status = backend.inspect(containerName, commandTimeout).status();
 
         switch (status) {
             case RUNNING:
@@ -184,98 +115,36 @@ public final class DockerManager {
         }
 
         logger.info("Starting container: {}", containerName);
-        CommandOutput output = commandRunner.run(List.of("docker", "start", containerName), commandTimeout);
-
-        switch (output.outcome()) {
-            case TIMED_OUT:
-                logger.error("Timed out after {}ms starting container {}: {}",
-                        commandTimeout.toMillis(), containerName, output.stderr().trim());
-                return ContainerStatus.TIMED_OUT;
-            case SPAWN_FAILED:
-                logger.error("Could not execute docker start for container {}: {}",
-                        containerName, output.stderr());
-                return ContainerStatus.FAILED;
-            default:
-                break;
-        }
-
-        if (output.exitCode() == 0) {
-            logger.info("Started container: {}", containerName);
-            return ContainerStatus.RUNNING;
-        }
-
-        String stderr = output.stderr().trim().toLowerCase(Locale.ROOT);
-        if (isInaccessibleError(stderr)) {
-            logger.error("Permission denied starting container {}: {}", containerName, output.stderr().trim());
-            return ContainerStatus.INACCESSIBLE;
-        }
-        logger.error("Failed to start container {}: {} (Exit Code: {})",
-                containerName, output.stderr().trim(), output.exitCode());
-        return ContainerStatus.FAILED;
+        return backend.start(containerName, commandTimeout);
     }
 
     public ContainerStatus stopContainer(String containerName) {
-        // docker stop waits for the container's own StopTimeout before SIGKILL, so the CLI deadline
+        DockerBackend backend = backend();
+        // Docker waits for the container's own StopTimeout before SIGKILL, so the stop deadline
         // must cover that grace period rather than cutting a graceful save short.
-        Duration gracePeriod = stopGracePeriod(containerName);
+        Duration gracePeriod = stopGracePeriod(backend, containerName);
         Duration stopDeadline = gracePeriod.plus(commandTimeout);
-        CommandOutput output = commandRunner.run(List.of("docker", "stop", containerName), stopDeadline);
-
-        switch (output.outcome()) {
-            case TIMED_OUT:
-                if (!Thread.currentThread().isInterrupted()
-                        && getContainerStatus(containerName) == ContainerStatus.STOPPED) {
-                    logger.warn("docker stop for container {} exceeded {}ms, but the container is stopped",
-                            containerName, stopDeadline.toMillis());
-                    return ContainerStatus.STOPPED;
-                }
-                logger.error("Timed out after {}ms stopping container {} (stop grace period {}s): {}",
-                        stopDeadline.toMillis(), containerName, gracePeriod.toSeconds(),
-                        output.stderr().trim());
-                return ContainerStatus.TIMED_OUT;
-            case SPAWN_FAILED:
-                logger.error("Could not execute docker stop for container {}: {}",
-                        containerName, output.stderr());
-                return ContainerStatus.FAILED;
-            default:
-                break;
+        ContainerStatus result = backend.stop(containerName, stopDeadline);
+        if (result != ContainerStatus.TIMED_OUT) {
+            return result;
         }
-
-        if (output.exitCode() == 0) {
-            logger.info("Stopped container: {}", containerName);
+        if (!Thread.currentThread().isInterrupted()
+                && backend.inspect(containerName, commandTimeout).status() == ContainerStatus.STOPPED) {
+            logger.warn("docker stop for container {} exceeded {}ms, but the container is stopped",
+                    containerName, stopDeadline.toMillis());
             return ContainerStatus.STOPPED;
         }
-
-        String stderr = output.stderr().trim().toLowerCase(Locale.ROOT);
-        if (isInaccessibleError(stderr)) {
-            logger.error("Permission denied stopping container {}: {}", containerName, output.stderr().trim());
-            return ContainerStatus.INACCESSIBLE;
-        }
-        logger.error("Failed to stop container {}: {} (Exit Code: {})",
-                containerName, output.stderr().trim(), output.exitCode());
-        return ContainerStatus.FAILED;
+        logger.error("Timed out after {}ms stopping container {} (stop grace period {}s)",
+                stopDeadline.toMillis(), containerName, gracePeriod.toSeconds());
+        return ContainerStatus.TIMED_OUT;
     }
 
-    private Duration stopGracePeriod(String containerName) {
-        CommandOutput output = commandRunner.run(List.of(
-                "docker", "inspect", "-f", "{{.Config.StopTimeout}}", containerName), commandTimeout);
-        if (output.outcome() != CommandOutput.Outcome.COMPLETED || output.exitCode() != 0) {
-            logger.debug("Could not read the stop grace period for container {}; assuming {}s: {}",
-                    containerName, DEFAULT_STOP_GRACE_PERIOD.toSeconds(), output.stderr().trim());
+    private Duration stopGracePeriod(DockerBackend backend, String containerName) {
+        OptionalLong configured = backend.stopTimeoutSeconds(containerName, commandTimeout);
+        if (configured.isEmpty()) {
             return DEFAULT_STOP_GRACE_PERIOD;
         }
-        String value = output.stdout().trim();
-        if (value.isEmpty() || "<nil>".equals(value) || "<no value>".equals(value)) {
-            return DEFAULT_STOP_GRACE_PERIOD;
-        }
-        long seconds;
-        try {
-            seconds = Long.parseLong(value);
-        } catch (NumberFormatException e) {
-            logger.warn("Unexpected stop grace period for container {}: {}; assuming {}s",
-                    containerName, value, DEFAULT_STOP_GRACE_PERIOD.toSeconds());
-            return DEFAULT_STOP_GRACE_PERIOD;
-        }
+        long seconds = configured.getAsLong();
         if (seconds < 0 || seconds > MAX_STOP_GRACE_PERIOD.toSeconds()) {
             logger.warn("Stop grace period {}s for container {} is unbounded or too long; waiting at most {}s",
                     seconds, containerName, MAX_STOP_GRACE_PERIOD.toSeconds());
@@ -284,33 +153,45 @@ public final class DockerManager {
         return Duration.ofSeconds(seconds);
     }
 
-    private boolean isInaccessibleError(String stderr) {
-        return isPermissionDeniedError(stderr) || isDaemonUnavailableError(stderr);
+    private DockerBackend backend() {
+        DockerSettings wanted = settings.get();
+        Selection current = selection;
+        if (current != null && current.settings().equals(wanted)) {
+            return current.backend();
+        }
+        synchronized (selectionLock) {
+            current = selection;
+            if (current == null || !current.settings().equals(wanted)) {
+                DockerBackend backend = Objects.requireNonNull(backendFactory.apply(wanted), "backend");
+                current = new Selection(wanted, backend);
+                selection = current;
+                logger.info("Docker access: {}", backend.describe());
+            }
+            return current.backend();
+        }
     }
 
-    private boolean isPermissionDeniedError(String stderr) {
-        return stderr.contains("permission denied") || stderr.contains("access denied");
-    }
-
-    private boolean isDaemonUnavailableError(String stderr) {
-        return stderr.contains("cannot connect to the docker daemon")
-                || stderr.contains("is the docker daemon running")
-                || stderr.contains("connection refused")
-                || stderr.contains("dial unix")
-                || stderr.contains("error during connect")
-                || stderr.contains("dockerdesktoplinuxengine");
-    }
-
-    private boolean isCliMissingError(String error) {
-        return error.contains("docker not found")
-                || error.contains("no such file or directory")
-                || error.contains("cannot find the file")
-                || error.contains("createprocess error=2");
-    }
-
-    private ContainerInspection diagnostic(ContainerStatus status, DockerDiagnostic diagnostic,
+    static ContainerInspection diagnostic(ContainerStatus status, DockerDiagnostic diagnostic,
             String detail, String remediation) {
         return new ContainerInspection(status, diagnostic, detail, remediation);
+    }
+
+    static ContainerInspection containerMissing() {
+        return diagnostic(ContainerStatus.MISSING, DockerDiagnostic.CONTAINER_MISSING,
+                "configured container does not exist",
+                "Create the container or correct its container_name mapping.");
+    }
+
+    static ContainerInspection permissionDenied() {
+        return diagnostic(ContainerStatus.INACCESSIBLE, DockerDiagnostic.PERMISSION_DENIED,
+                "permission denied accessing Docker",
+                "Grant the proxy process access to the Docker socket or endpoint.");
+    }
+
+    static ContainerInspection daemonUnavailable() {
+        return diagnostic(ContainerStatus.INACCESSIBLE, DockerDiagnostic.DAEMON_UNAVAILABLE,
+                "Docker daemon is unavailable",
+                "Start Docker and verify the configured Docker endpoint is reachable.");
     }
 
     private void requirePositive(Duration timeout, String name) {
@@ -321,5 +202,8 @@ public final class DockerManager {
 
     private Duration boundedCommandTimeout(Duration requested) {
         return requested.compareTo(commandTimeout) < 0 ? requested : commandTimeout;
+    }
+
+    private record Selection(DockerSettings settings, DockerBackend backend) {
     }
 }

@@ -59,6 +59,7 @@ class OperationalStatusServiceTest {
         ConfigSnapshot snapshot = snapshot("healthy", "missing", "docker");
         CompletableFuture<Map<String, ContainerInspection>> inspections = new CompletableFuture<>();
         when(serverManager.inspectContainersAsync(snapshot)).thenReturn(inspections);
+        when(serverManager.dockerAccess()).thenReturn("Engine API, endpoint auto: unix:///var/run/docker.sock");
 
         CompletableFuture<PreflightSummary> preflight = service.runPreflight(snapshot, "startup");
 
@@ -74,6 +75,8 @@ class OperationalStatusServiceTest {
         assertEquals(1, summary.healthyMappings());
         assertEquals(2, summary.degradedMappings());
         verify(logger).warn(contains("preflight degraded"), eq("startup"), eq(1), eq(2));
+        verify(logger).info(contains("preflight Docker access"), eq("startup"),
+                eq("Engine API, endpoint auto: unix:///var/run/docker.sock"));
     }
 
     @Test
