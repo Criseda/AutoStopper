@@ -39,9 +39,10 @@ playing on.
    [Java 25 / Velocity 4.2](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-stable)
    (recommended), or
    [Java 25 / Velocity 4.2.1 preview](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-preview).
-2. Put the downloaded, unchanged JAR in `velocity_server/plugins/AutoStopper.jar`.
-3. Run `docker compose up -d`. The example uses the stock proxy image with no custom entrypoint
-   and no host-specific values. Then edit `velocity_server/plugins/autostopper/config.yml`.
+2. Run `docker compose up -d`. The proxy installs AutoStopper from Modrinth by itself
+   (`MODRINTH_PROJECTS`, pinned to one release), using the stock proxy image with no custom
+   entrypoint and no host-specific values.
+3. Edit `velocity_server/plugins/autostopper/config.yml`.
 4. Map each Velocity server name to its existing Docker container:
 
    ```yaml

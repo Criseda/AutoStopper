@@ -26,6 +26,11 @@ All notable AutoStopper changes are documented here.
   deployment. The custom `docker-entrypoint.sh` pattern and the Docker CLI backend
   (`docker.backend: cli`) are deprecated and planned for removal in 3.0.0. Mounting the socket
   directly remains supported (#144).
+- The examples and README install AutoStopper from Modrinth at startup through the proxy image's
+  `MODRINTH_PROJECTS`, pinned to one release, with `MINECRAFT_VERSION` set as the image requires.
+  There is no JAR to download; upgrading means changing the pin. The proxy contacts Modrinth on
+  every start. Installing the JAR manually remains documented as the alternative; use one method
+  only (#142).
 
 ### Removed
 

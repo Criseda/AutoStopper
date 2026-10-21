@@ -172,6 +172,42 @@ def changelog_section(repository: Path, version: str, previous_tag: str) -> str:
     return content
 
 
+MODRINTH_INSTALL_PIN = re.compile(r'MODRINTH_PROJECTS:\s*"autostopper:([^"]+)"')
+MODRINTH_INSTALL_PIN_FILES = (
+    "examples/velocity-legacy/docker-compose.yml",
+    "examples/velocity-stable/docker-compose.yml",
+    "examples/velocity-preview/docker-compose.yml",
+    "README.md",
+)
+
+
+def modrinth_install_pins(repository: Path) -> dict[str, str]:
+    """The AutoStopper version each example and the README install from Modrinth."""
+    pins = {}
+    for relative in MODRINTH_INSTALL_PIN_FILES:
+        try:
+            content = (repository / relative).read_text(encoding="utf-8")
+        except OSError as error:
+            raise ReleaseError(f"Cannot read {relative}: {error}") from error
+        found = MODRINTH_INSTALL_PIN.findall(content)
+        if len(found) != 1:
+            raise ReleaseError(
+                f"{relative} must pin exactly one MODRINTH_PROJECTS autostopper version, "
+                f"found {len(found)}"
+            )
+        pins[relative] = found[0]
+    return pins
+
+
+def validate_modrinth_install_pins(repository: Path, version: str) -> None:
+    """At release time the examples and README must install the version being released."""
+    for relative, pinned in modrinth_install_pins(repository).items():
+        if pinned != version:
+            raise ReleaseError(
+                f"{relative} pins autostopper:{pinned} in MODRINTH_PROJECTS, expected {version}"
+            )
+
+
 def validate_source(repository: Path, version: str, previous_tag: str) -> str:
     parse_version(version)
     parse_version(previous_tag)

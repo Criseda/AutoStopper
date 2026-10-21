@@ -109,12 +109,12 @@ no custom entrypoint and no host-specific values such as group IDs.
 1. Copy one complete support-line directory to the Docker host. Do not combine the Java 21 image
    from the legacy example with the Java 25 Velocity 4.x builds from the stable or preview
    examples.
-2. Download the 2.2.0 JAR from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) or
-   [Modrinth](https://modrinth.com/plugin/autostopper) after it is published. Put the unchanged JAR
-   at `velocity_server/plugins/AutoStopper.jar` inside the copied example directory. These
-   examples need AutoStopper 2.3.0 or newer; for 2.2.0 or earlier, use the
+2. Review the `autostopper-docker` socket proxy in `docker-compose.yml`. The proxy installs
+   AutoStopper from [Modrinth](https://modrinth.com/plugin/autostopper) at startup, pinned by
+   `MODRINTH_PROJECTS: "autostopper:2.3.0"`; there is nothing to download. These examples need
+   AutoStopper 2.3.0 or newer; for 2.2.0 or earlier, use the
    [examples from that release](https://github.com/Criseda/AutoStopper/tree/2.2.0/examples).
-3. Review the `autostopper-docker` socket proxy in `docker-compose.yml`, then start the stack:
+3. Start the stack:
 
    ```sh
    docker compose up -d
@@ -185,6 +185,15 @@ Managed containers must already exist and use `restart: "no"` so Docker does not
 an inactivity stop. Unmonitored hubs or lobbies are not intercepted or stopped by AutoStopper and
 may retain `restart: unless-stopped`. AutoStopper honors each container's stop grace period, so give
 backends with large worlds enough time to save, for example `stop_grace_period: 60s`.
+
+To upgrade, change the pinned version in `MODRINTH_PROJECTS` and run `docker compose up -d`; the old
+JAR is removed automatically. The proxy contacts Modrinth on every start, so it cannot start while
+Modrinth is unreachable.
+
+To install manually instead, remove `MODRINTH_PROJECTS` and `MINECRAFT_VERSION` and put the
+unchanged JAR from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) at
+`velocity_server/plugins/AutoStopper.jar`. Use one method only: with both, Velocity loads whichever
+copy it finds first and refuses the other.
 
 Upgrading from 2.2.0? The JAR is a drop-in replacement, and the
 [migration guide](docs/migration-2.2.0-to-2.3.0.md) shows how to move an entrypoint deployment to

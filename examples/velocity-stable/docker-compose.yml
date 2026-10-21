@@ -34,6 +34,12 @@ services:
       VELOCITY_VERSION: "4.2.0"
       VELOCITY_BUILD_ID: "30"
       REPLACE_ENV_VARIABLES: "true"
+      # Installs AutoStopper from Modrinth at startup, pinned to one release. The
+      # Minecraft version only selects the download; any version from 1.7.2 to 26.2
+      # works and it does not have to match your backends. Remove both lines to
+      # install the JAR manually instead (see the README).
+      MODRINTH_PROJECTS: "autostopper:2.3.0"
+      MINECRAFT_VERSION: "1.21.4"
     ports:
       - "25565:25577"
     volumes:
