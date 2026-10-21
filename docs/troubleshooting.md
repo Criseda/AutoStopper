@@ -2,13 +2,20 @@
 
 Start with the proxy log and `/autostopper status`. Status output contains bounded, sanitized
 details for the latest failure, and `/autostopper status <server>` adds its remediation; raw Docker
-stderr is logged only for operators.
+errors are logged only for operators. The status overview ends with a `Docker:` line showing the
+backend and endpoint AutoStopper is using.
+
 Run Docker checks from inside the Velocity container because host access alone does not prove that
-the proxy user can reach the daemon:
+the proxy can reach the daemon. The proxy image has `curl`. Print only the HTTP status: an inspect
+body contains the container's environment variables.
 
 ```sh
-docker compose exec velocity docker version
-docker compose exec velocity docker inspect purpur-server
+# Socket proxy (the examples): expect 200 and 200
+docker compose exec velocity curl -s -o /dev/null -w '%{http_code}\n' http://autostopper-docker:2375/_ping
+docker compose exec velocity curl -s -o /dev/null -w '%{http_code}\n' http://autostopper-docker:2375/containers/purpur-server/json
+
+# Direct socket mount: run as the proxy user
+docker compose exec -u 1000 velocity curl -s -o /dev/null -w '%{http_code}\n' --unix-socket /var/run/docker.sock http://docker/_ping
 ```
 
 `RUNNING_UNVERIFIED` (`Running · readiness unverified`) is expected when Docker reports a mapped container running but AutoStopper has
@@ -33,19 +40,38 @@ readiness failure detail and follow the actions under [Readiness failures](#read
 
 | Status/detail | Typed classification | Operator action |
 |---|---|---|
-| `Docker CLI could not be found` | `CLI_MISSING` | Ensure the example entrypoint completed, `/usr/bin/docker` exists in the proxy container, and the proxy process can find `docker` on `PATH`. |
-| `Docker daemon is unavailable` | `DAEMON_UNAVAILABLE` | Start Docker, verify the socket is mounted at `/var/run/docker.sock`, and check daemon/host health. |
-| `permission denied accessing Docker` | `PERMISSION_DENIED` | Check the socket GID, the group created by the entrypoint, and the groups of the `bungeecord` process. Restart the container after permission changes. Remember that granting access is host-root-equivalent. |
-| `configured container does not exist` / `MISSING` | `CONTAINER_MISSING` | Run `docker ps -a`, create the backend with `docker compose create` or `up`, or correct `container_name`. AutoStopper never creates containers. |
-| `Docker status check timed out` / `Timed out` | `TIMED_OUT` | Check daemon responsiveness, disk pressure, host load, and stuck Docker operations. The built-in Docker command deadline is bounded; retry after the daemon recovers. |
-| `Docker status check failed` / `FAILED` | `INDETERMINATE` | Run the equivalent `docker inspect` inside the proxy container and review raw proxy logs. Correct the Docker/container error before retrying. |
+| `Docker daemon is unavailable` | `DAEMON_UNAVAILABLE` | Check the `Docker:` line for the endpoint in use. With the socket proxy, see [Socket proxy problems](#socket-proxy-problems). With a direct mount, verify the socket is mounted at `/var/run/docker.sock`. Then check that Docker is running and the host is healthy. |
+| `Docker endpoint refused the request` | `PERMISSION_DENIED` | The socket proxy (or a Docker authorization plugin) answered 401/403. See [Socket proxy problems](#socket-proxy-problems). |
+| `permission denied accessing Docker` | `PERMISSION_DENIED` | The proxy process may not open the socket. With a direct mount, Velocity must run as `user: "1000:1000"` with `group_add` set to the socket's group ID (`stat -c '%g' /var/run/docker.sock`); see [Direct socket mount](security.md#direct-socket-mount). Recreate the container after permission changes. Granting socket access is host-root-equivalent. |
+| `configured container does not exist` / `MISSING` | `CONTAINER_MISSING` | Run `docker ps -a` on the Docker host, create the backend with `docker compose create` or `up`, or correct `container_name`. AutoStopper never creates containers. |
+| `Docker status check timed out` / `Timed out` | `TIMED_OUT` | Check daemon responsiveness, disk pressure, host load, and stuck Docker operations. Every Docker request has a bounded deadline; retry after the daemon recovers. A request in flight while the Docker daemon restarts can time out once. |
+| `Docker status check failed` / `FAILED` | `INDETERMINATE` | Run `docker inspect <container>` on the Docker host and review the raw error in the proxy log. Correct the Docker/container error before retrying. |
+| `Docker CLI could not be found` | `CLI_MISSING` | Only with the deprecated CLI backend (`docker.backend: cli`, or `auto` falling back to it). Install the `docker` CLI in the proxy container, or remove the cause of the fallback; see [Docker access](configuration.md#docker-access). |
 
 If status races a successful reload or a newer lifecycle operation, AutoStopper discards the older
 Docker result rather than applying it to the replacement mapping or newer state. Retry
 `/autostopper status` to collect a current observation.
 
-The example entrypoint adds `bungeecord` to the socket group. Seeing a non-root UID after that is
-expected but is not evidence of reduced host authority; see [Docker socket security](security.md).
+## Socket proxy problems
+
+The examples reach Docker through the `autostopper-docker` socket proxy. Check its state and log
+first:
+
+```sh
+docker compose ps autostopper-docker
+docker compose logs autostopper-docker
+```
+
+| Symptom | Cause | Action |
+|---|---|---|
+| The log shows `endpoint auto: unix:///var/run/docker.sock (local socket)` although you run the proxy, followed by `Docker daemon is unavailable` | The name `autostopper-docker` does not resolve from Velocity, so AutoStopper fell back to the local socket. | Attach Velocity to the `autostopper-internal` network and keep the service name `autostopper-docker`. To use another name, set `docker.endpoint: tcp://<name>:2375`. |
+| `Docker endpoint refused the request`; the proxy log shows `blocked request` with `reason="forbidden IP"` | `-allowfrom` does not match Velocity. | Set `-allowfrom` to the Velocity **service** name (the key under `services:`), then `docker compose up -d`. |
+| `Docker endpoint refused the request` for some servers only | The allowlist is pinned to container names and this container is not in it. | Add the container name to `-allowGET` and `-allowPOST`; see [Docker socket security](security.md#socket-proxy-sidecar). |
+| `Docker daemon is unavailable`; `autostopper-docker` is not running and its log shows `socket not available` … `permission denied` | The proxy does not run as root and cannot open the socket. | Keep `user: "0:0"` on the proxy service. |
+| `Docker daemon is unavailable` after the Docker daemon restarted | The proxy has no restart policy, so it stayed stopped. | Keep `restart: unless-stopped` on the proxy service, then `docker compose up -d`. |
+
+A non-root Velocity process is not evidence of reduced host authority; see
+[Docker socket security](security.md).
 
 ## Readiness failures
 
@@ -58,14 +84,15 @@ expected but is not evidence of reduced host authority; see [Docker socket secur
 | `Minecraft readiness target is not configured correctly` | The explicit target is incomplete/invalid or the Velocity address cannot be resolved into a target. | Configure both `target_host` and `target_port`, or correct the Velocity server address. |
 | Container stopped or disappeared while starting | The backend exited, was manually removed, or its name changed during readiness. | Inspect backend logs and exit state, restore the container, and correct the mapping before retrying. |
 | Docker became inaccessible during readiness | Socket, daemon, or permission access was lost after startup began. | Restore Docker access and retry the connection. |
+| The player is disconnected with `An internal error occurred in your connection` while the server wakes; the proxy log shows `read timed out` and the wait ends `PLAYER_DISCONNECTED` | Velocity's `read-timeout` (30 seconds by default) is shorter than the backend's startup. The startup itself continues. | Raise `read-timeout` under `[advanced]` in `velocity.toml` above your slowest backend's startup time, for example `180000`, and restart Velocity. |
 
 `docker_health_or_status` succeeds when either signal passes. It is not a way to ignore both a
 broken health check and an unreachable status endpoint.
 
 ## Failed stops and retries
 
-Automatic stops use `docker stop` only after the server has no connected players and exceeds the
-inactivity timeout. If a stop fails, times out, or loses Docker access:
+Automatic stops ask Docker to stop the container only after the server has no connected players and
+exceeds the inactivity timeout. If a stop fails, times out, or loses Docker access:
 
 - AutoStopper retains the activity record instead of pretending the container stopped;
 - the next attempt uses the configured capped exponential backoff;
@@ -85,7 +112,7 @@ values use Docker's 10-second default; unbounded or longer values are capped at 
 
 Large or modded worlds can need more than 10 seconds to save. Give such backends a longer grace
 period in their deployment, for example `stop_grace_period: 60s` in Compose or
-`docker run --stop-timeout 60`. If the Docker CLI still exceeds the deadline, AutoStopper checks the
+`docker run --stop-timeout 60`. If Docker still exceeds the deadline, AutoStopper checks the
 container again and reports the stop as successful when it has already stopped.
 
 ## Connection behavior
@@ -169,14 +196,14 @@ stopped rather than act on a stale mapping. Check the mapping in `config.yml`, t
 
 ### CONTAINER_MISSING
 
-The configured container does not exist. Run `docker ps -a` inside the proxy container, create the
+The configured container does not exist. Run `docker ps -a` on the Docker host, create the
 backend with `docker compose create` or `up`, or correct `container_name` and reload. AutoStopper
 never creates containers. See [Docker diagnostics](#docker-diagnostics).
 
 ### DOCKER_INACCESSIBLE
 
-The proxy cannot reach the Docker daemon: the CLI is missing, the daemon is down, or socket
-permission is denied. Follow the matching row in [Docker diagnostics](#docker-diagnostics), then retry.
+The proxy cannot reach the Docker daemon: the daemon or socket proxy is down, the socket proxy
+refused the request, socket permission is denied, or (CLI backend only) the CLI is missing. Follow the matching row in [Docker diagnostics](#docker-diagnostics), then retry.
 
 ### STATUS_TIMED_OUT
 
@@ -186,7 +213,7 @@ and host load, then retry.
 ### STATUS_FAILED
 
 The Docker status check failed for a reason other than a missing container or lost access. Review
-the raw error in the proxy log, run the equivalent `docker inspect` inside the proxy container, and
+the raw error in the proxy log, run `docker inspect <container>` on the Docker host, and
 correct the Docker or container error before retrying.
 
 ### START_TIMED_OUT
@@ -302,7 +329,7 @@ log lines for intermediate stages:
 ## Shutdown
 
 `shutdown_timeout_seconds` bounds cancellation of AutoStopper's own scheduled checks, readiness
-work, Docker subprocesses, lifecycle requests, and worker threads. Velocity shutdown deliberately
+work, Docker requests, lifecycle requests, and worker threads. Velocity shutdown deliberately
 leaves backend containers unchanged. If the deadline expires, remaining AutoStopper worker threads
 are daemon threads and the proxy log records the expiration.
 

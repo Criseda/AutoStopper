@@ -50,7 +50,7 @@ the whole file and retains the previous immutable configuration.
 | Field | Required | Default | Contract |
 |---|---:|---:|---|
 | `inactivity_timeout_seconds` | No | `300` | Seconds with no connected players before a running monitored server becomes eligible for an automatic stop. Maximum `2147483647`. The scan runs once per minute, so a stop is not guaranteed at the exact second. |
-| `shutdown_timeout_seconds` | No | `10` | Hard deadline in seconds for cancelling AutoStopper schedules, lifecycle requests, readiness checks, Docker processes, and worker threads when Velocity shuts down. It does not stop backend containers. Maximum `2147483647`. |
+| `shutdown_timeout_seconds` | No | `10` | Hard deadline in seconds for cancelling AutoStopper schedules, lifecycle requests, readiness checks, Docker requests, and worker threads when Velocity shuts down. It does not stop backend containers. Maximum `2147483647`. |
 | `stop_retry` | No | See below | Bounded policy for failed or timed-out inactivity stops. |
 | `docker` | No | See below | How AutoStopper reaches Docker: backend and endpoint. |
 | `monitored_servers` | No | `[]` | Explicit one-to-one Velocity server and Docker container mappings. Only these servers are managed. |
@@ -169,9 +169,12 @@ host is `DAEMON_UNAVAILABLE`; a request past its deadline is `TIMED_OUT`; anythi
 `INDETERMINATE`. `CLI_MISSING` only occurs with the CLI backend. Docker response bodies are written
 to the proxy log only, never to chat.
 
+The examples run the `autostopper-docker` socket proxy on an internal network, so `endpoint: auto`
+finds it with no configuration; see [Docker socket security](security.md#socket-proxy-sidecar).
 An existing 2.2.0 deployment that mounts `/var/run/docker.sock` into the proxy and gives the proxy
 user the socket's group keeps working unchanged: `auto` finds no sidecar and uses the same socket
-with the same permissions.
+with the same permissions. The [migration guide](migration-2.2.0-to-2.3.0.md) shows how to move it
+to the socket proxy.
 
 ## Reload and preflight
 
@@ -199,7 +202,7 @@ entries from the rejected file.
 | `RUNNING_UNVERIFIED` | Docker reports the container running, but AutoStopper has not verified configured readiness in the current lifecycle generation. Player or manual demand performs readiness before connection. |
 | `STOPPING` | An automatic inactivity stop is in progress. |
 | `FAILED` | The latest Docker or lifecycle observation failed. The line includes its age and safe detail; `/autostopper status <server>` adds the remediation. |
-| `DOCKER_UNAVAILABLE` | The Docker CLI, daemon, or socket permission boundary is unavailable. |
+| `DOCKER_UNAVAILABLE` | Docker cannot be reached: the daemon or socket proxy is down, access is denied, or (CLI backend only) the CLI is missing. |
 
 Active `STARTING` and `STOPPING` operations take precedence while their coordinator-owned work is
 current. Outside those transitions, a current Docker observation overrides stale idle lifecycle
@@ -217,8 +220,8 @@ and duration. Like runtime holds, this history is kept in memory only: a proxy r
 and a reload clears it for every server whose mapping was removed, added, or changed. Servers whose
 mapping is unchanged keep their history across a reload.
 
-Raw Docker stderr is deliberately restricted to operator logs and is never copied into player
-messages.
+Raw Docker errors (Engine API response bodies, or CLI stderr with the CLI backend) are deliberately
+restricted to operator logs and are never copied into player messages.
 
 ## Operator lifecycle commands and runtime holds
 
@@ -301,7 +304,7 @@ When multiple players connect to a sleeping server simultaneously:
 
 - **Zero PII**: Telemetry records never contain player UUIDs, player usernames, IP addresses,
   command secrets, or environment variables.
-- **Sanitized diagnostics**: Raw Docker standard error is never included in telemetry messages.
+- **Sanitized diagnostics**: Raw Docker errors are never included in telemetry messages.
 - **Observational safety**: Telemetry recording is completely insulated from lifecycle execution; any
   unexpected recording or logging error is caught defensively and can never disrupt player connections,
   fail asynchronous futures, or modify lifecycle states.

@@ -58,7 +58,7 @@ These fields live on Modrinth, not in the release pipeline, and are changed by a
 | Releases | `https://github.com/Criseda/AutoStopper/releases` |
 | Changelog | `https://github.com/Criseda/AutoStopper/blob/master/CHANGELOG.md` |
 | Installation | `https://github.com/Criseda/AutoStopper#installation` |
-| Migration | `https://github.com/Criseda/AutoStopper/blob/master/docs/migration-1.1.2-to-2.0.0.md` |
+| Migration | `https://github.com/Criseda/AutoStopper/blob/master/docs/migration-2.2.0-to-2.3.0.md` |
 
 Upload `docs/assets/autostopper-banner.png` (1672 by 941 pixels, under Modrinth's 5 MiB limit) as the
 featured gallery image:

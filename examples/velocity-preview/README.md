@@ -5,9 +5,10 @@ This pinned example validates the next 4.x patch release ahead of its release. I
 PaperMC snapshot; it is not a production baseline. Velocity 4.x requires at least Java 25; do not
 run this build on Java 21. For production, prefer the [stable example](../velocity-stable/).
 
-> **DANGER — HOST-ROOT-EQUIVALENT ACCESS:** `docker-compose.yml` mounts
-> `/var/run/docker.sock` into Velocity. Socket-group access is not ordinary non-root isolation.
-> Read the complete [security guidance](../../docs/security.md) before starting the stack.
+> **Docker access:** `docker-compose.yml` runs an `autostopper-docker` socket proxy that holds
+> `/var/run/docker.sock` as root and lets Velocity only inspect, start, and stop containers.
+> Velocity uses the stock image with no custom entrypoint and no socket mount. Read the complete
+> [security guidance](../../docs/security.md) before starting the stack.
 
 Follow the repository [installation guide](../../README.md#installation). Put the release JAR at
 `velocity_server/plugins/AutoStopper.jar`; the plugin configuration is generated at
