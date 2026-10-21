@@ -121,7 +121,7 @@ These keep working in 2.3.x and are planned for removal in 3.0.0:
 - **The custom entrypoint pattern** (`docker-entrypoint.sh`, boot-time `apt-get install docker.io`,
   `exec /usr/bin/run-bungeecord.sh`). It overrides the image's real entrypoint and depends on an
   internal path of the itzg image. Mounting the socket directly stays supported without it; see
-  [Alternatives](../README.md#alternatives).
+  [Direct socket mount](security.md#direct-socket-mount).
 - **The Docker CLI backend** (`docker.backend: cli`) and its `CLI_MISSING` diagnostic. `auto` still
   selects it for `ssh://` or TLS `DOCKER_HOST`, a selected Docker context, or Windows. If you
   depend on one of those, please

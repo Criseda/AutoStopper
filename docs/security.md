@@ -80,11 +80,28 @@ containers through Docker.
 
 ## Direct socket mount
 
-You can instead mount `/var/run/docker.sock` into Velocity and give the proxy user the socket's
-group (see [Alternatives](../README.md#alternatives)). Then any process in the proxy container has
-full, host-root-equivalent control of Docker. A read-only bind mount does not change that, because
-API calls still go through. The deprecated custom entrypoint from 2.2.0 and earlier examples is
-the same boundary.
+You can instead mount `/var/run/docker.sock` into Velocity. Then any process in the proxy container
+has full, host-root-equivalent control of Docker. A read-only bind mount does not change that,
+because API calls still go through. The deprecated custom entrypoint from 2.2.0 and earlier
+examples is the same boundary.
+
+Without the entrypoint, remove the `autostopper-docker` service and run Velocity as the image's
+`bungeecord` user with the socket's group. Find the group ID on the host with
+`stat -c '%g' /var/run/docker.sock`, then set on the Velocity service:
+
+```yaml
+user: "1000:1000"
+group_add:
+  - "<socket group ID>"
+volumes:
+  - ./velocity_server:/server
+  - /var/run/docker.sock:/var/run/docker.sock
+```
+
+Both settings are needed: the image drops supplementary groups when it switches to `bungeecord`
+itself, so `group_add` has no effect without `user`. With `user` set, the image also skips its own
+ownership fix of `/server`, so run `sudo chown -R 1000:1000 velocity_server` once before the first
+start. These host-specific steps are why the examples use the socket proxy instead.
 
 ## Deployment expectations
 

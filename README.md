@@ -192,27 +192,13 @@ the socket proxy.
 
 ### Alternatives
 
-The socket proxy is the recommended setup. AutoStopper also works without it; see
-[Docker access](docs/configuration.md#docker-access) for how it finds Docker.
+The socket proxy is the recommended setup and the only one that needs no host-specific values.
+AutoStopper also works without it; see [Docker access](docs/configuration.md#docker-access) for how
+it finds Docker.
 
-- **Mount the socket directly.** Remove the `autostopper-docker` service, mount
-  `/var/run/docker.sock` into Velocity, and run Velocity as the image's `bungeecord` user with the
-  socket's group. Find the group ID with `stat -c '%g' /var/run/docker.sock`, then add to the
-  Velocity service:
-
-  ```yaml
-  user: "1000:1000"
-  group_add:
-    - "<socket group ID>"
-  volumes:
-    - ./velocity_server:/server
-    - /var/run/docker.sock:/var/run/docker.sock
-  ```
-
-  The image skips its own ownership fix when it does not start as root, so run
-  `sudo chown -R 1000:1000 velocity_server` once. `group_add` has no effect without `user`,
-  because the image drops supplementary groups when it switches users. This gives Velocity
-  host-root-equivalent access.
+- **Mount the socket into Velocity.** This needs the host's socket group ID and a one-time
+  ownership change, and gives Velocity host-root-equivalent access. See
+  [Direct socket mount](docs/security.md#direct-socket-mount).
 - **Velocity outside Docker.** Run the proxy as a user in the `docker` group. AutoStopper uses
   `/var/run/docker.sock`, or `DOCKER_HOST` when it is a `unix://` or plain `tcp://` address.
 - **The Docker CLI backend.** Set `docker.backend: cli` when the daemon is reached in a way the
