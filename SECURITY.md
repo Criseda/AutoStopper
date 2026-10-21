@@ -39,10 +39,11 @@ permission, may be considered by design rather than treated as AutoStopper vulne
 ## Supported versions
 
 Only the current release receives security fixes. That release is
-[2.2.0](https://github.com/Criseda/AutoStopper/releases/tag/2.2.0) at the time of writing; older
-releases, including 1.1.2, 2.0.0, 2.1.0, and 2.1.1, are unsupported. Fixes are released as a new current release; there is
-no separate security-patch line for older versions. Follow the [migration
-guide](docs/migration-1.1.2-to-2.0.0.md) and install only from GitHub or Modrinth releases,
+[2.3.0](https://github.com/Criseda/AutoStopper/releases/tag/2.3.0) at the time of writing; older
+releases, including 1.1.2, 2.0.0, 2.1.0, 2.1.1, and 2.2.0, are unsupported. Fixes are released as a new current release; there is
+no separate security-patch line for older versions. Follow the [2.2.0 to 2.3.0 migration
+guide](docs/migration-2.2.0-to-2.3.0.md) (or, from 1.1.2, the [1.1.2 to 2.0.0
+guide](docs/migration-1.1.2-to-2.0.0.md) first) and install only from GitHub or Modrinth releases,
 verifying the published SHA-256 checksum.
 
 ## Incident response for operators

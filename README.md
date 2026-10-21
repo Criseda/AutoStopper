@@ -37,9 +37,11 @@ readiness, simultaneous players share one lifecycle operation, and all Docker wo
 Velocity's event and command workers.
 
 > [!IMPORTANT]
-> These instructions describe **AutoStopper 2.2.0**. Download only from the project's GitHub or
-> Modrinth release pages and verify the published SHA-256 checksum before installation. Users of
-> 1.1.2 should follow the complete migration guide before replacing the artifact.
+> These instructions describe **AutoStopper 2.3.0**. Install only from the project's Modrinth or
+> GitHub release pages; the examples install the pinned release from Modrinth, and a manually
+> downloaded JAR should be checked against its published SHA-256 checksum. Users of 2.2.0 can read
+> the [2.2.0 to 2.3.0 migration guide](docs/migration-2.2.0-to-2.3.0.md); users of 1.1.2 must
+> follow the complete [1.1.2 to 2.0.0 migration guide](docs/migration-1.1.2-to-2.0.0.md) first.
 
 ## Why AutoStopper?
 
