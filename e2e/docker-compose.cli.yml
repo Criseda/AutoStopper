@@ -1,0 +1,24 @@
+# Override for the deprecated Docker CLI backend scenario, kept until the CLI backend is
+# removed in 3.0.0. It restores the 2.2.0 topology: the custom entrypoint installs the
+# Docker CLI, adds bungeecord to the socket group, and wraps the CLI with an audit log
+# and failure injection. The harness starts only the velocity service from this file.
+services:
+  velocity:
+    environment:
+      AUTOSTOPPER_E2E_BACKEND_CONTAINER: ${E2E_BACKEND_CONTAINER}
+      AUTOSTOPPER_E2E_FAIL_STOP_ONCE: ${E2E_FAIL_STOP_ONCE:-false}
+    volumes:
+      # DANGER: This grants the disposable proxy host-root-equivalent Docker control.
+      # Run this fixture only on an isolated development/CI host; see e2e/README.md.
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+      - type: bind
+        source: ${E2E_ENTRYPOINT:?set E2E_ENTRYPOINT}
+        target: /e2e/docker-entrypoint.sh
+        read_only: true
+      - type: bind
+        source: ${E2E_DOCKER_WRAPPER:?set E2E_DOCKER_WRAPPER}
+        target: /e2e/docker-cli-wrapper.sh
+        read_only: true
+    entrypoint: ["/bin/bash", "/e2e/docker-entrypoint.sh"]

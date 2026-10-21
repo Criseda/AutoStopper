@@ -40,6 +40,11 @@ public final class ReleaseCandidateE2EHarness {
     private static final String PINNED_VELOCITY_VERSION = "4.2.0";
     private static final String PINNED_VELOCITY_BUILD = "30";
     private static final String BACKEND_IMAGE = "itzg/minecraft-server:java21";
+    /** Must equal the socket proxy pinned in the examples; {@link #requireFixture} checks it. */
+    private static final String SOCKET_PROXY_IMAGE = "wollomatic/socket-proxy:1.13.1"
+            + "@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002";
+    private static final String SIDECAR_ENDPOINT_LOG =
+            "endpoint auto: tcp://autostopper-docker:2375 (socket-proxy sidecar)";
     private static final String CLIENT_IMAGE_PREFIX = "autostopper-release-candidate-client";
 
     private final Path pluginArtifact;
@@ -48,6 +53,7 @@ public final class ReleaseCandidateE2EHarness {
     private final Path evidenceDirectory;
     private final Path repositoryDirectory;
     private final Path composeFile;
+    private final Path cliComposeFile;
     private final String projectVersion;
     private final Deadline deadline = new Deadline(GLOBAL_TIMEOUT);
     private String candidateHash;
@@ -61,6 +67,7 @@ public final class ReleaseCandidateE2EHarness {
         this.evidenceDirectory = this.outputDirectory.resolve("evidence");
         this.repositoryDirectory = repositoryDirectory.toAbsolutePath().normalize();
         this.composeFile = this.repositoryDirectory.resolve("e2e/docker-compose.yml");
+        this.cliComposeFile = this.repositoryDirectory.resolve("e2e/docker-compose.cli.yml");
         this.projectVersion = projectVersion;
     }
 
@@ -98,6 +105,7 @@ public final class ReleaseCandidateE2EHarness {
             runScenario(Scenario.HAPPY_PATH, results);
             runScenario(Scenario.NEVER_READY, results);
             runScenario(Scenario.FAILED_STOP, results);
+            runScenario(Scenario.CLI_BACKEND, results);
         } finally {
             writeSummary(results);
             cleanupWorkDirectoryBestEffort();
@@ -116,9 +124,11 @@ public final class ReleaseCandidateE2EHarness {
         }
     }
 
-    private void requireFixture() {
+    private void requireFixture() throws IOException {
         List<Path> required = List.of(
                 composeFile,
+                cliComposeFile,
+                repositoryDirectory.resolve("e2e/docker-api-fault-proxy.js"),
                 repositoryDirectory.resolve("e2e/docker-entrypoint.sh"),
                 repositoryDirectory.resolve("e2e/docker-cli-wrapper.sh"),
                 repositoryDirectory.resolve("e2e/client/Dockerfile"),
@@ -130,6 +140,14 @@ public final class ReleaseCandidateE2EHarness {
                 throw new IllegalStateException("Release-candidate fixture file is missing: " + path);
             }
         }
+        // The E2E must exercise the same socket proxy that operators deploy from the examples.
+        for (String line : List.of("velocity-legacy", "velocity-stable", "velocity-preview")) {
+            Path example = repositoryDirectory.resolve("examples/" + line + "/docker-compose.yml");
+            if (!Files.readString(example, StandardCharsets.UTF_8).contains("image: " + SOCKET_PROXY_IMAGE)) {
+                throw new IllegalStateException("E2E socket proxy " + SOCKET_PROXY_IMAGE
+                        + " differs from the image pinned in " + example);
+            }
+        }
     }
 
     private void pullImages() throws Exception {
@@ -137,6 +155,8 @@ public final class ReleaseCandidateE2EHarness {
                 "Could not pull the pinned current proxy image");
         requireSuccess(command(IMAGE_TIMEOUT, "docker", "pull", BACKEND_IMAGE),
                 "Could not pull the pinned Minecraft backend image");
+        requireSuccess(command(IMAGE_TIMEOUT, "docker", "pull", SOCKET_PROXY_IMAGE),
+                "Could not pull the pinned Docker socket proxy image");
     }
 
     /**
@@ -185,15 +205,27 @@ public final class ReleaseCandidateE2EHarness {
                     "Could not create the stopped Minecraft backend for " + scenario.id);
             assertContainerRunning(context.backendContainer, false,
                     "Backend must be stopped before the first client request");
-            requireSuccess(compose(context, IMAGE_TIMEOUT, "up", "--detach", "--no-deps", "velocity"),
+            // The sidecar topology starts the socket proxy and relay through depends_on; the CLI
+            // topology starts Velocity alone. Neither starts the backend.
+            String[] up = scenario.cli
+                    ? new String[] {"up", "--detach", "--no-deps", "velocity"}
+                    : new String[] {"up", "--detach", "velocity"};
+            requireSuccess(compose(context, IMAGE_TIMEOUT, up),
                     "Could not start the Velocity proxy for " + scenario.id);
+            assertContainerRunning(context.backendContainer, false,
+                    "Starting the proxy must not start the backend");
             waitForProxyStartup(context);
             assertCandidateIdentity(context);
+            assertDockerAccess(context);
 
             switch (scenario) {
                 case HAPPY_PATH -> runHappyPath(context);
                 case NEVER_READY -> runNeverReady(context);
                 case FAILED_STOP -> runFailedStop(context);
+                case CLI_BACKEND -> runCliBackend(context);
+            }
+            if (!scenario.cli) {
+                assertOnlyAllowedEngineApiCalls(context);
             }
         } catch (Throwable error) {
             failure = error;
@@ -233,8 +265,9 @@ public final class ReleaseCandidateE2EHarness {
                     "Headless client did not reach the backend: " + name);
         }
         waitForBackendPlayers(context, names);
-        assertAuditCount(context, "start " + context.backendContainer, 1,
+        assertAuditCount(context, DockerCall.START, 1,
                 "Simultaneous clients must execute exactly one Docker start");
+        assertSocketProxyRefusesOtherCalls(context);
 
         waitForContainerRunning(context.backendContainer, false, IDLE_STOP_TIMEOUT,
                 "Backend did not stop after all clients became idle");
@@ -246,7 +279,7 @@ public final class ReleaseCandidateE2EHarness {
         requireContains(restart, "\"event\":\"spawn\",\"name\":\"" + restartName + "\"",
                 "Client did not reach the backend after idle restart");
         waitForBackendPlayers(context, List.of(restartName));
-        assertAuditCount(context, "start " + context.backendContainer, 2,
+        assertAuditCount(context, DockerCall.START, 2,
                 "Idle restart must execute one additional Docker start");
     }
 
@@ -257,7 +290,7 @@ public final class ReleaseCandidateE2EHarness {
                 "Never-ready client did not receive the typed readiness error");
         assertContainerRunning(context.backendContainer, true,
                 "Never-ready injection must leave the started backend running");
-        assertAuditCount(context, "start " + context.backendContainer, 1,
+        assertAuditCount(context, DockerCall.START, 1,
                 "Never-ready scenario must start the backend once");
         String logs = proxyLogs(context);
         requireContains(logs, "failed minecraft_status readiness",
@@ -272,15 +305,78 @@ public final class ReleaseCandidateE2EHarness {
         requireContains(output, "\"event\":\"spawn\",\"name\":\"E2EStopFail\"",
                 "Failed-stop scenario client did not reach the backend");
 
-        waitForAuditCount(context, "stop " + context.backendContainer, 1, IDLE_STOP_TIMEOUT);
+        waitForAuditCount(context, DockerCall.STOP, 1, IDLE_STOP_TIMEOUT);
         assertContainerRunning(context.backendContainer, true,
                 "Injected first stop failure must leave the backend running");
         waitForProxyLog(context, "failed for server backend with FAILED; retrying", COMMAND_TIMEOUT);
 
-        waitForAuditCount(context, "stop " + context.backendContainer, 2, RETRY_STOP_TIMEOUT);
+        waitForAuditCount(context, DockerCall.STOP, 2, RETRY_STOP_TIMEOUT);
         waitForContainerRunning(context.backendContainer, false, COMMAND_TIMEOUT,
                 "Backend did not stop after the bounded retry");
         waitForProxyLog(context, "Stopped server: backend", COMMAND_TIMEOUT);
+        List<String> stops = auditEntries(context, DockerCall.STOP);
+        if (stops.size() != 2 || !stops.get(0).endsWith(" 500 injected") || !stops.get(1).endsWith(" 204")) {
+            throw new IllegalStateException("Expected one injected stop failure followed by a successful stop, got "
+                    + stops + System.lineSeparator() + dockerAudit(context));
+        }
+    }
+
+    /** The deprecated CLI backend: one wake through the CLI and one idle stop, until 3.0.0 removes it. */
+    private void runCliBackend(ScenarioContext context) throws Exception {
+        String output = runClients(context, "cli-backend", List.of("E2ECli"), "spawn", null,
+                Duration.ofMinutes(3));
+        requireContains(output, "\"event\":\"spawn\",\"name\":\"E2ECli\"",
+                "CLI-backend client did not reach the backend");
+        waitForBackendPlayers(context, List.of("E2ECli"));
+        assertAuditCount(context, DockerCall.START, 1, "CLI backend must execute exactly one docker start");
+
+        waitForContainerRunning(context.backendContainer, false, IDLE_STOP_TIMEOUT,
+                "Backend did not stop through the CLI backend");
+        waitForProxyLog(context, "Stopped server: backend", COMMAND_TIMEOUT);
+        assertAuditCount(context, DockerCall.STOP, 1, "CLI backend must execute exactly one docker stop");
+    }
+
+    private void assertDockerAccess(ScenarioContext context) throws Exception {
+        String expected = context.scenario.cli
+                ? "Docker access: Docker CLI (docker.backend: cli; deprecated)"
+                : SIDECAR_ENDPOINT_LOG;
+        waitForProxyLog(context, expected, COMMAND_TIMEOUT);
+        waitForProxyLog(context, "preflight healthy: 1 mapping(s) checked", COMMAND_TIMEOUT);
+    }
+
+    /** Every request that reached Docker was an inspect, start, or stop of the mapped backend. */
+    private void assertOnlyAllowedEngineApiCalls(ScenarioContext context) throws Exception {
+        String container = context.backendContainer;
+        Set<String> allowed = Set.of("GET /_ping", "GET /containers/" + container + "/json",
+                "POST /containers/" + container + "/start", "POST /containers/" + container + "/stop");
+        List<String> unexpected = dockerAudit(context).lines()
+                .filter(line -> line.startsWith("AUDIT "))
+                .filter(line -> {
+                    String[] parts = line.split(" ");
+                    return parts.length < 4 || !allowed.contains(parts[1] + " " + parts[2]);
+                })
+                .toList();
+        if (!unexpected.isEmpty()) {
+            throw new IllegalStateException("Unexpected Engine API calls reached Docker: " + unexpected);
+        }
+    }
+
+    /** The example allowlist refuses everything beyond inspect, start, and stop. */
+    private void assertSocketProxyRefusesOtherCalls(ScenarioContext context) throws Exception {
+        Map<String, String> forbidden = new LinkedHashMap<>();
+        forbidden.put("POST", "/containers/create");
+        forbidden.put("GET", "/containers/json");
+        for (Map.Entry<String, String> call : forbidden.entrySet()) {
+            CommandResult result = command(COMMAND_TIMEOUT, "docker", "exec", context.velocityContainer,
+                    "curl", "--silent", "--output", "/dev/null", "--write-out", "%{http_code}",
+                    "--max-time", "10", "--request", call.getKey(),
+                    "http://autostopper-docker:2375" + call.getValue());
+            requireSuccess(result, "Could not call the socket proxy from Velocity");
+            if (!result.output().trim().equals("403")) {
+                throw new IllegalStateException("Socket proxy must refuse " + call.getKey() + " " + call.getValue()
+                        + " with 403, got " + result.output().trim());
+            }
+        }
     }
 
     private String runClients(ScenarioContext context, String label, List<String> names,
@@ -348,31 +444,46 @@ public final class ReleaseCandidateE2EHarness {
         });
     }
 
-    private void waitForAuditCount(ScenarioContext context, String command, int expected, Duration timeout)
+    private void waitForAuditCount(ScenarioContext context, DockerCall call, int expected, Duration timeout)
             throws Exception {
-        waitUntil(timeout, "Docker audit count " + expected + " for " + command, () -> {
+        waitUntil(timeout, "Docker audit count " + expected + " for " + call, () -> {
             try {
-                return auditCount(context, command) >= expected;
+                return auditEntries(context, call).size() >= expected;
             } catch (Exception error) {
                 return false;
             }
         });
     }
 
-    private void assertAuditCount(ScenarioContext context, String command, int expected, String message)
+    private void assertAuditCount(ScenarioContext context, DockerCall call, int expected, String message)
             throws Exception {
-        int actual = auditCount(context, command);
+        int actual = auditEntries(context, call).size();
         if (actual != expected) {
             throw new IllegalStateException(message + ": expected " + expected + ", got " + actual
                     + System.lineSeparator() + dockerAudit(context));
         }
     }
 
-    private int auditCount(ScenarioContext context, String expectedCommand) throws Exception {
-        return (int) dockerAudit(context).lines().filter(expectedCommand::equals).count();
+    /**
+     * Audit entries for one call on the backend. The sidecar topology reads the Engine API relay
+     * ({@code AUDIT POST /containers/<name>/start 204}); the CLI topology reads the CLI wrapper
+     * ({@code start <name>}).
+     */
+    private List<String> auditEntries(ScenarioContext context, DockerCall call) throws Exception {
+        String action = call.name().toLowerCase(Locale.ROOT);
+        String prefix = context.scenario.cli
+                ? null
+                : "AUDIT POST /containers/" + context.backendContainer + "/" + action + " ";
+        String exact = action + " " + context.backendContainer;
+        return dockerAudit(context).lines()
+                .filter(line -> prefix == null ? line.equals(exact) : line.startsWith(prefix))
+                .toList();
     }
 
     private String dockerAudit(ScenarioContext context) throws Exception {
+        if (!context.scenario.cli) {
+            return containerLogs(context.faultProxyContainer);
+        }
         CommandResult audit = command(COMMAND_TIMEOUT, "docker", "exec", context.velocityContainer,
                 "sh", "-c", "test ! -f /tmp/autostopper-e2e-docker-commands.log "
                         + "|| cat /tmp/autostopper-e2e-docker-commands.log");
@@ -457,10 +568,17 @@ public final class ReleaseCandidateE2EHarness {
                 """, StandardCharsets.UTF_8);
         Path entrypoint = normalizedScript("e2e/docker-entrypoint.sh", scenarioDirectory.resolve("entrypoint.sh"));
         Path wrapper = normalizedScript("e2e/docker-cli-wrapper.sh", scenarioDirectory.resolve("docker-wrapper.sh"));
+        Path faultProxy = normalizedScript("e2e/docker-api-fault-proxy.js",
+                scenarioDirectory.resolve("docker-api-fault-proxy.js"));
 
         Map<String, String> environment = new LinkedHashMap<>();
         environment.put("E2E_BACKEND_CONTAINER", project + "-backend");
         environment.put("E2E_VELOCITY_CONTAINER", project + "-velocity");
+        environment.put("E2E_SOCKET_PROXY_CONTAINER", project + "-socket-proxy");
+        environment.put("E2E_FAULT_PROXY_CONTAINER", project + "-fault-proxy");
+        environment.put("E2E_SOCKET_PROXY_IMAGE", SOCKET_PROXY_IMAGE);
+        environment.put("E2E_FAULT_PROXY", composePath(faultProxy));
+        environment.put("E2E_FAIL_STOP_CONTAINER", scenario == Scenario.FAILED_STOP ? project + "-backend" : "");
         environment.put("E2E_VELOCITY_PORT", Integer.toString(availablePort()));
         environment.put("E2E_BACKEND_DATA", composePath(backendData));
         environment.put("E2E_VELOCITY_DATA", composePath(velocityData));
@@ -470,11 +588,12 @@ public final class ReleaseCandidateE2EHarness {
         environment.put("E2E_VELOCITY_IMAGE", velocityImage());
         environment.put("E2E_VELOCITY_VERSION", velocityVersion());
         environment.put("E2E_VELOCITY_BUILD_ID", velocityBuild());
-        environment.put("E2E_FAIL_STOP_ONCE", Boolean.toString(scenario == Scenario.FAILED_STOP));
+        environment.put("E2E_FAIL_STOP_ONCE", "false");
         environment.put("E2E_HOST_UID", hostIdentity("-u"));
         environment.put("E2E_HOST_GID", hostIdentity("-g"));
         return new ScenarioContext(scenario, project, project + "-velocity", project + "-backend",
-                scenarioDirectory, scenarioEvidence, environment);
+                project + "-socket-proxy", project + "-fault-proxy", scenarioDirectory, scenarioEvidence,
+                environment);
     }
 
     private String pluginConfig(Scenario scenario, String backendContainer) {
@@ -487,10 +606,7 @@ public final class ReleaseCandidateE2EHarness {
                   max_attempts: 2
                   initial_backoff_seconds: 1
                   max_backoff_seconds: 1
-                # Failure injection and the command audit wrap the Docker CLI until #145 moves them
-                # to the Engine API.
-                docker:
-                  backend: cli
+                %s
                 monitored_servers:
                   - server_name: backend
                     container_name: %s
@@ -502,7 +618,8 @@ public final class ReleaseCandidateE2EHarness {
                       timeout_seconds: %d
                       connect_timeout_millis: 500
                       read_timeout_millis: 1000
-                """.formatted(backendContainer, readinessPort, readinessTimeout);
+                """.formatted(scenario.cli ? "docker:\n  backend: cli" : "# docker: defaults (auto)",
+                backendContainer, readinessPort, readinessTimeout);
     }
 
     private String velocityConfig() {
@@ -590,6 +707,9 @@ public final class ReleaseCandidateE2EHarness {
         List<String> command = new ArrayList<>(List.of(
                 "docker", "compose", "--ansi", "never", "--project-name", context.project,
                 "--file", composeFile.toString()));
+        if (context.scenario.cli) {
+            command.addAll(List.of("--file", cliComposeFile.toString()));
+        }
         command.addAll(List.of(arguments));
         return command;
     }
@@ -624,10 +744,17 @@ public final class ReleaseCandidateE2EHarness {
                 () -> rawCommand(COMMAND_TIMEOUT, "docker", "inspect", context.velocityContainer));
         captureBestEffort(context.evidence.resolve("backend-inspect.json"),
                 () -> rawCommand(COMMAND_TIMEOUT, "docker", "inspect", context.backendContainer));
-        captureBestEffort(context.evidence.resolve("docker-commands.log"),
-                () -> rawCommand(COMMAND_TIMEOUT, "docker", "exec", context.velocityContainer,
-                        "sh", "-c", "test ! -f /tmp/autostopper-e2e-docker-commands.log "
-                                + "|| cat /tmp/autostopper-e2e-docker-commands.log"));
+        if (context.scenario.cli) {
+            captureBestEffort(context.evidence.resolve("docker-commands.log"),
+                    () -> rawCommand(COMMAND_TIMEOUT, "docker", "exec", context.velocityContainer,
+                            "sh", "-c", "test ! -f /tmp/autostopper-e2e-docker-commands.log "
+                                    + "|| cat /tmp/autostopper-e2e-docker-commands.log"));
+        } else {
+            captureBestEffort(context.evidence.resolve("docker-api-audit.log"),
+                    () -> rawCommand(COMMAND_TIMEOUT, "docker", "logs", context.faultProxyContainer));
+            captureBestEffort(context.evidence.resolve("socket-proxy.log"),
+                    () -> rawCommand(COMMAND_TIMEOUT, "docker", "logs", context.socketProxyContainer));
+        }
         captureBestEffort(context.evidence.resolve("project-containers.txt"),
                 () -> rawCommand(COMMAND_TIMEOUT, "docker", "ps", "--all", "--no-trunc", "--filter",
                         "label=com.docker.compose.project=" + context.project));
@@ -661,21 +788,33 @@ public final class ReleaseCandidateE2EHarness {
         } catch (Exception error) {
             writeBestEffort(context.evidence.resolve("cleanup-errors.txt"), "Compose cleanup failed: " + error);
         }
-        removeContainerBestEffort(context.velocityContainer, context.evidence);
-        removeContainerBestEffort(context.backendContainer, context.evidence);
+        for (String container : context.containers()) {
+            removeContainerBestEffort(container, context.evidence);
+        }
+        for (String network : context.networks()) {
+            try {
+                rawCommand(COMMAND_TIMEOUT, "docker", "network", "rm", network);
+            } catch (Exception ignored) {
+                // Compose down normally removes the project networks; the fallback is best effort.
+            }
+        }
         try {
-            rawCommand(COMMAND_TIMEOUT, "docker", "network", "rm", context.project + "_minecraft");
+            rawCommand(COMMAND_TIMEOUT, "docker", "volume", "rm", context.relayVolume());
         } catch (Exception ignored) {
-            // Compose down normally removes the project network; the fallback is best effort.
+            // Compose down --volumes normally removes the relay volume; the fallback is best effort.
         }
         try {
             deleteRecursively(context.work);
         } catch (IOException error) {
             cleanupBindMountBestEffort(context.work, context.evidence);
         }
-        verifyResourceAbsent("container", context.velocityContainer, errors);
-        verifyResourceAbsent("container", context.backendContainer, errors);
-        verifyResourceAbsent("network", context.project + "_minecraft", errors);
+        for (String container : context.containers()) {
+            verifyResourceAbsent("container", container, errors);
+        }
+        for (String network : context.networks()) {
+            verifyResourceAbsent("network", network, errors);
+        }
+        verifyResourceAbsent("volume", context.relayVolume(), errors);
         if (Files.exists(context.work)) {
             errors.add("temporary directory remains: " + context.work);
         }
@@ -739,7 +878,7 @@ public final class ReleaseCandidateE2EHarness {
 
     private void captureImageEvidence() {
         captureBestEffort(evidenceDirectory.resolve("images.json"), () -> command(COMMAND_TIMEOUT,
-                "docker", "image", "inspect", velocityImage(), BACKEND_IMAGE, clientImage));
+                "docker", "image", "inspect", velocityImage(), BACKEND_IMAGE, SOCKET_PROXY_IMAGE, clientImage));
     }
 
     private void writeCandidateManifest() throws Exception {
@@ -758,12 +897,13 @@ public final class ReleaseCandidateE2EHarness {
                   "velocityImage": "%s",
                   "velocityVersion": "%s",
                   "backendImage": "%s",
+                  "socketProxyImage": "%s",
                   "minecraftVersion": "1.21.4",
                   "purpurBuild": "2416"
                 }
                 """.formatted(json(commit), json(projectVersion), json(pluginArtifact.getFileName().toString()),
                 Files.size(pluginArtifact), candidateHash, velocityImage(),
-                velocityVersion() + "-" + velocityBuild(), BACKEND_IMAGE);
+                velocityVersion() + "-" + velocityBuild(), BACKEND_IMAGE, SOCKET_PROXY_IMAGE);
         Files.writeString(evidenceDirectory.resolve("candidate-manifest.json"), manifest, StandardCharsets.UTF_8);
     }
 
@@ -806,15 +946,24 @@ public final class ReleaseCandidateE2EHarness {
     }
 
     private enum Scenario {
-        HAPPY_PATH("happy-path"),
-        NEVER_READY("never-ready"),
-        FAILED_STOP("failed-stop");
+        HAPPY_PATH("happy-path", false),
+        NEVER_READY("never-ready", false),
+        FAILED_STOP("failed-stop", false),
+        CLI_BACKEND("cli-backend", true);
 
         private final String id;
+        /** Uses the deprecated CLI backend and the entrypoint topology instead of the socket proxy. */
+        private final boolean cli;
 
-        Scenario(String id) {
+        Scenario(String id, boolean cli) {
             this.id = id;
+            this.cli = cli;
         }
+    }
+
+    private enum DockerCall {
+        START,
+        STOP
     }
 
     private record ScenarioContext(
@@ -822,9 +971,22 @@ public final class ReleaseCandidateE2EHarness {
             String project,
             String velocityContainer,
             String backendContainer,
+            String socketProxyContainer,
+            String faultProxyContainer,
             Path work,
             Path evidence,
             Map<String, String> environment) {
+        List<String> containers() {
+            return List.of(velocityContainer, backendContainer, socketProxyContainer, faultProxyContainer);
+        }
+
+        List<String> networks() {
+            return List.of(project + "_minecraft", project + "_autostopper-internal");
+        }
+
+        String relayVolume() {
+            return project + "_docker-api-relay";
+        }
     }
 
     private record ScenarioResult(String scenario, boolean passed, Duration duration, String detail) {
