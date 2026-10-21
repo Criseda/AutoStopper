@@ -3,6 +3,9 @@ package me.criseda.autostopper.docker;
 import static me.criseda.autostopper.docker.FakeDockerEngine.Reply;
 import static me.criseda.autostopper.docker.FakeDockerEngine.inspectBody;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import me.criseda.autostopper.config.DockerEndpoint;
 
@@ -26,6 +29,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -35,6 +43,7 @@ public class EngineApiDockerBackendTest {
     private static final String INSPECT = "GET /containers/mc/json";
     private static final String START = "POST /containers/mc/start";
     private static final String STOP = "POST /containers/mc/stop";
+    private static final String ENDPOINT_LOG = "Docker Engine API endpoint: {}";
 
     @TempDir
     Path tempDir;
@@ -316,6 +325,79 @@ public class EngineApiDockerBackendTest {
         backend.inspect("mc", TIMEOUT);
 
         assertEquals("Engine API, endpoint " + engine.endpoint() + " (test)", backend.describe());
+    }
+
+    @Test
+    public void concurrentFirstOperationsLogTheEndpointOnce() throws Exception {
+        int threads = 8;
+        FakeDockerEngine engine = unixEngine();
+        for (int i = 0; i < threads; i++) {
+            engine.on(INSPECT, Reply.json(200, inspectBody(true, null, null)));
+        }
+        // Every operation resolves the endpoint before any of them records it.
+        CyclicBarrier resolved = new CyclicBarrier(threads);
+        EngineApiDockerBackend backend = new EngineApiDockerBackend(logger,
+                new EngineApiTransport(HostResolver.system()), new EngineApiDockerBackend.EndpointSource() {
+                    @Override
+                    public DockerEndpoint resolve(long deadlineNanos) {
+                        try {
+                            resolved.await(5, TimeUnit.SECONDS);
+                        } catch (Exception e) {
+                            throw new IllegalStateException(e);
+                        }
+                        return engine.endpoint();
+                    }
+
+                    @Override
+                    public String describe(DockerEndpoint endpoint) {
+                        return "endpoint " + endpoint;
+                    }
+                });
+
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<ContainerInspection>> results = new ArrayList<>();
+            for (int i = 0; i < threads; i++) {
+                results.add(executor.submit(() -> backend.inspect("mc", TIMEOUT)));
+            }
+            for (Future<ContainerInspection> result : results) {
+                assertEquals(ContainerInspection.healthy(ContainerStatus.RUNNING), result.get(10, TimeUnit.SECONDS));
+            }
+        } finally {
+            executor.shutdownNow();
+        }
+
+        verify(logger, times(1)).info(eq(ENDPOINT_LOG), eq((Object) ("endpoint " + engine.endpoint())));
+    }
+
+    @Test
+    public void eachEndpointChangeIsLogged() throws IOException {
+        FakeDockerEngine first = unixEngine();
+        FakeDockerEngine second = tcpEngine();
+        for (FakeDockerEngine engine : List.of(first, first, second, first)) {
+            engine.on(INSPECT, Reply.json(200, inspectBody(true, null, null)));
+        }
+        AtomicReference<DockerEndpoint> current = new AtomicReference<>();
+        EngineApiDockerBackend backend = new EngineApiDockerBackend(logger,
+                new EngineApiTransport(HostResolver.system()), new EngineApiDockerBackend.EndpointSource() {
+                    @Override
+                    public DockerEndpoint resolve(long deadlineNanos) {
+                        return current.get();
+                    }
+
+                    @Override
+                    public String describe(DockerEndpoint endpoint) {
+                        return "endpoint " + endpoint;
+                    }
+                });
+
+        for (FakeDockerEngine engine : List.of(first, first, second, first)) {
+            current.set(engine.endpoint());
+            backend.inspect("mc", TIMEOUT);
+        }
+
+        verify(logger, times(2)).info(eq(ENDPOINT_LOG), eq((Object) ("endpoint " + first.endpoint())));
+        verify(logger, times(1)).info(eq(ENDPOINT_LOG), eq((Object) ("endpoint " + second.endpoint())));
     }
 
     private FakeDockerEngine unixEngine() throws IOException {
