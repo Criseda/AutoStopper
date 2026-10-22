@@ -34,27 +34,112 @@ playing on.
 
 ## Quick start
 
-1. Pick a complete, pinned example and copy it:
-   [Java 21 / Velocity 3.5.1](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-legacy),
-   [Java 25 / Velocity 4.2](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-stable)
-   (recommended), or
-   [Java 25 / Velocity 4.2.1 preview](https://github.com/Criseda/AutoStopper/tree/master/examples/velocity-preview).
-2. Run `docker compose up -d`. The proxy installs AutoStopper from Modrinth by itself
-   (`MODRINTH_PROJECTS`, pinned to one release), using the stock proxy image with no custom
-   entrypoint and no host-specific values.
-3. Edit `velocity_server/plugins/autostopper/config.yml`.
-4. Map each Velocity server name to its existing Docker container:
+You need a Linux host with Docker Engine and Docker Compose v2. This sets up Velocity 4.2 on
+Java 25 with one Minecraft server that AutoStopper puts to sleep and wakes. There is nothing to
+download by hand: the proxy installs AutoStopper from Modrinth.
 
-   ```yaml
-   monitored_servers:
-     - server_name: survival
-       container_name: survival-server
-   ```
+**1. Save this as `docker-compose.yml`** in an empty directory:
 
-5. Restart Velocity or run `/autostopper reload`, then check `/autostopper status`.
+```yaml
+services:
+  # Lets Velocity inspect, start and stop containers, and nothing else.
+  # It is the only service that touches the Docker socket.
+  autostopper-docker:
+    image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=velocity
+      - -allowGET=^(/v[0-9.]+)?/(_ping|containers/[a-zA-Z0-9_.-]+/json)$
+      - -allowPOST=^(/v[0-9.]+)?/containers/[a-zA-Z0-9_.-]+/(start|stop)$
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - autostopper-internal
 
-Managed containers must already exist and use `restart: "no"`, otherwise Docker can undo a
-successful idle stop. Leave always-on servers out of `monitored_servers`.
+  velocity:
+    image: itzg/mc-proxy:2026.8.0-java25
+    environment:
+      TYPE: "VELOCITY"
+      VELOCITY_VERSION: "4.2.0"
+      VELOCITY_BUILD_ID: "30"
+      # Installs the latest AutoStopper release at startup. Write
+      # autostopper:<version> to pin one. MINECRAFT_VERSION only selects the
+      # download (any version from 1.7.2 to 26.2 works).
+      MODRINTH_PROJECTS: "autostopper"
+      MINECRAFT_VERSION: "1.21.4"
+    ports:
+      - "25565:25577"
+    volumes:
+      - ./velocity_server:/server
+    networks:
+      - minecraft
+      - autostopper-internal
+    depends_on:
+      - autostopper-docker
+    restart: unless-stopped
+
+  # A server AutoStopper manages. Add more the same way.
+  survival:
+    image: itzg/minecraft-server:java21
+    container_name: survival-server
+    environment:
+      EULA: "TRUE"
+      TYPE: "PURPUR"
+      VERSION: "1.21.4"
+      ONLINE_MODE: "FALSE"
+    volumes:
+      - ./survival_data:/data
+    networks:
+      - minecraft
+    restart: "no"          # AutoStopper starts and stops it; Docker must not restart it
+    stop_grace_period: 60s # time to save the world when it is stopped
+
+networks:
+  minecraft:
+  autostopper-internal:
+    internal: true
+```
+
+**2. Start it** with `docker compose up -d`. The first start downloads everything and generates
+the configuration.
+
+**3. Tell Velocity about the server.** In `velocity_server/velocity.toml`, replace the sample
+servers and the sample forced hosts, which refer to them:
+
+```toml
+[servers]
+survival = "survival:25565"
+try = ["survival"]
+
+[forced-hosts]
+```
+
+In the existing `[advanced]` section of the same file, set `read-timeout = 180000` so a sleeping
+server has time to wake before Velocity gives up on the player (the default is 30 seconds).
+
+**4. Tell AutoStopper which container to manage.** In
+`velocity_server/plugins/autostopper/config.yml`, replace `monitored_servers: []` with:
+
+```yaml
+monitored_servers:
+  - server_name: survival            # the name in velocity.toml
+    container_name: survival-server  # the container_name in docker-compose.yml
+```
+
+**5. Restart and check.** Run `docker compose restart velocity`. The proxy log should show
+`endpoint auto: tcp://autostopper-docker:2375 (socket-proxy sidecar)` and
+`AutoStopper startup preflight healthy: 1 mapping(s) checked.`
+
+That's it. After 5 minutes without players the server sleeps, and the next player who joins wakes
+it. `/autostopper status` shows every server's state. Always-on hubs stay out of
+`monitored_servers`. Ready-made files for the other Velocity lines are in the
+[examples](https://github.com/Criseda/AutoStopper/tree/master/examples), and the
+[configuration reference](docs/configuration.md) covers tuning.
 
 > **Docker security warning.** Access to `/var/run/docker.sock` is effectively root on the Docker
 > host. The examples keep it out of Velocity: a small socket proxy holds the socket and lets

@@ -53,12 +53,15 @@ These fields live on Modrinth, not in the release pipeline, and are changed by a
 | Side | Server/proxy only |
 | Summary | Empty servers sleep. Players wake them. AutoStopper starts mapped Docker backends on demand and stops them after inactivity. |
 | License | MIT |
-| Source | `https://github.com/Criseda/AutoStopper` |
-| Issues | `https://github.com/Criseda/AutoStopper/issues` |
-| Releases | `https://github.com/Criseda/AutoStopper/releases` |
-| Changelog | `https://github.com/Criseda/AutoStopper/blob/master/CHANGELOG.md` |
-| Installation | `https://github.com/Criseda/AutoStopper#installation` |
-| Migration | `https://github.com/Criseda/AutoStopper/blob/master/docs/migration-2.2.0-to-2.3.0.md` |
+| Source link | `https://github.com/Criseda/AutoStopper` |
+| Issues link | `https://github.com/Criseda/AutoStopper/issues` |
+| Wiki link | `https://github.com/Criseda/AutoStopper/blob/master/README.md` |
+| Discord link | the project's Discord invite |
+| Donation links | PayPal, Buy Me a Coffee, GitHub Sponsors |
+
+Modrinth only offers these fixed link types, so there are no fields for releases, the changelog,
+installation, or migration guides. The project description ([`modrinth.md`](modrinth.md)) links
+those instead, and the release workflow keeps it current.
 
 Upload `docs/assets/autostopper-banner.png` (1672 by 941 pixels, under Modrinth's 5 MiB limit) as the
 featured gallery image:

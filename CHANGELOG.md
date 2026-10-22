@@ -4,6 +4,14 @@ All notable AutoStopper changes are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- The README and the Modrinth page start with a self-contained quick start: the complete
+  `docker-compose.yml` (socket proxy, Velocity with the Modrinth install, one managed server), the
+  exact `velocity.toml` and `config.yml` edits, and the log lines that confirm it works. Each
+  example's README now has its own step-by-step run instructions instead of pointing back to the
+  README (#157).
+
 ## [2.3.0] - 2026-10-22
 
 ### Added

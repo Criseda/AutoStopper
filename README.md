@@ -104,102 +104,158 @@ rewrites an existing one.
 
 ## Installation
 
-Prerequisites are Docker Engine with Linux containers and Docker Compose v2, enough access to create
-the backend containers in advance, and acceptance of the security boundary above. The examples need
-no custom entrypoint and no host-specific values such as group IDs.
+You need a Linux host with Docker Engine and Docker Compose v2. The steps below set up the
+recommended stable line: Velocity 4.2.0 on Java 25, with one Minecraft server that AutoStopper puts
+to sleep and wakes. They need no custom entrypoint, no host-specific values, and nothing to
+download by hand.
 
-1. Copy one complete support-line directory to the Docker host. Do not combine the Java 21 image
-   from the legacy example with the Java 25 Velocity 4.x builds from the stable or preview
-   examples.
-2. Review the `autostopper-docker` socket proxy in `docker-compose.yml`. The proxy installs
-   AutoStopper from [Modrinth](https://modrinth.com/plugin/autostopper) at startup, pinned by
-   `MODRINTH_PROJECTS: "autostopper:2.3.0"`; there is nothing to download. These examples need
-   AutoStopper 2.3.0 or newer; for 2.2.0 or earlier, use the
-   [examples from that release](https://github.com/Criseda/AutoStopper/tree/2.2.0/examples).
-3. Start the stack:
+### 1. Create `docker-compose.yml`
 
-   ```sh
-   docker compose up -d
-   ```
+Make an empty directory and save this as `docker-compose.yml` in it:
 
-4. Add every managed backend to the `[servers]` section of
-   `velocity_server/velocity.toml`. The key must exactly match AutoStopper's `server_name`.
-   Remove Velocity's sample servers and the sample entries under `[forced-hosts]`, which name them:
+```yaml
+services:
+  # Lets Velocity inspect, start and stop containers, and nothing else.
+  # It is the only service that touches the Docker socket.
+  autostopper-docker:
+    image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    command:
+      - -listenip=0.0.0.0
+      - -allowfrom=velocity
+      - -allowGET=^(/v[0-9.]+)?/(_ping|containers/[a-zA-Z0-9_.-]+/json)$
+      - -allowPOST=^(/v[0-9.]+)?/containers/[a-zA-Z0-9_.-]+/(start|stop)$
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - autostopper-internal
 
-   ```toml
-   [servers]
-   purpur = "purpur:25565"
-   fabric = "fabric:25565"
-   try = ["purpur"]
+  velocity:
+    image: itzg/mc-proxy:2026.8.0-java25
+    environment:
+      TYPE: "VELOCITY"
+      VELOCITY_VERSION: "4.2.0"
+      VELOCITY_BUILD_ID: "30"
+      # Installs AutoStopper from Modrinth at startup. MINECRAFT_VERSION only
+      # selects the download (any version from 1.7.2 to 26.2 works).
+      MODRINTH_PROJECTS: "autostopper:2.3.0"
+      MINECRAFT_VERSION: "1.21.4"
+    ports:
+      - "25565:25577"
+    volumes:
+      - ./velocity_server:/server
+    networks:
+      - minecraft
+      - autostopper-internal
+    depends_on:
+      - autostopper-docker
+    restart: unless-stopped
 
-   [forced-hosts]
-   ```
+  # A server AutoStopper manages. Add more the same way.
+  survival:
+    image: itzg/minecraft-server:java21
+    container_name: survival-server
+    environment:
+      EULA: "TRUE"
+      TYPE: "PURPUR"
+      VERSION: "1.21.4"
+      ONLINE_MODE: "FALSE"
+    volumes:
+      - ./survival_data:/data
+    networks:
+      - minecraft
+    restart: "no"          # AutoStopper starts and stops it; Docker must not restart it
+    stop_grace_period: 60s # time to save the world when it is stopped
 
-   Velocity disconnects a waiting player after `read-timeout` (30 seconds by default, under
-   `[advanced]`). If a backend can take longer to become ready, raise it, for example
-   `read-timeout = 180000`.
+networks:
+  minecraft:
+  autostopper-internal:
+    internal: true
+```
 
-5. Edit the generated lowercase data path
-   `velocity_server/plugins/autostopper/config.yml`. Start with one mapping if desired:
+The same file, with two servers and for the Java 21 / Velocity 3.5.1 and preview lines, is in
+[`examples/`](examples/). Do not mix images and Velocity builds between lines.
 
-   ```yaml
-   inactivity_timeout_seconds: 300
-   shutdown_timeout_seconds: 10
-   stop_retry:
-     max_attempts: 3
-     initial_backoff_seconds: 60
-     max_backoff_seconds: 300
-   monitored_servers:
-     - server_name: purpur
-       container_name: purpur-server
-       readiness:
-         strategy: minecraft_status
-         target_host: purpur
-         target_port: 25565
-         probe_interval_millis: 1000
-         timeout_seconds: 120
-         connect_timeout_millis: 1000
-         read_timeout_millis: 1000
-   ```
+### 2. Start it
 
-6. Restart the proxy, or run `/autostopper reload` with the required permission. Verify startup and
-   the mapping preflight:
+```sh
+docker compose up -d
+```
 
-   ```sh
-   docker compose logs velocity
-   docker compose ps
-   ```
+The first start downloads Velocity, AutoStopper, and the Minecraft server, and generates their
+configuration under `velocity_server/` and `survival_data/`.
 
-   The log should show `Docker Engine API endpoint: endpoint auto: tcp://autostopper-docker:2375
-   (socket-proxy sidecar)` and a healthy preflight.
-   In Velocity, `/autostopper status` reports each monitored server with clear state badges such as
-   `● Ready`, `○ Sleeping`, `◐ Waking`, or `◐ Running · readiness unverified`.
-   `Running · readiness unverified` means Docker reports the container running but AutoStopper has not
-   completed this process generation's configured readiness check; normal player demand performs that
-   check before connecting. `! Unavailable · Docker cannot be reached` or `! Failed` includes an
-   operator-safe detail; raw Docker errors remain only in the proxy log. Run
-   `/autostopper status <server>` (or click a server name in game) for one server's startup stage,
-   hold, waiting players, activity, the last failure with its remediation, and its last 10
-   lifecycle operations. The overview ends with a `Docker:` line showing how AutoStopper reaches
-   Docker.
+### 3. Tell Velocity about the server
 
-Managed containers must already exist and use `restart: "no"` so Docker does not immediately undo
-an inactivity stop. Unmonitored hubs or lobbies are not intercepted or stopped by AutoStopper and
-may retain `restart: unless-stopped`. AutoStopper honors each container's stop grace period, so give
-backends with large worlds enough time to save, for example `stop_grace_period: 60s`.
+In `velocity_server/velocity.toml`, replace the sample servers and the sample forced hosts, which
+refer to them:
 
-To upgrade, change the pinned version in `MODRINTH_PROJECTS` and run `docker compose up -d`; the old
-JAR is removed automatically. The proxy contacts Modrinth on every start, so it cannot start while
-Modrinth is unreachable.
+```toml
+[servers]
+survival = "survival:25565"
+try = ["survival"]
 
-To install manually instead, remove `MODRINTH_PROJECTS` and `MINECRAFT_VERSION` and put the
-unchanged JAR from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) at
-`velocity_server/plugins/AutoStopper.jar`. Use one method only: with both, Velocity loads whichever
-copy it finds first and refuses the other.
+[forced-hosts]
+```
 
-Upgrading from 2.2.0? The JAR is a drop-in replacement, and the
-[migration guide](docs/migration-2.2.0-to-2.3.0.md) shows how to move an entrypoint deployment to
-the socket proxy.
+In the `[advanced]` section of the same file, give a sleeping server time to wake before Velocity
+gives up on the waiting player (the default is 30 seconds):
+
+```toml
+read-timeout = 180000
+```
+
+### 4. Tell AutoStopper which container belongs to it
+
+In `velocity_server/plugins/autostopper/config.yml`, replace `monitored_servers: []` with:
+
+```yaml
+monitored_servers:
+  - server_name: survival            # the name in velocity.toml
+    container_name: survival-server  # the container_name in docker-compose.yml
+```
+
+### 5. Restart Velocity and check
+
+```sh
+docker compose restart velocity
+docker compose logs velocity | grep -i autostopper
+```
+
+Look for these two lines:
+
+```text
+Docker Engine API endpoint: endpoint auto: tcp://autostopper-docker:2375 (socket-proxy sidecar)
+AutoStopper startup preflight healthy: 1 mapping(s) checked.
+```
+
+That's it. After 5 minutes without players, AutoStopper stops `survival-server`. The next player
+who joins wakes it: they see short progress messages and are connected as soon as it answers. In
+game or on the console, `/autostopper status` shows each server's state.
+
+### Next steps
+
+- **More servers:** add a service with `restart: "no"`, a `[servers]` entry, and a mapping. Always-on
+  hubs or lobbies stay out of `monitored_servers` and may keep `restart: unless-stopped`.
+- **Tuning:** inactivity timeout, readiness checks, and stop retries are in the
+  [configuration reference](docs/configuration.md). Large or modded worlds may need a longer
+  `stop_grace_period`; AutoStopper waits for it.
+- **Upgrades:** change the version in `MODRINTH_PROJECTS` and run `docker compose up -d`. The old
+  JAR is removed automatically. The proxy contacts Modrinth on every start, so it cannot start
+  while Modrinth is unreachable.
+- **Manual install:** remove `MODRINTH_PROJECTS` and `MINECRAFT_VERSION`, and put the unchanged JAR
+  from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) at
+  `velocity_server/plugins/AutoStopper.jar`. Use one method only: with both, Velocity loads
+  whichever copy it finds first and refuses the other.
+- **Upgrading from 2.2.0:** the JAR is a drop-in replacement, and the
+  [migration guide](docs/migration-2.2.0-to-2.3.0.md) shows how to move an entrypoint deployment to
+  the socket proxy. These steps need AutoStopper 2.3.0 or newer; for 2.2.0 or earlier, use the
+  [examples from that release](https://github.com/Criseda/AutoStopper/tree/2.2.0/examples).
+- **Something wrong?** See [troubleshooting](docs/troubleshooting.md).
 
 ### Alternatives
 

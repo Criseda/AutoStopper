@@ -140,12 +140,15 @@ public final class ReleaseCandidateE2EHarness {
                 throw new IllegalStateException("Release-candidate fixture file is missing: " + path);
             }
         }
-        // The E2E must exercise the same socket proxy that operators deploy from the examples.
-        for (String line : List.of("velocity-legacy", "velocity-stable", "velocity-preview")) {
-            Path example = repositoryDirectory.resolve("examples/" + line + "/docker-compose.yml");
-            if (!Files.readString(example, StandardCharsets.UTF_8).contains("image: " + SOCKET_PROXY_IMAGE)) {
+        // The E2E must exercise the same socket proxy that operators deploy from the examples and
+        // the quick starts.
+        for (String file : List.of("examples/velocity-legacy/docker-compose.yml",
+                "examples/velocity-stable/docker-compose.yml", "examples/velocity-preview/docker-compose.yml",
+                "README.md", "docs/modrinth.md", "docs/security.md", "docs/migration-2.2.0-to-2.3.0.md")) {
+            Path pinned = repositoryDirectory.resolve(file);
+            if (!Files.readString(pinned, StandardCharsets.UTF_8).contains("image: " + SOCKET_PROXY_IMAGE)) {
                 throw new IllegalStateException("E2E socket proxy " + SOCKET_PROXY_IMAGE
-                        + " differs from the image pinned in " + example);
+                        + " differs from the image pinned in " + pinned);
             }
         }
     }
