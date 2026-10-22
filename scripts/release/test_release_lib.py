@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import tempfile
 import unittest
@@ -342,6 +343,32 @@ class ModrinthInstallPinTest(unittest.TestCase):
         self.write("README.md", 'MODRINTH_PROJECTS: "autostopper:2.3.0"\n' * 2)
         with self.assertRaisesRegex(ReleaseError, "found 2"):
             modrinth_install_pins(self.root)
+
+
+class SocketProxyPinTest(unittest.TestCase):
+    """Every copy of the socket-proxy service pins the same image (ReleaseCandidateE2EHarness
+    also checks it equals the image the E2E runs)."""
+
+    FILES = (
+        "examples/velocity-legacy/docker-compose.yml",
+        "examples/velocity-stable/docker-compose.yml",
+        "examples/velocity-preview/docker-compose.yml",
+        "README.md",
+        "docs/modrinth.md",
+        "docs/security.md",
+        "docs/migration-2.2.0-to-2.3.0.md",
+    )
+
+    def test_socket_proxy_pins_agree(self) -> None:
+        repository, _, _ = repository_release_context()
+        pins = {}
+        for relative in self.FILES:
+            content = (repository / relative).read_text(encoding="utf-8")
+            pins[relative] = re.findall(r"image:\s*(wollomatic/socket-proxy:\S+)", content)
+            self.assertTrue(pins[relative], f"{relative} has no socket-proxy image")
+        images = {image for found in pins.values() for image in found}
+        self.assertEqual(1, len(images), pins)
+        self.assertRegex(images.pop(), r"@sha256:[0-9a-f]{64}$", "the socket proxy must be pinned by digest")
 
 
 class MinecraftRangeTest(unittest.TestCase):
