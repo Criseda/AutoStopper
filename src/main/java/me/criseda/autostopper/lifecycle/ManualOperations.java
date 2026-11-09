@@ -103,12 +103,12 @@ final class ManualOperations {
         CompletableFuture<ManualStopOutcome> stop = admission.rejected() != null
                 ? CompletableFuture.completedFuture(admission.rejected())
                 : admission.stop();
-        recordWhenDone(TelemetryOperationType.MANUAL_STOP, mapping, startNanos, stop,
-                ManualStopOutcome.STOP_FAILED, TelemetryOutcome::from);
+        CompletableFuture<ManualStopOutcome> recorded = recordWhenDone(TelemetryOperationType.MANUAL_STOP,
+                mapping, startNanos, stop, ManualStopOutcome.STOP_FAILED, TelemetryOutcome::from);
         if (admission.rejected() == null) {
             runStop(admission.entry(), mapping, registeredServer, stop);
         }
-        return stop;
+        return recorded;
     }
 
     // --- Restart ---
@@ -146,16 +146,16 @@ final class ManualOperations {
         CompletableFuture<ManualRestartOutcome> restart = admission.rejected() != null
                 ? CompletableFuture.completedFuture(admission.rejected())
                 : new CompletableFuture<>();
-        recordWhenDone(TelemetryOperationType.MANUAL_RESTART, mapping, startNanos, restart,
-                ManualRestartOutcome.STOP_FAILED, TelemetryOutcome::from);
+        CompletableFuture<ManualRestartOutcome> recorded = recordWhenDone(TelemetryOperationType.MANUAL_RESTART,
+                mapping, startNanos, restart, ManualRestartOutcome.STOP_FAILED, TelemetryOutcome::from);
         if (admission.rejected() != null) {
-            return restart;
+            return recorded;
         }
 
         if (admission.startup() != null) {
             completeRestart(admission.entry(), restart, admission.startup());
             pipeline.launch(admission.entry(), mapping, admission.startup());
-            return restart;
+            return recorded;
         }
         LifecycleEntry entry = admission.entry();
         admission.stop().whenComplete((stopOutcome, error) -> {
@@ -167,7 +167,7 @@ final class ManualOperations {
             }
         });
         runStopThenStart(admission.entry(), mapping, registeredServer, admission.stop(), restart);
-        return restart;
+        return recorded;
     }
 
     private static void completeRestart(LifecycleEntry entry, CompletableFuture<ManualRestartOutcome> restart,
@@ -406,13 +406,17 @@ final class ManualOperations {
         };
     }
 
-    /** Records the operation's telemetry once {@code result} completes. */
+    /**
+     * Records the operation's telemetry once {@code result} completes, and returns a future that
+     * completes only after the record is written. Callers must hand out the returned future, not
+     * {@code result}: {@code result} can complete on a worker while its callbacks are still running,
+     * so whoever observes it may see the outcome before the telemetry and recent-operations views do.
+     */
     private <T> CompletableFuture<T> recordWhenDone(TelemetryOperationType type, ServerMapping mapping,
             long startNanos, CompletableFuture<T> result, T fallback, Function<T, TelemetryOutcome> toTelemetry) {
-        result.whenComplete((outcome, error) -> telemetry.recordOperation(type, mapping.serverName(),
+        return result.whenComplete((outcome, error) -> telemetry.recordOperation(type, mapping.serverName(),
                 TelemetryOrigin.MANUAL_COMMAND, toTelemetry.apply(outcome != null ? outcome : fallback),
                 runtime.elapsedSince(startNanos), 0));
-        return result;
     }
 
     // --- Admission decisions, taken under the lifecycle locks and acted on after release ---

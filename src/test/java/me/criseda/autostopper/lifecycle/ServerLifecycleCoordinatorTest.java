@@ -1669,6 +1669,32 @@ class ServerLifecycleCoordinatorTest {
     }
 
     @Test
+    void manualStop_CompletesOnlyAfterItsTelemetryIsRecorded() throws Exception {
+        CountDownLatch recording = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        LifecycleTelemetry telemetry = mock(LifecycleTelemetry.class);
+        doAnswer(invocation -> {
+            if (invocation.getArgument(0) == TelemetryOperationType.MANUAL_STOP) {
+                recording.countDown();
+                assertTrue(release.await(10, TimeUnit.SECONDS));
+            }
+            return null;
+        }).when(telemetry).recordOperation(any(), any(), any(), any(), any(), anyInt());
+        coordinator = new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(),
+                new AutoStopperExecutor(), System::nanoTime, telemetry);
+        readyServerWithoutPlayers();
+        when(serverManager.getServer("survival")).thenReturn(Optional.of(targetServer));
+        when(serverManager.stopServer(mapping)).thenReturn(ContainerStatus.STOPPED);
+
+        CompletableFuture<ManualStopOutcome> stopFuture = coordinator.requestManualStop(mapping);
+
+        assertTrue(recording.await(10, TimeUnit.SECONDS));
+        assertFalse(stopFuture.isDone(), "the stop must not be reported before its telemetry is recorded");
+        release.countDown();
+        assertEquals(ManualStopOutcome.STOPPED, stopFuture.get(10, TimeUnit.SECONDS));
+    }
+
+    @Test
     void manualOperations_AppearInRecentOperationsWithTheirInitiator() {
         when(serverManager.getServerStatusAsync(mapping))
                 .thenReturn(CompletableFuture.completedFuture(Optional.of(ContainerStatus.STOPPED)));
