@@ -4,7 +4,6 @@ import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
-import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
@@ -33,7 +32,6 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-@Plugin(id = "autostopper", name = "AutoStopper", version = "2.3.1", authors = { "criseda" })
 public class AutoStopperPlugin {
     private final ProxyServer server;
     private final Logger logger;

@@ -181,6 +181,10 @@
                 <version>3.16.0</version>
                 <configuration>
                     <release>${maven.compiler.release}</release>
+                    <!-- velocity-plugin.json (filtered from the POM version) is the only plugin
+                         descriptor. Velocity's annotation processor would overwrite it on JDKs that
+                         run processors implicitly, so the shipped JAR would depend on the build JDK. -->
+                    <proc>none</proc>
                     <encoding>${project.build.sourceEncoding}</encoding>
                 </configuration>
             </plugin>
