@@ -147,51 +147,7 @@ final class EngineApiDockerBackend implements DockerBackend {
 
     @Override
     public ContainerStatus start(String containerName, Duration timeout) {
-        EngineApiResponse response;
-        try {
-            response = send("POST", containerPath(containerName, "start"), timeout);
-        } catch (EngineApiException e) {
-            return switch (e.kind()) {
-                case TIMED_OUT, INTERRUPTED -> {
-                    logger.error("Timed out after {}ms starting container {}: {}",
-                            timeout.toMillis(), containerName, e.getMessage());
-                    yield ContainerStatus.TIMED_OUT;
-                }
-                case PERMISSION_DENIED, UNAVAILABLE -> {
-                    logger.error("Docker inaccessible starting container {}: {}", containerName, e.getMessage());
-                    yield ContainerStatus.INACCESSIBLE;
-                }
-                case PROTOCOL -> {
-                    logger.error("Failed to start container {}: {}", containerName, e.getMessage());
-                    yield ContainerStatus.FAILED;
-                }
-            };
-        }
-        return switch (response.status()) {
-            case 204 -> {
-                logger.info("Started container: {}", containerName);
-                yield ContainerStatus.RUNNING;
-            }
-            case 304 -> {
-                logger.info("Container {} was already running.", containerName);
-                yield ContainerStatus.RUNNING;
-            }
-            case 404 -> {
-                logger.error("Cannot start container {}: container does not exist: {}",
-                        containerName, bodyForLog(response));
-                yield ContainerStatus.MISSING;
-            }
-            case 401, 403 -> {
-                logger.error("Docker endpoint refused starting container {} (HTTP {}): {}",
-                        containerName, response.status(), bodyForLog(response));
-                yield ContainerStatus.INACCESSIBLE;
-            }
-            default -> {
-                logger.error("Failed to start container {}: HTTP {}: {}",
-                        containerName, response.status(), bodyForLog(response));
-                yield ContainerStatus.FAILED;
-            }
-        };
+        return change(StateChange.START, containerName, timeout);
     }
 
     @Override
@@ -220,47 +176,7 @@ final class EngineApiDockerBackend implements DockerBackend {
 
     @Override
     public ContainerStatus stop(String containerName, Duration deadline) {
-        EngineApiResponse response;
-        try {
-            response = send("POST", containerPath(containerName, "stop"), deadline);
-        } catch (EngineApiException e) {
-            return switch (e.kind()) {
-                case TIMED_OUT, INTERRUPTED -> ContainerStatus.TIMED_OUT;
-                case PERMISSION_DENIED, UNAVAILABLE -> {
-                    logger.error("Docker inaccessible stopping container {}: {}", containerName, e.getMessage());
-                    yield ContainerStatus.INACCESSIBLE;
-                }
-                case PROTOCOL -> {
-                    logger.error("Failed to stop container {}: {}", containerName, e.getMessage());
-                    yield ContainerStatus.FAILED;
-                }
-            };
-        }
-        return switch (response.status()) {
-            case 204 -> {
-                logger.info("Stopped container: {}", containerName);
-                yield ContainerStatus.STOPPED;
-            }
-            case 304 -> {
-                logger.info("Container {} was already stopped.", containerName);
-                yield ContainerStatus.STOPPED;
-            }
-            case 404 -> {
-                logger.error("Cannot stop container {}: container does not exist: {}",
-                        containerName, bodyForLog(response));
-                yield ContainerStatus.MISSING;
-            }
-            case 401, 403 -> {
-                logger.error("Docker endpoint refused stopping container {} (HTTP {}): {}",
-                        containerName, response.status(), bodyForLog(response));
-                yield ContainerStatus.INACCESSIBLE;
-            }
-            default -> {
-                logger.error("Failed to stop container {}: HTTP {}: {}",
-                        containerName, response.status(), bodyForLog(response));
-                yield ContainerStatus.FAILED;
-            }
-        };
+        return change(StateChange.STOP, containerName, deadline);
     }
 
     @Override
@@ -278,6 +194,68 @@ final class EngineApiDockerBackend implements DockerBackend {
             logger.info("Docker Engine API endpoint: {}", endpoints.describe(endpoint));
         }
         return transport.exchange(endpoint, method, path, deadline);
+    }
+
+    /** {@code POST /containers/{name}/start} or {@code /stop}; both answer with the same status codes. */
+    private ContainerStatus change(StateChange change, String containerName, Duration timeout) {
+        EngineApiResponse response;
+        try {
+            response = send("POST", containerPath(containerName, change.action()), timeout);
+        } catch (EngineApiException e) {
+            return switch (e.kind()) {
+                case TIMED_OUT, INTERRUPTED -> {
+                    if (change.logsTimeout()) {
+                        logger.error("Timed out after {}ms " + change.doing() + " container {}: {}",
+                                timeout.toMillis(), containerName, e.getMessage());
+                    }
+                    yield ContainerStatus.TIMED_OUT;
+                }
+                case PERMISSION_DENIED, UNAVAILABLE -> {
+                    logger.error("Docker inaccessible " + change.doing() + " container {}: {}",
+                            containerName, e.getMessage());
+                    yield ContainerStatus.INACCESSIBLE;
+                }
+                case PROTOCOL -> {
+                    logger.error("Failed to " + change.action() + " container {}: {}", containerName, e.getMessage());
+                    yield ContainerStatus.FAILED;
+                }
+            };
+        }
+        return switch (response.status()) {
+            case 204 -> {
+                logger.info(change.done() + " container: {}", containerName);
+                yield change.result();
+            }
+            case 304 -> {
+                logger.info("Container {} was already " + change.alreadyState() + ".", containerName);
+                yield change.result();
+            }
+            case 404 -> {
+                logger.error("Cannot " + change.action() + " container {}: container does not exist: {}",
+                        containerName, bodyForLog(response));
+                yield ContainerStatus.MISSING;
+            }
+            case 401, 403 -> {
+                logger.error("Docker endpoint refused " + change.doing() + " container {} (HTTP {}): {}",
+                        containerName, response.status(), bodyForLog(response));
+                yield ContainerStatus.INACCESSIBLE;
+            }
+            default -> {
+                logger.error("Failed to " + change.action() + " container {}: HTTP {}: {}",
+                        containerName, response.status(), bodyForLog(response));
+                yield ContainerStatus.FAILED;
+            }
+        };
+    }
+
+    /** The wording and result of a start or stop request. */
+    private record StateChange(String action, String doing, String done, String alreadyState,
+            ContainerStatus result, boolean logsTimeout) {
+        static final StateChange START =
+                new StateChange("start", "starting", "Started", "running", ContainerStatus.RUNNING, true);
+        // DockerManager logs a stop timeout itself, once it has re-checked whether the container stopped.
+        static final StateChange STOP =
+                new StateChange("stop", "stopping", "Stopped", "stopped", ContainerStatus.STOPPED, false);
     }
 
     private Object parse(EngineApiResponse response, String containerName) {
