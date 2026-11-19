@@ -4,6 +4,8 @@ All notable AutoStopper changes are documented here.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-11-19
+
 ### Changed
 
 - The README and the Modrinth page start with a self-contained quick start: the complete
@@ -242,6 +244,7 @@ mappings, pinned examples, and Docker security boundary all require operator rev
 
 - Last 1.x migration source and prototype release tag.
 
+[2.3.1]: https://github.com/Criseda/AutoStopper/compare/2.3.0...2.3.1
 [2.3.0]: https://github.com/Criseda/AutoStopper/compare/2.2.0...2.3.0
 [2.2.0]: https://github.com/Criseda/AutoStopper/compare/2.1.1...2.2.0
 [2.1.1]: https://github.com/Criseda/AutoStopper/compare/2.1.0...2.1.1
