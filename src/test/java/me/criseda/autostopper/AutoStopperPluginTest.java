@@ -22,6 +22,7 @@ import me.criseda.autostopper.operational.OperationalStatusService;
 import me.criseda.autostopper.operational.PreflightSummary;
 import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ServerManager;
+import me.criseda.autostopper.telemetry.LifecycleTelemetry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,8 +36,6 @@ import org.slf4j.Logger;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
-import java.util.HashMap;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -242,8 +241,6 @@ public class AutoStopperPluginTest {
     @Test
     void testCreateServerManager() {
         // Prepare
-        when(config.getServerNames()).thenReturn(new String[]{"test-server"});
-        when(config.getServerToContainerMap()).thenReturn(java.util.Map.of("test-server", "test-container"));
         AutoStopperExecutor executor = new AutoStopperExecutor();
         try {
             // Execute
@@ -270,7 +267,7 @@ public class AutoStopperPluginTest {
         AutoStopperExecutor executor = new AutoStopperExecutor();
         try {
             ActivityTracker createdActivityTracker = plugin.createActivityTracker(
-                    config, serverManager, executor, lifecycleCoordinator);
+                    config, serverManager, executor, lifecycleCoordinator, mock(LifecycleTelemetry.class));
 
             // Verify
             assertNotNull(createdActivityTracker, "Created activity tracker should not be null");

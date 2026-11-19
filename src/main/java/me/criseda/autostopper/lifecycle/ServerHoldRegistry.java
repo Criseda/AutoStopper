@@ -3,11 +3,9 @@ package me.criseda.autostopper.lifecycle;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 
-import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -34,10 +32,6 @@ public final class ServerHoldRegistry {
             return false;
         }
         return holds.containsKey(serverName);
-    }
-
-    public Set<String> heldServers() {
-        return Collections.unmodifiableSet(holds.keySet());
     }
 
     public void reconcileConfig(ConfigSnapshot previous, ConfigSnapshot current) {

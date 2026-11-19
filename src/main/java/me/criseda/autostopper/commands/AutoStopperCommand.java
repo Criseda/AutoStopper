@@ -5,9 +5,7 @@ import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.permission.Tristate;
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.proxy.Player;
-import com.velocitypowered.api.proxy.server.RegisteredServer;
 
-import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigLoadResult;
 import me.criseda.autostopper.config.ConfigProvider;
 import me.criseda.autostopper.config.ConfigSnapshot;
@@ -21,7 +19,6 @@ import me.criseda.autostopper.messages.OperatorFailureGuide;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
 import me.criseda.autostopper.operational.OperationalStatusService;
-import me.criseda.autostopper.server.ActivityTracker;
 import me.criseda.autostopper.server.ActivityTrackerService;
 import net.kyori.adventure.text.Component;
 

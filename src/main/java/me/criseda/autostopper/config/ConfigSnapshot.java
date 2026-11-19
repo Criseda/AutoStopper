@@ -71,10 +71,6 @@ public final class ConfigSnapshot {
         return servers;
     }
 
-    public Map<String, String> serverToContainer() {
-        return serverToContainer;
-    }
-
     public List<String> serverNames() {
         return servers.stream().map(ServerMapping::serverName).toList();
     }

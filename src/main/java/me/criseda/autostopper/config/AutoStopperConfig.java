@@ -428,22 +428,6 @@ public class AutoStopperConfig implements ConfigProvider {
         return current.get();
     }
 
-    public int getInactivityTimeout() {
-        return snapshot().inactivityTimeoutSeconds();
-    }
-
-    public List<ServerMapping> getServers() {
-        return snapshot().servers();
-    }
-
-    public String[] getServerNames() {
-        return snapshot().serverNames().toArray(String[]::new);
-    }
-
-    public Map<String, String> getServerToContainerMap() {
-        return snapshot().serverToContainer();
-    }
-
     private static final class ConfigValidationException extends Exception {
         private final List<String> errors;
 

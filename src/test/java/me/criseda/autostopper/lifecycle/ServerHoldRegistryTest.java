@@ -6,7 +6,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -24,7 +23,6 @@ public class ServerHoldRegistryTest {
         ServerMapping mapping = new ServerMapping("survival", "survival-container");
         assertTrue(registry.hold(mapping));
         assertTrue(registry.isHeld("survival"));
-        assertEquals(Set.of("survival"), registry.heldServers());
     }
 
     @Test
@@ -41,7 +39,6 @@ public class ServerHoldRegistryTest {
         registry.hold(mapping);
         assertTrue(registry.release("survival"));
         assertFalse(registry.isHeld("survival"));
-        assertTrue(registry.heldServers().isEmpty());
     }
 
     @Test
@@ -112,6 +109,5 @@ public class ServerHoldRegistryTest {
 
         assertFalse(registry.isHeld("s1"));
         assertFalse(registry.isHeld("s2"));
-        assertTrue(registry.heldServers().isEmpty());
     }
 }

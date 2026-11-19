@@ -1,7 +1,6 @@
 package me.criseda.autostopper.readiness;
 
 import java.util.Objects;
-import java.util.Optional;
 
 public record ReadinessResult(
         Outcome outcome,
@@ -26,10 +25,6 @@ public record ReadinessResult(
 
     public boolean ready() {
         return outcome == Outcome.READY;
-    }
-
-    public Optional<MinecraftStatusProbe.Outcome> lastStatusProbeOptional() {
-        return Optional.ofNullable(lastStatusProbe);
     }
 
     public String playerDetail() {

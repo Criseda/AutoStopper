@@ -23,7 +23,6 @@ import org.slf4j.Logger;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -348,12 +347,6 @@ public final class ActivityTracker implements ActivityTrackerService {
         }
 
         return Duration.between(state.lastActivity(), clock.instant()).toMinutes();
-    }
-
-    public Map<String, Instant> getAllActivity() {
-        Map<String, Instant> snapshot = new HashMap<>();
-        activity.forEach((serverName, state) -> snapshot.put(serverName, state.lastActivity()));
-        return snapshot;
     }
 
     void setLastActivityForTest(String serverName, Instant lastActivity) {

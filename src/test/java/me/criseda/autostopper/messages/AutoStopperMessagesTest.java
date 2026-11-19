@@ -31,7 +31,7 @@ class AutoStopperMessagesTest {
 
     @Test
     void pluginHeaderAndTaglineUseBrandTokens() {
-        Component header = AutoStopperMessages.pluginHeader("2.1.0");
+        Component header = AutoStopperMessages.pluginHeader("2.1.0", false);
         Component tagline = AutoStopperMessages.pluginTagline();
 
         assertEquals("AutoStopper 2.1.0", plainText(header));
@@ -114,7 +114,7 @@ class AutoStopperMessagesTest {
     void operationalStatusForRunningUnverifiedUsesWarningColorAndMutedActivity() {
         OperationalServerStatus status = new OperationalServerStatus(
                 OperationalState.RUNNING_UNVERIFIED, 0, Optional.empty());
-        Component message = AutoStopperMessages.operationalStatus("survival", status, 3L);
+        Component message = AutoStopperMessages.operationalStatus("survival", status, 3L, Instant.now(), false);
 
         assertEquals("◐ survival   Running · readiness unverified · active 3m ago", plainText(message));
         assertColor(message, "◐ ", MessageTokens.PROGRESS_WARNING);
@@ -134,19 +134,19 @@ class AutoStopperMessagesTest {
         OperationalServerStatus unavailable = new OperationalServerStatus(OperationalState.DOCKER_UNAVAILABLE, 0, Optional.empty());
 
         assertEquals("● survival   Ready · active just now",
-                plainText(AutoStopperMessages.operationalStatus("survival", ready, 0L)));
+                plainText(AutoStopperMessages.operationalStatus("survival", ready, 0L, Instant.now(), false)));
         assertEquals("◐ creative   Waking · 2 players waiting",
-                plainText(AutoStopperMessages.operationalStatus("creative", waking, null)));
+                plainText(AutoStopperMessages.operationalStatus("creative", waking, null, Instant.now(), false)));
         assertEquals("○ events   Sleeping",
-                plainText(AutoStopperMessages.operationalStatus("events", sleeping, null)));
+                plainText(AutoStopperMessages.operationalStatus("events", sleeping, null, Instant.now(), false)));
         assertEquals("◐ hub   Stopping",
-                plainText(AutoStopperMessages.operationalStatus("hub", stopping, null)));
+                plainText(AutoStopperMessages.operationalStatus("hub", stopping, null, Instant.now(), false)));
         assertEquals("◐ lobby   Running · readiness unverified · no activity recorded",
-                plainText(AutoStopperMessages.operationalStatus("lobby", unverified, null)));
+                plainText(AutoStopperMessages.operationalStatus("lobby", unverified, null, Instant.now(), false)));
         assertEquals("! mini   Failed",
-                plainText(AutoStopperMessages.operationalStatus("mini", failed, null)));
+                plainText(AutoStopperMessages.operationalStatus("mini", failed, null, Instant.now(), false)));
         assertEquals("! modded   Unavailable · Docker cannot be reached",
-                plainText(AutoStopperMessages.operationalStatus("modded", unavailable, null)));
+                plainText(AutoStopperMessages.operationalStatus("modded", unavailable, null, Instant.now(), false)));
     }
 
     @Test
@@ -158,7 +158,7 @@ class AutoStopperMessagesTest {
                 "Start Docker daemon");
         OperationalServerStatus status = new OperationalServerStatus(
                 OperationalState.DOCKER_UNAVAILABLE, 0, Optional.of(failure));
-        Component message = AutoStopperMessages.operationalStatus("survival", status, null);
+        Component message = AutoStopperMessages.operationalStatus("survival", status, null, Instant.now(), false);
 
         String text = plainText(AutoStopperMessages.operationalStatus("survival", status, null,
                 Instant.parse("2026-08-15T14:30:00Z"), false));
@@ -332,7 +332,7 @@ class AutoStopperMessagesTest {
         String untrustedServerName = "<red>survival</red>§l";
         String untrustedError = "bad <click:run_command:'/op me'>value</click>";
 
-        Component ready = AutoStopperMessages.serverReady(untrustedServerName);
+        Component ready = AutoStopperMessages.manualStartAlreadyReady(untrustedServerName);
         Component reloadFailure = AutoStopperMessages.reloadFailed(untrustedError);
 
         TextComponent serverArgument = findText(ready, untrustedServerName);
@@ -350,12 +350,10 @@ class AutoStopperMessagesTest {
     @Test
     void fixedMessageCatalogContainsNoLegacyFormattingCodes() {
         List<Component> messages = List.of(
-                AutoStopperMessages.pluginHeader("2.1.0"),
+                AutoStopperMessages.pluginHeader("2.1.0", false),
                 AutoStopperMessages.pluginTagline(),
-                AutoStopperMessages.pluginInfo("2.1.0"),
-                AutoStopperMessages.helpHint(),
+                AutoStopperMessages.helpHint(false),
                 AutoStopperMessages.helpHeader(),
-                AutoStopperMessages.commandsHeader(),
                 AutoStopperMessages.helpGroup("General"),
                 AutoStopperMessages.helpNoOperatorCommands(),
                 AutoStopperMessages.helpEntry("/autostopper status", "Show the status of every mapped server",
@@ -363,17 +361,8 @@ class AutoStopperMessagesTest {
                 AutoStopperMessages.projectLinks("2.1.0", false),
                 AutoStopperMessages.projectLinks("2.1.0", true),
                 AutoStopperMessages.pluginHeader("2.1.0", true),
-                AutoStopperMessages.unknownCommand(),
                 AutoStopperMessages.statusHeader(),
                 AutoStopperMessages.statusCollectionFailed(),
-                AutoStopperMessages.statusNoMapping("survival"),
-                AutoStopperMessages.statusRunning("survival", 5L),
-                AutoStopperMessages.statusRunning("survival", null),
-                AutoStopperMessages.statusStopped("survival"),
-                AutoStopperMessages.statusMissing("survival"),
-                AutoStopperMessages.statusInaccessible("survival"),
-                AutoStopperMessages.statusTimedOut("survival"),
-                AutoStopperMessages.statusFailed("survival"),
                 AutoStopperMessages.reloadStarted(),
                 AutoStopperMessages.reloadFailed("invalid configuration"),
                 AutoStopperMessages.reloadSucceeded(),
@@ -388,13 +377,11 @@ class AutoStopperMessagesTest {
                 AutoStopperMessages.dockerUnavailable("manage", "survival"),
                 AutoStopperMessages.statusCheckTimedOut("survival"),
                 AutoStopperMessages.statusCheckFailed("survival"),
-                AutoStopperMessages.serverOfflineStarting(),
                 AutoStopperMessages.startError("survival"),
                 AutoStopperMessages.startTimedOut("survival"),
                 AutoStopperMessages.startFailed("survival"),
                 AutoStopperMessages.startCancelled("survival"),
                 AutoStopperMessages.serverNotReady("survival"),
-                AutoStopperMessages.serverReady("survival"),
                 AutoStopperMessages.retryServerCommand("survival"),
                 AutoStopperMessages.connectionFailed("survival"),
                 AutoStopperMessages.connectionCancelled("survival"),
@@ -415,9 +402,9 @@ class AutoStopperMessagesTest {
                 OperationalState.STARTING, 1, Optional.empty(), true);
 
         assertEquals("● survival   Ready · held; active 5m ago",
-                plainText(AutoStopperMessages.operationalStatus("survival", heldReady, 5L)));
+                plainText(AutoStopperMessages.operationalStatus("survival", heldReady, 5L, Instant.now(), false)));
         assertEquals("◐ creative   Waking · held; 1 player waiting",
-                plainText(AutoStopperMessages.operationalStatus("creative", heldWaking, null)));
+                plainText(AutoStopperMessages.operationalStatus("creative", heldWaking, null, Instant.now(), false)));
     }
 
     @Test
@@ -457,18 +444,9 @@ class AutoStopperMessagesTest {
 
     @Test
     void manualCommandFailureMessages_RenderExpectedText() {
-        Component startFail = AutoStopperMessages.manualStartFailed("survival",
-                AutoStopperMessages.startFailed("survival"), Duration.ofSeconds(5));
-        Component stopFail = AutoStopperMessages.manualStopFailed("survival",
-                AutoStopperMessages.stopFailed("survival"));
-        Component restartFail = AutoStopperMessages.manualRestartFailed("survival",
-                AutoStopperMessages.startFailed("survival"), Duration.ofSeconds(10));
         Component stopTimedOut = AutoStopperMessages.stopTimedOut("survival");
         Component stopFailed = AutoStopperMessages.stopFailed("survival");
 
-        assertTrue(plainText(startFail).contains("Waited 5s."));
-        assertTrue(plainText(stopFail).contains("Failed to stop server survival."));
-        assertTrue(plainText(restartFail).contains("Waited 10s."));
         assertTrue(plainText(stopTimedOut).contains("Timed out stopping server survival."));
         assertTrue(plainText(stopFailed).contains("Failed to stop server survival."));
     }

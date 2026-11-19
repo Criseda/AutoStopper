@@ -7,8 +7,4 @@ public enum ContainerStatus {
     INACCESSIBLE,
     FAILED,
     TIMED_OUT;
-
-    public boolean isIndeterminate() {
-        return this != RUNNING && this != STOPPED;
-    }
 }

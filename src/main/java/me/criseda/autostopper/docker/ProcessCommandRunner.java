@@ -115,10 +115,6 @@ public final class ProcessCommandRunner implements CommandRunner {
                 return;
             }
             int remaining = MAX_OUTPUT_LENGTH - output.length();
-            if (remaining <= 0) {
-                output.append("[output truncated]");
-                return;
-            }
             if (line.length() > remaining) {
                 output.append(line, 0, remaining).append("[output truncated]");
                 return;
