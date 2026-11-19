@@ -4,6 +4,13 @@ All notable AutoStopper changes are documented here.
 
 ## [Unreleased]
 
+### Removed
+
+- AutoStopper no longer keeps in-memory lifecycle counters and duration statistics. Nothing displayed
+  them, yet every lifecycle operation and stage updated them. The structured lifecycle log lines
+  and the recent operations in `/autostopper status <server>` are unchanged; the configuration
+  documentation now describes only the telemetry that is actually kept (#162).
+
 ## [2.3.1] - 2026-11-19
 
 ### Changed

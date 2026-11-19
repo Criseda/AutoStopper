@@ -252,8 +252,8 @@ Runtime holds:
 ## Lifecycle telemetry and observability
 
 AutoStopper records typed, monotonic lifecycle telemetry for all server operations and intermediate
-stages. Telemetry is emitted directly to Velocity operator logs and accumulated into thread-safe,
-bounded in-memory metrics across the proxy process lifetime.
+stages. Telemetry is emitted directly to Velocity operator logs; the only telemetry kept in memory
+is the bounded recent-operation history shown by `/autostopper status <server>`.
 
 ### Structured log format
 
@@ -295,10 +295,12 @@ When multiple players connect to a sleeping server simultaneously:
 
 ### Memory and process-lifetime contract
 
-- In-memory metrics are accumulated using bounded atomic counters and min/max/total duration
-  aggregators with strictly $O(1)$ constant memory overhead.
-- No historical unbounded per-event log lists are retained in memory.
-- Metrics are scoped to the running proxy process lifetime and reset upon proxy restart or shutdown.
+- The log lines are the telemetry record. AutoStopper keeps no in-memory counters or duration
+  statistics; aggregate them with your log pipeline if you need them.
+- The only telemetry retained in memory is the recent-operation history: at most 10 server-level
+  operations per mapped server, with no per-player or per-stage entries.
+- That history lasts for the proxy process lifetime and is cleared on proxy restart or shutdown, and
+  for a server whose mapping a reload removes or changes.
 
 ### Privacy, security, and error safety
 

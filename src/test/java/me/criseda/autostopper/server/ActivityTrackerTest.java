@@ -16,7 +16,7 @@ import me.criseda.autostopper.lifecycle.LifecycleStatusSnapshot;
 import me.criseda.autostopper.lifecycle.ServerHoldRegistry;
 import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.lifecycle.ServerLifecycleState;
-import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
+import me.criseda.autostopper.testing.RecordingLifecycleTelemetry;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
 import me.criseda.autostopper.telemetry.TelemetryOutcome;
 import org.junit.jupiter.api.AfterEach;
@@ -62,7 +62,7 @@ public class ActivityTrackerTest {
     @Mock
     private ServerLifecycleCoordinator lifecycleCoordinator;
 
-    private LifecycleTelemetryService telemetry;
+    private RecordingLifecycleTelemetry telemetry;
     private ActivityTracker activityTracker;
     private AutoStopperExecutor executor;
     private ServerHoldRegistry holdRegistry;
@@ -76,7 +76,7 @@ public class ActivityTrackerTest {
         mapping2 = new ServerMapping("server2", "container2");
         when(config.snapshot()).thenReturn(new ConfigSnapshot(300, List.of(mapping1, mapping2)));
         holdRegistry = new me.criseda.autostopper.lifecycle.ServerHoldRegistry();
-        telemetry = new LifecycleTelemetryService(logger);
+        telemetry = new RecordingLifecycleTelemetry();
         lenient().when(lifecycleCoordinator.isHeld(anyString())).thenAnswer(inv -> holdRegistry.isHeld(inv.getArgument(0)));
         lenient().when(lifecycleCoordinator.tryBeginStop(any(ServerMapping.class))).thenReturn(true);
         lenient().when(lifecycleCoordinator.statusSnapshot(any(ServerMapping.class)))

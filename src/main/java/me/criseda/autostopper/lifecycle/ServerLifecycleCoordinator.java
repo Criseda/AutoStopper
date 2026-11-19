@@ -14,7 +14,6 @@ import me.criseda.autostopper.telemetry.TelemetryOperationType;
 import me.criseda.autostopper.telemetry.TelemetryOrigin;
 import me.criseda.autostopper.telemetry.TelemetryOutcome;
 import me.criseda.autostopper.telemetry.TelemetryRecord;
-import me.criseda.autostopper.telemetry.TelemetrySnapshot;
 import org.slf4j.Logger;
 
 import java.time.Duration;
@@ -83,10 +82,6 @@ public final class ServerLifecycleCoordinator {
 
     ServerLifecycleCoordinator(Logger logger, ServerManager serverManager, LongSupplier nanoTime) {
         this(logger, serverManager, new ServerHoldRegistry(), new AutoStopperExecutor(), nanoTime);
-    }
-
-    public TelemetrySnapshot snapshotTelemetry() {
-        return telemetry.snapshot();
     }
 
     public boolean isHeld(String serverName) {
