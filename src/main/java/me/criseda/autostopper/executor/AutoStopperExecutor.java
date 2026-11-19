@@ -1,6 +1,9 @@
 package me.criseda.autostopper.executor;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -17,6 +20,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 public final class AutoStopperExecutor implements AutoCloseable {
@@ -66,6 +71,19 @@ public final class AutoStopperExecutor implements AutoCloseable {
             managedTask.fail(failure, false);
         }
         return managedTask.future;
+    }
+
+    /**
+     * Runs {@code task} once per input, each as its own worker task, with at most one input per worker in flight.
+     * A finished task submits the next input, so a batch occupies at most one queue slot per worker however many
+     * inputs it has, and other queued work still runs between its tasks. The future completes with the results in
+     * input order, or with the first failure, which cancels the tasks still in flight and submits no more;
+     * cancelling the future does the same.
+     */
+    public <T, R> CompletableFuture<List<R>> supplyAll(List<T> inputs, Function<? super T, ? extends R> task) {
+        Objects.requireNonNull(inputs, "inputs");
+        Objects.requireNonNull(task, "task");
+        return new BoundedBatch<T, R>(List.copyOf(inputs), task).start(executor.getCorePoolSize());
     }
 
     /**
@@ -296,6 +314,82 @@ public final class AutoStopperExecutor implements AutoCloseable {
                 }
             }
             return cancelled;
+        }
+    }
+
+    /**
+     * Each finished task submits the next input, so the batch holds at most {@code lanes} tasks in the executor.
+     */
+    private final class BoundedBatch<T, R> {
+        private final List<T> inputs;
+        private final Function<? super T, ? extends R> task;
+        private final AtomicReferenceArray<R> results;
+        private final AtomicInteger nextIndex = new AtomicInteger();
+        private final AtomicInteger remaining;
+        private final Set<CompletableFuture<?>> inFlight = ConcurrentHashMap.newKeySet();
+        private final CompletableFuture<List<R>> result = new CompletableFuture<>();
+
+        private BoundedBatch(List<T> inputs, Function<? super T, ? extends R> task) {
+            this.inputs = inputs;
+            this.task = task;
+            this.results = new AtomicReferenceArray<>(inputs.size());
+            this.remaining = new AtomicInteger(inputs.size());
+        }
+
+        private CompletableFuture<List<R>> start(int lanes) {
+            if (inputs.isEmpty()) {
+                result.complete(List.of());
+                return result;
+            }
+            result.whenComplete((ignored, error) -> {
+                if (error != null) {
+                    for (CompletableFuture<?> running : inFlight) {
+                        running.cancel(true);
+                    }
+                }
+            });
+            for (int lane = 0; lane < lanes; lane++) {
+                submitNext();
+            }
+            return result;
+        }
+
+        private void submitNext() {
+            if (result.isDone()) {
+                return;
+            }
+            int index = nextIndex.getAndIncrement();
+            if (index >= inputs.size()) {
+                return;
+            }
+            T input = inputs.get(index);
+            CompletableFuture<R> submitted = supply(() -> task.apply(input));
+            inFlight.add(submitted);
+            if (result.isDone()) {
+                // Failed or cancelled while this task was being submitted.
+                submitted.cancel(true);
+            }
+            submitted.whenComplete((value, error) -> {
+                inFlight.remove(submitted);
+                if (error != null) {
+                    result.completeExceptionally(error);
+                    return;
+                }
+                results.set(index, value);
+                if (remaining.decrementAndGet() == 0) {
+                    result.complete(collect());
+                } else {
+                    submitNext();
+                }
+            });
+        }
+
+        private List<R> collect() {
+            List<R> collected = new ArrayList<>(results.length());
+            for (int i = 0; i < results.length(); i++) {
+                collected.add(results.get(i));
+            }
+            return Collections.unmodifiableList(collected);
         }
     }
 

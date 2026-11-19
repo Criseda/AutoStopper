@@ -12,6 +12,14 @@ All notable AutoStopper changes are documented here.
   example's README now has its own step-by-step run instructions instead of pointing back to the
   README (#157).
 
+### Fixed
+
+- `/autostopper status` and the startup and reload preflight no longer fail with "Could not collect
+  server statuses" or a `SaturationException` on networks with about 35 or more monitored servers.
+  Container checks now run at most one per worker at a time instead of all at once, so a large
+  network no longer fills the worker queue, and player wake-ups that arrive during a status check or
+  preflight are no longer rejected as saturated (#163).
+
 ## [2.3.0] - 2026-10-22
 
 ### Added

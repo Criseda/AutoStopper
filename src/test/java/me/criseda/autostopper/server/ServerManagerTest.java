@@ -8,6 +8,7 @@ import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ReadinessSettings;
 import me.criseda.autostopper.config.ReadinessStrategy;
 import me.criseda.autostopper.config.ServerMapping;
+import me.criseda.autostopper.docker.ContainerInspection;
 import me.criseda.autostopper.docker.ContainerStatus;
 import me.criseda.autostopper.docker.DockerManager;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
@@ -388,6 +389,27 @@ public class ServerManagerTest {
         verifyNoInteractions(config);
         verify(dockerManager).getContainerStatus("old-container-1");
         verify(dockerManager).getContainerStatus("old-container-2");
+    }
+
+    @Test
+    public void testInspectContainersAsyncCompletesForMoreMappingsThanTheWorkerQueueHolds() {
+        int mappingCount = AutoStopperExecutor.DEFAULT_WORKER_COUNT
+                + AutoStopperExecutor.DEFAULT_QUEUE_CAPACITY + 26;
+        Map<String, String> mappings = new LinkedHashMap<>();
+        for (int i = 0; i < mappingCount; i++) {
+            mappings.put("server" + i, "container" + i);
+        }
+        when(dockerManager.inspectContainer(anyString())).thenAnswer(invocation -> {
+            Thread.sleep(5);
+            return ContainerInspection.healthy(ContainerStatus.RUNNING);
+        });
+
+        Map<String, ContainerInspection> result =
+                serverManager.inspectContainersAsync(snapshot(mappings)).join();
+
+        assertEquals(new java.util.ArrayList<>(mappings.keySet()), new java.util.ArrayList<>(result.keySet()));
+        assertTrue(result.values().stream().allMatch(ContainerInspection::healthy));
+        verify(dockerManager, times(mappingCount)).inspectContainer(anyString());
     }
 
     private ConfigSnapshot snapshot(Map<String, String> mappings) {

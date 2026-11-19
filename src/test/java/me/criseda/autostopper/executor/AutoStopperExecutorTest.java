@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -14,6 +15,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import java.util.stream.IntStream;
 
 public class AutoStopperExecutorTest {
 
@@ -403,6 +405,172 @@ public class AutoStopperExecutorTest {
                 assertTrue(cause.getMessage() != null && cause.getMessage().contains(expectedMessage),
                         "unexpected message: " + cause.getMessage());
             }
+        }
+    }
+
+    @Test
+    public void testSupplyAllCompletesInInputOrderForMoreInputsThanTheExecutorHolds() {
+        AutoStopperExecutor executor = new AutoStopperExecutor(2, 2);
+        try {
+            List<Integer> inputs = IntStream.range(0, 50).boxed().toList();
+
+            List<String> results = executor.supplyAll(inputs, input -> "result-" + input)
+                    .get(5, TimeUnit.SECONDS);
+
+            assertEquals(inputs.stream().map(input -> "result-" + input).toList(), results);
+        } catch (Exception e) {
+            fail(e);
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testSupplyAllCompletesEmptyBatchWithoutSubmitting() {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        try {
+            CompletableFuture<List<String>> results = executor.supplyAll(List.<Integer>of(), input -> {
+                throw new AssertionError("no input to run");
+            });
+
+            assertEquals(List.of(), results.join());
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testSupplyAllKeepsOneTaskPerWorkerAndLeavesQueueForOtherWork() throws Exception {
+        AutoStopperExecutor executor = new AutoStopperExecutor(2, 3);
+        CountDownLatch twoStarted = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger started = new AtomicInteger();
+        try {
+            CompletableFuture<List<Integer>> batch = executor.supplyAll(
+                    IntStream.range(0, 10).boxed().toList(), input -> {
+                        started.incrementAndGet();
+                        twoStarted.countDown();
+                        try {
+                            release.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return input;
+                    });
+            assertTrue(twoStarted.await(2, TimeUnit.SECONDS));
+
+            // Both workers are busy with the batch, yet the queue still has room for unrelated work.
+            CompletableFuture<String> other = executor.supply(() -> "other");
+            assertFalse(other.isCompletedExceptionally(), "the batch must not fill the shared queue");
+            assertEquals(2, started.get(), "no batch task may start while both workers are busy");
+
+            release.countDown();
+            assertEquals(IntStream.range(0, 10).boxed().toList(), batch.get(5, TimeUnit.SECONDS));
+            assertEquals("other", other.get(5, TimeUnit.SECONDS));
+        } finally {
+            release.countDown();
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testSupplyAllFailsOnFirstFailureAndSubmitsNoMoreTasks() {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        AtomicInteger invocations = new AtomicInteger();
+        try {
+            CompletableFuture<List<Integer>> batch = executor.supplyAll(
+                    IntStream.range(0, 10).boxed().toList(), input -> {
+                        invocations.incrementAndGet();
+                        if (input == 2) {
+                            throw new IllegalStateException("inspect " + input + " failed");
+                        }
+                        return input;
+                    });
+
+            assertCompletesWith(batch, IllegalStateException.class, "inspect 2 failed");
+            assertEquals(3, invocations.get(), "inputs after the failure must not run");
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testCancellingSupplyAllInterruptsInFlightTasksAndSubmitsNoMore() throws InterruptedException {
+        AutoStopperExecutor executor = new AutoStopperExecutor(2, 4);
+        CountDownLatch twoStarted = new CountDownLatch(2);
+        CountDownLatch interrupted = new CountDownLatch(2);
+        AtomicInteger started = new AtomicInteger();
+        try {
+            CompletableFuture<List<Integer>> batch = executor.supplyAll(
+                    IntStream.range(0, 10).boxed().toList(), input -> {
+                        started.incrementAndGet();
+                        twoStarted.countDown();
+                        try {
+                            new CountDownLatch(1).await();
+                        } catch (InterruptedException e) {
+                            interrupted.countDown();
+                            Thread.currentThread().interrupt();
+                        }
+                        return input;
+                    });
+            assertTrue(twoStarted.await(2, TimeUnit.SECONDS));
+
+            assertTrue(batch.cancel(true));
+
+            assertTrue(interrupted.await(2, TimeUnit.SECONDS), "cancelling must interrupt the running tasks");
+            // A follow-up task proves the workers are free and nothing further from the batch was queued.
+            assertEquals("after", executor.supply(() -> "after").join());
+            assertEquals(2, started.get());
+            assertTrue(batch.isCancelled());
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    public void testSupplyAllFailsWithShutdownWhenExecutorShutsDownMidBatch() throws InterruptedException {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        CountDownLatch started = new CountDownLatch(1);
+        CompletableFuture<List<Integer>> batch = executor.supplyAll(List.of(1, 2, 3), input -> {
+            started.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return input;
+        });
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+
+        executor.shutdown();
+
+        assertCompletesWith(batch, AutoStopperExecutor.ShutdownException.class, null);
+    }
+
+    @Test
+    public void testSupplyAllReportsSaturationWhenOtherWorkFillsTheExecutor() throws InterruptedException {
+        AutoStopperExecutor executor = new AutoStopperExecutor(1, 1);
+        CountDownLatch workerStarted = new CountDownLatch(1);
+        CountDownLatch blocked = new CountDownLatch(1);
+        try {
+            executor.supply(() -> {
+                workerStarted.countDown();
+                try {
+                    blocked.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return "blocked";
+            });
+            assertTrue(workerStarted.await(2, TimeUnit.SECONDS));
+            executor.supply(() -> "pending");
+
+            CompletableFuture<List<Integer>> batch = executor.supplyAll(List.of(1, 2), input -> input);
+
+            assertCompletesWith(batch, AutoStopperExecutor.SaturationException.class, null);
+        } finally {
+            blocked.countDown();
+            executor.shutdown();
         }
     }
 

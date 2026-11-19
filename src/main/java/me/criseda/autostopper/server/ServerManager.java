@@ -164,70 +164,37 @@ public class ServerManager {
 
     public CompletableFuture<Map<String, Optional<ContainerStatus>>> getStatusesAsync(ConfigSnapshot snapshot) {
         List<ServerMapping> mappings = snapshot.servers();
-        @SuppressWarnings("unchecked")
-        CompletableFuture<Optional<ContainerStatus>>[] futures = mappings.stream()
-                .map(this::getServerStatusAsync)
-                .toArray(CompletableFuture[]::new);
-        return collectStatuses(mappings.stream().map(ServerMapping::serverName).toList(), futures);
+        return byServerName(mappings.stream().map(ServerMapping::serverName).toList(),
+                executor.supplyAll(mappings, this::getServerStatus));
     }
 
+    /**
+     * Inspects every mapped container with at most one inspect per worker in flight, so the batch never fills the
+     * worker queue, however many servers are mapped.
+     */
     public CompletableFuture<Map<String, ContainerInspection>> inspectContainersAsync(ConfigSnapshot snapshot) {
         List<ServerMapping> mappings = snapshot.servers();
-        @SuppressWarnings("unchecked")
-        CompletableFuture<ContainerInspection>[] futures = mappings.stream()
-                .map(this::inspectContainerAsync)
-                .toArray(CompletableFuture[]::new);
-        CompletableFuture<Map<String, ContainerInspection>> result = new CompletableFuture<>();
-        CompletableFuture.allOf(futures).whenComplete((ignored, error) -> {
-            if (error != null) {
-                result.completeExceptionally(error);
-                return;
-            }
-            Map<String, ContainerInspection> inspections = new LinkedHashMap<>();
-            for (int i = 0; i < mappings.size(); i++) {
-                inspections.put(mappings.get(i).serverName(), futures[i].join());
-            }
-            result.complete(inspections);
-        });
-        result.whenComplete((ignored, error) -> {
-            if (result.isCancelled()) {
-                for (CompletableFuture<?> future : futures) {
-                    future.cancel(true);
-                }
-            }
-        });
-        return result;
+        return byServerName(mappings.stream().map(ServerMapping::serverName).toList(),
+                executor.supplyAll(mappings, this::inspectContainer));
     }
 
     public CompletableFuture<Map<String, Optional<ContainerStatus>>> getStatusesAsync(List<String> serverNames) {
-        @SuppressWarnings("unchecked")
-        CompletableFuture<Optional<ContainerStatus>>[] futures = serverNames.stream()
-                .map(this::getServerStatusAsync)
-                .toArray(CompletableFuture[]::new);
-
-        return collectStatuses(serverNames, futures);
+        return byServerName(serverNames, executor.supplyAll(serverNames, this::getServerStatus));
     }
 
-    private CompletableFuture<Map<String, Optional<ContainerStatus>>> collectStatuses(List<String> serverNames,
-            CompletableFuture<Optional<ContainerStatus>>[] futures) {
-        CompletableFuture<Map<String, Optional<ContainerStatus>>> result = new CompletableFuture<>();
-        CompletableFuture.allOf(futures).whenComplete((ignored, error) -> {
-            if (error != null) {
-                result.completeExceptionally(error);
-                return;
-            }
-            Map<String, Optional<ContainerStatus>> statuses = new LinkedHashMap<>();
+    /** Keys the batch results by server name; cancelling the returned future cancels the batch. */
+    private static <V> CompletableFuture<Map<String, V>> byServerName(List<String> serverNames,
+            CompletableFuture<List<V>> batch) {
+        CompletableFuture<Map<String, V>> result = batch.thenApply(values -> {
+            Map<String, V> byName = new LinkedHashMap<>();
             for (int i = 0; i < serverNames.size(); i++) {
-                statuses.put(serverNames.get(i), futures[i].join());
+                byName.put(serverNames.get(i), values.get(i));
             }
-            result.complete(statuses);
+            return byName;
         });
-
         result.whenComplete((ignored, error) -> {
             if (result.isCancelled()) {
-                for (CompletableFuture<?> future : futures) {
-                    future.cancel(true);
-                }
+                batch.cancel(true);
             }
         });
         return result;
