@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -209,12 +210,9 @@ final class WaiterConnector {
         }
         CompletableFuture<Optional<ContainerStatus>> statusFuture;
         try {
-            statusFuture = serverManager.getServerStatusAsync(mapping);
+            statusFuture = Objects.requireNonNull(serverManager.getServerStatusAsync(mapping), "status future");
         } catch (RuntimeException error) {
             logger.debug("Could not schedule a container check for server {}", mapping.serverName(), error);
-            return;
-        }
-        if (statusFuture == null) {
             return;
         }
         statusFuture.whenComplete((status, error) -> {

@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
@@ -87,14 +88,9 @@ final class StartupPipeline {
         }
         CompletableFuture<T> future;
         try {
-            future = action.get();
+            future = Objects.requireNonNull(action.get(), "stage future");
         } catch (RuntimeException error) {
             failStage(entry, mapping, operation, stage, error, runtime.elapsedSince(stageStart));
-            return;
-        }
-        if (future == null) {
-            recordStageFailure(entry, mapping, operation, stage.telemetryType, stage.missingResultTelemetry,
-                    stage.errorOutcome, runtime.elapsedSince(stageStart));
             return;
         }
         if (!ownOperation(entry, operation, future)) {
@@ -278,26 +274,22 @@ final class StartupPipeline {
 
     /** Docker-facing step of the pipeline and how its failures are reported. */
     private enum Stage {
-        STATUS(null, TelemetryOperationType.STATUS_CHECK,
-                TelemetryOutcome.STATUS_FAILED, StartupOutcome.STATUS_ERROR),
+        STATUS(null, TelemetryOperationType.STATUS_CHECK, StartupOutcome.STATUS_ERROR),
         START(ConnectionLifecycleStage.STARTING, TelemetryOperationType.CONTAINER_START,
-                TelemetryOutcome.START_FAILED, StartupOutcome.START_ERROR),
+                StartupOutcome.START_ERROR),
         READINESS(ConnectionLifecycleStage.WAITING_FOR_READINESS, TelemetryOperationType.READINESS_CHECK,
-                TelemetryOutcome.SERVER_NOT_READY, StartupOutcome.READINESS_ERROR);
+                StartupOutcome.READINESS_ERROR);
 
         /** Stage shown to waiting players, or {@code null} when the stage is silent. */
         private final ConnectionLifecycleStage announced;
         private final TelemetryOperationType telemetryType;
-        /** Stage telemetry when Docker hands back no future at all. */
-        private final TelemetryOutcome missingResultTelemetry;
-        /** Startup outcome for an unexpected exception (or missing future) in this stage. */
+        /** Startup outcome for an unexpected exception in this stage, including a missing future. */
         private final StartupOutcome errorOutcome;
 
         Stage(ConnectionLifecycleStage announced, TelemetryOperationType telemetryType,
-                TelemetryOutcome missingResultTelemetry, StartupOutcome errorOutcome) {
+                StartupOutcome errorOutcome) {
             this.announced = announced;
             this.telemetryType = telemetryType;
-            this.missingResultTelemetry = missingResultTelemetry;
             this.errorOutcome = errorOutcome;
         }
     }
