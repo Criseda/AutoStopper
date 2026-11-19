@@ -4,6 +4,12 @@ All notable AutoStopper changes are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- The plugin's Velocity descriptor now comes only from `velocity-plugin.json`, versioned from the
+  build, so every JDK produces the same JAR. Velocity's plugin list now shows AutoStopper's
+  description, which the previous JARs left out (#162).
+
 ### Removed
 
 - AutoStopper no longer keeps in-memory lifecycle counters and duration statistics. Nothing displayed

@@ -226,24 +226,6 @@ def validate_source(repository: Path, version: str, previous_tag: str) -> str:
             "source velocity-plugin.json must derive version from ${project.version}"
         )
 
-    plugin_source = (
-        repository
-        / "src"
-        / "main"
-        / "java"
-        / "me"
-        / "criseda"
-        / "autostopper"
-        / "AutoStopperPlugin.java"
-    ).read_text(encoding="utf-8")
-    annotation_versions = re.findall(
-        r"@Plugin\(.*?\bversion\s*=\s*\"([^\"]+)\"", plugin_source, flags=re.DOTALL
-    )
-    if annotation_versions != [version]:
-        raise ReleaseError(
-            f"AutoStopperPlugin @Plugin version is {annotation_versions!r}, expected [{version!r}]"
-        )
-
     metadata = load_metadata(repository)
     if metadata.get("previousTag") != previous_tag:
         raise ReleaseError(

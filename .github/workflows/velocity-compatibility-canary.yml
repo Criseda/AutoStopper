@@ -188,8 +188,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # Velocity 4.x API annotation processor requires JDK 25 to run, while
-      # maven.compiler.release stays 21 so the output remains loadable on 3.5.1.
+      # Velocity 4.x API classes target Java 25, so compiling against them needs JDK 25,
+      # while maven.compiler.release stays 21 so the output remains loadable on 3.5.1.
       - name: Set up Java 25 compile-canary toolchain
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
