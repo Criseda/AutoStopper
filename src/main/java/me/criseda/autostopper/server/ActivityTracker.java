@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-public final class ActivityTracker implements ActivityTrackerService {
+public final class ActivityTracker {
     private final ProxyServer server;
     private final Logger logger;
     private final AutoStopperConfig config;

@@ -23,7 +23,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 
-public class AutoStopperConfig implements ConfigProvider {
+public class AutoStopperConfig {
     private static final String TIMEOUT_KEY = "inactivity_timeout_seconds";
     private static final String SHUTDOWN_TIMEOUT_KEY = "shutdown_timeout_seconds";
     private static final String STOP_RETRY_KEY = "stop_retry";

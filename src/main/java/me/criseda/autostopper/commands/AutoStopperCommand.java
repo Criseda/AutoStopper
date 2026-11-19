@@ -6,8 +6,8 @@ import com.velocitypowered.api.permission.Tristate;
 import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.proxy.Player;
 
+import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigLoadResult;
-import me.criseda.autostopper.config.ConfigProvider;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.config.ServerMapping;
 import me.criseda.autostopper.messages.AutoStopperMessages;
@@ -19,7 +19,7 @@ import me.criseda.autostopper.messages.OperatorFailureGuide;
 import me.criseda.autostopper.operational.OperationalServerStatus;
 import me.criseda.autostopper.operational.OperationalState;
 import me.criseda.autostopper.operational.OperationalStatusService;
-import me.criseda.autostopper.server.ActivityTrackerService;
+import me.criseda.autostopper.server.ActivityTracker;
 import net.kyori.adventure.text.Component;
 
 import java.time.Clock;
@@ -41,22 +41,22 @@ public class AutoStopperCommand implements SimpleCommand {
     static final String HOLD_PERMISSION = "autostopper.command.hold";
     static final String RELEASE_PERMISSION = "autostopper.command.release";
 
-    private final ConfigProvider config;
-    private final ActivityTrackerService activityTracker;
+    private final AutoStopperConfig config;
+    private final ActivityTracker activityTracker;
     private final ServerLifecycleCoordinator lifecycleCoordinator;
     private final OperationalStatusService operationalStatus;
     private final PluginContainer pluginContainer;
     private final Clock clock;
 
-    public AutoStopperCommand(ConfigProvider config,
-            ActivityTrackerService activityTracker,
+    public AutoStopperCommand(AutoStopperConfig config,
+            ActivityTracker activityTracker,
             ServerLifecycleCoordinator lifecycleCoordinator, OperationalStatusService operationalStatus,
             PluginContainer pluginContainer) {
         this(config, activityTracker, lifecycleCoordinator, operationalStatus, pluginContainer, Clock.systemUTC());
     }
 
-    AutoStopperCommand(ConfigProvider config,
-            ActivityTrackerService activityTracker,
+    AutoStopperCommand(AutoStopperConfig config,
+            ActivityTracker activityTracker,
             ServerLifecycleCoordinator lifecycleCoordinator, OperationalStatusService operationalStatus,
             PluginContainer pluginContainer, Clock clock) {
         this.config = config;
