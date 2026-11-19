@@ -43,10 +43,18 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
-          cache: maven
-          cache-dependency-path: |
-            pom.xml
-            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Restore Maven repository
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: maven-${{ runner.os }}-${{ hashFiles('pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          # Fall back to the newest cache for this OS when pom.xml changed, so a POM edit does
+          # not send the whole build to Maven Central (which rate-limits runners).
+          restore-keys: |
+            maven-${{ runner.os }}-
 
       - name: Verify with Maven Wrapper
         run: ./mvnw --batch-mode --no-transfer-progress clean verify
@@ -88,10 +96,18 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-          cache: maven
-          cache-dependency-path: |
-            pom.xml
-            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Restore Maven repository
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: maven-${{ runner.os }}-${{ hashFiles('pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          # Fall back to the newest cache for this OS when pom.xml changed, so a POM edit does
+          # not send the whole build to Maven Central (which rate-limits runners).
+          restore-keys: |
+            maven-${{ runner.os }}-
 
       - name: Verify with mvnw.cmd
         shell: cmd
@@ -158,10 +174,18 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-          cache: maven
-          cache-dependency-path: |
-            pom.xml
-            .mvn/wrapper/maven-wrapper.properties
+
+      - name: Restore Maven repository
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: maven-${{ runner.os }}-${{ hashFiles('pom.xml', '.mvn/wrapper/maven-wrapper.properties') }}
+          # Fall back to the newest cache for this OS when pom.xml changed, so a POM edit does
+          # not send the whole build to Maven Central (which rate-limits runners).
+          restore-keys: |
+            maven-${{ runner.os }}-
 
       - name: Confirm Docker availability
         run: docker info
