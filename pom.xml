@@ -210,12 +210,12 @@
                                         <limit>
                                             <counter>LINE</counter>
                                             <value>COVEREDRATIO</value>
-                                            <minimum>0.834</minimum>
+                                            <minimum>0.905</minimum>
                                         </limit>
                                         <limit>
                                             <counter>BRANCH</counter>
                                             <value>COVEREDRATIO</value>
-                                            <minimum>0.669</minimum>
+                                            <minimum>0.775</minimum>
                                         </limit>
                                     </limits>
                                 </rule>
