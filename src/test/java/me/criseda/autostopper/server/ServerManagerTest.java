@@ -24,7 +24,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 
 import java.time.Duration;
-import java.util.HashMap;
 import java.net.InetSocketAddress;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -56,6 +55,8 @@ public class ServerManagerTest {
     @Mock
     private ServerReadinessChecker readinessChecker;
     
+    private static final ServerMapping SERVER1 = new ServerMapping("server1", "container1");
+
     private AutoStopperExecutor executor;
     private ServerManager serverManager;
     
@@ -73,11 +74,10 @@ public class ServerManagerTest {
     @Test
     public void testGetServerStatus_Running() {
         // Setup
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.RUNNING);
         
         // Execute
-        Optional<ContainerStatus> result = serverManager.getServerStatus("server1");
+        Optional<ContainerStatus> result = serverManager.getServerStatus(SERVER1);
         
         // Verify
         assertEquals(Optional.of(ContainerStatus.RUNNING), result);
@@ -87,11 +87,10 @@ public class ServerManagerTest {
     @Test
     public void testGetServerStatus_Stopped() {
         // Setup
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.STOPPED);
         
         // Execute
-        Optional<ContainerStatus> result = serverManager.getServerStatus("server1");
+        Optional<ContainerStatus> result = serverManager.getServerStatus(SERVER1);
         
         // Verify
         assertEquals(Optional.of(ContainerStatus.STOPPED), result);
@@ -101,11 +100,10 @@ public class ServerManagerTest {
     @Test
     public void testStartServer() {
         // Setup
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.startContainer("container1")).thenReturn(ContainerStatus.RUNNING);
         
         // Execute
-        ContainerStatus result = serverManager.startServer("server1");
+        ContainerStatus result = serverManager.startServer(SERVER1);
         
         // Verify
         assertEquals(ContainerStatus.RUNNING, result);
@@ -115,11 +113,10 @@ public class ServerManagerTest {
     @Test
     public void testStopServer() {
         // Setup
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.stopContainer("container1")).thenReturn(ContainerStatus.STOPPED);
         
         // Execute
-        ContainerStatus result = serverManager.stopServer("server1");
+        ContainerStatus result = serverManager.stopServer(SERVER1);
         
         // Verify
         assertEquals(ContainerStatus.STOPPED, result);
@@ -129,10 +126,9 @@ public class ServerManagerTest {
 
     @Test
     public void testStopServerLogsTypedFailureWithoutClaimingSuccess() {
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.stopContainer("container1")).thenReturn(ContainerStatus.TIMED_OUT);
 
-        assertEquals(ContainerStatus.TIMED_OUT, serverManager.stopServer("server1"));
+        assertEquals(ContainerStatus.TIMED_OUT, serverManager.stopServer(SERVER1));
 
         verify(logger).warn("Could not stop server: {} (container: {}, result: {})",
                 "server1", "container1", ContainerStatus.TIMED_OUT);
@@ -142,14 +138,13 @@ public class ServerManagerTest {
     @Test
     public void testWaitForServerReady() {
         // Setup
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         stubRegisteredTarget("server1", "127.0.0.1", 25565);
         ReadinessResult ready = ReadinessResult.ready(1);
         when(readinessChecker.awaitReady(any(ServerMapping.class), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(ready));
 
         // Execute
-        ReadinessResult result = serverManager.waitForServerReadyAsync("server1").join();
+        ReadinessResult result = serverManager.waitForServerReadyAsync(SERVER1).join();
 
         // Verify
         assertSame(ready, result);
@@ -192,47 +187,6 @@ public class ServerManagerTest {
     }
     
     @Test
-    public void testIsMonitoredServer() {
-        // Setup
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1", "server2", "container2")));
-        
-        // Execute & Verify
-        assertTrue(serverManager.isMonitoredServer("server1"));
-        assertTrue(serverManager.isMonitoredServer("server2"));
-        assertFalse(serverManager.isMonitoredServer("server3"));
-    }
-    
-    @Test
-    public void testGetContainerName() {
-        // Setup
-        Map<String, String> mapping = new HashMap<>();
-        mapping.put("server1", "container1");
-        when(config.snapshot()).thenReturn(snapshot(mapping));
-
-        // Execute & Verify
-        assertEquals("container1", serverManager.getContainerName("server1"));
-        assertNull(serverManager.getContainerName("server2"));
-    }
-
-    @Test
-    public void testUnmappedServerIsNeverInspectedStartedOrStopped() {
-        // Setup - no mapping for "server2"
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
-
-        // Execute & Verify
-        assertEquals(Optional.empty(), serverManager.getServerStatus("server2"));
-        assertEquals(ContainerStatus.MISSING, serverManager.startServer("server2"));
-        assertEquals(ContainerStatus.MISSING, serverManager.stopServer("server2"));
-        assertEquals(ReadinessResult.Outcome.CONTAINER_MISSING,
-                serverManager.waitForServerReadyAsync("server2").join().outcome());
-        verify(dockerManager, never()).getContainerStatus(anyString());
-        verify(dockerManager, never()).startContainer(anyString());
-        verify(dockerManager, never()).stopContainer(anyString());
-        verifyNoInteractions(readinessChecker);
-        verify(logger, times(4)).warn(contains("No container mapped for server:"), eq("server2"));
-    }
-    
-    @Test
     public void testGetServer() {
         // Setup
         RegisteredServer registeredServer = mock(RegisteredServer.class);
@@ -247,11 +201,10 @@ public class ServerManagerTest {
     @Test
     public void testGetServerStatusAsync() {
         // Setup
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.STOPPED);
 
         // Execute
-        Optional<ContainerStatus> result = serverManager.getServerStatusAsync("server1").join();
+        Optional<ContainerStatus> result = serverManager.getServerStatusAsync(SERVER1).join();
 
         // Verify
         assertEquals(Optional.of(ContainerStatus.STOPPED), result);
@@ -261,32 +214,14 @@ public class ServerManagerTest {
     @Test
     public void testStartServerAsync() {
         // Setup
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
         when(dockerManager.startContainer("container1")).thenReturn(ContainerStatus.RUNNING);
 
         // Execute
-        ContainerStatus result = serverManager.startServerAsync("server1").join();
+        ContainerStatus result = serverManager.startServerAsync(SERVER1).join();
 
         // Verify
         assertEquals(ContainerStatus.RUNNING, result);
         verify(dockerManager).startContainer("container1");
-    }
-
-    @Test
-    public void testWaitForServerReadyAsync() {
-        // Setup
-        when(config.snapshot()).thenReturn(snapshot(Map.of("server1", "container1")));
-        stubRegisteredTarget("server1", "127.0.0.1", 25565);
-        ReadinessResult ready = ReadinessResult.ready(1);
-        when(readinessChecker.awaitReady(any(ServerMapping.class), any(), any()))
-                .thenReturn(CompletableFuture.completedFuture(ready));
-
-        // Execute
-        ReadinessResult result = serverManager.waitForServerReadyAsync("server1").join();
-
-        // Verify
-        assertSame(ready, result);
-        verify(readinessChecker).awaitReady(any(ServerMapping.class), any(), any());
     }
 
     @Test
@@ -302,36 +237,33 @@ public class ServerManagerTest {
     }
 
     @Test
-    public void testGetStatusesAsync_FansOutAndPreservesOrder() {
-        // Setup
+    public void testInspectContainersAsyncPreservesMappingOrder() {
         Map<String, String> mapping = new LinkedHashMap<>();
         mapping.put("server1", "container1");
         mapping.put("server2", "container2");
-        when(config.snapshot()).thenReturn(snapshot(mapping));
-        when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.RUNNING);
-        when(dockerManager.getContainerStatus("container2")).thenReturn(ContainerStatus.TIMED_OUT);
+        ContainerInspection running = ContainerInspection.healthy(ContainerStatus.RUNNING);
+        ContainerInspection stopped = ContainerInspection.healthy(ContainerStatus.STOPPED);
+        when(dockerManager.inspectContainer("container1")).thenReturn(running);
+        when(dockerManager.inspectContainer("container2")).thenReturn(stopped);
 
-        // Execute
-        Map<String, Optional<ContainerStatus>> result =
-                serverManager.getStatusesAsync(List.of("server1", "server2")).join();
+        Map<String, ContainerInspection> result = serverManager.inspectContainersAsync(snapshot(mapping)).join();
 
-        // Verify - each server inspected exactly once, in order
-        assertEquals(Optional.of(ContainerStatus.RUNNING), result.get("server1"));
-        assertEquals(Optional.of(ContainerStatus.TIMED_OUT), result.get("server2"));
+        // Each container inspected exactly once, keyed in mapping order
+        assertSame(running, result.get("server1"));
+        assertSame(stopped, result.get("server2"));
         assertEquals(List.of("server1", "server2"), new java.util.ArrayList<>(result.keySet()));
-        verify(dockerManager).getContainerStatus("container1");
-        verify(dockerManager).getContainerStatus("container2");
+        verify(dockerManager).inspectContainer("container1");
+        verify(dockerManager).inspectContainer("container2");
     }
 
     @Test
-    public void testGetStatusesAsync_CancellationInterruptsStatusChecks() throws InterruptedException {
+    public void testInspectContainersAsyncCancellationInterruptsInspects() throws InterruptedException {
         Map<String, String> mapping = Map.of(
                 "server1", "container1",
                 "server2", "container2");
-        when(config.snapshot()).thenReturn(snapshot(mapping));
         CountDownLatch started = new CountDownLatch(2);
         CountDownLatch interrupted = new CountDownLatch(2);
-        when(dockerManager.getContainerStatus(anyString())).thenAnswer(invocation -> {
+        when(dockerManager.inspectContainer(anyString())).thenAnswer(invocation -> {
             started.countDown();
             try {
                 new CountDownLatch(1).await();
@@ -339,17 +271,17 @@ public class ServerManagerTest {
                 interrupted.countDown();
                 Thread.currentThread().interrupt();
             }
-            return ContainerStatus.FAILED;
+            return ContainerInspection.healthy(ContainerStatus.STOPPED);
         });
 
-        CompletableFuture<Map<String, Optional<ContainerStatus>>> statuses =
-                serverManager.getStatusesAsync(List.of("server1", "server2"));
+        CompletableFuture<Map<String, ContainerInspection>> inspections =
+                serverManager.inspectContainersAsync(snapshot(mapping));
 
         assertTrue(started.await(2, TimeUnit.SECONDS));
-        assertTrue(statuses.cancel(true));
+        assertTrue(inspections.cancel(true));
         assertTrue(interrupted.await(2, TimeUnit.SECONDS),
-                "cancelling the fan-in should interrupt every outstanding status check");
-        assertTrue(statuses.isCancelled());
+                "cancelling the batch should interrupt every outstanding inspect");
+        assertTrue(inspections.isCancelled());
     }
 
     @Test
@@ -365,7 +297,7 @@ public class ServerManagerTest {
                 .thenReturn(CompletableFuture.completedFuture(ready));
 
         ServerMapping captured = serverManager.getServerMapping("server1").orElseThrow();
-        assertEquals("new-container", serverManager.getContainerName("server1"));
+        assertEquals("new-container", serverManager.getServerMapping("server1").orElseThrow().containerName());
 
         assertEquals(Optional.of(ContainerStatus.STOPPED), serverManager.getServerStatus(captured));
         assertEquals(ContainerStatus.RUNNING, serverManager.startServer(captured));
@@ -375,20 +307,20 @@ public class ServerManagerTest {
     }
 
     @Test
-    public void testGetStatusesAsyncUsesProvidedSnapshot() {
+    public void testInspectContainersAsyncUsesProvidedSnapshot() {
         Map<String, String> mappings = new LinkedHashMap<>();
         mappings.put("server1", "old-container-1");
         mappings.put("server2", "old-container-2");
         ConfigSnapshot captured = snapshot(mappings);
-        when(dockerManager.getContainerStatus("old-container-1")).thenReturn(ContainerStatus.RUNNING);
-        when(dockerManager.getContainerStatus("old-container-2")).thenReturn(ContainerStatus.STOPPED);
+        when(dockerManager.inspectContainer(anyString()))
+                .thenReturn(ContainerInspection.healthy(ContainerStatus.RUNNING));
 
-        Map<String, Optional<ContainerStatus>> result = serverManager.getStatusesAsync(captured).join();
+        Map<String, ContainerInspection> result = serverManager.inspectContainersAsync(captured).join();
 
         assertEquals(List.of("server1", "server2"), new java.util.ArrayList<>(result.keySet()));
         verifyNoInteractions(config);
-        verify(dockerManager).getContainerStatus("old-container-1");
-        verify(dockerManager).getContainerStatus("old-container-2");
+        verify(dockerManager).inspectContainer("old-container-1");
+        verify(dockerManager).inspectContainer("old-container-2");
     }
 
     @Test

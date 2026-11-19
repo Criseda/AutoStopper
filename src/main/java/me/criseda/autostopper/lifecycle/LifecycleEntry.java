@@ -253,16 +253,6 @@ final class LifecycleEntry {
         activeOperation = operation;
     }
 
-    boolean ownsOperation(CompletableFuture<?> operation) {
-        return activeOperation == operation;
-    }
-
-    void detachOperation(CompletableFuture<?> operation) {
-        if (activeOperation == operation) {
-            activeOperation = null;
-        }
-    }
-
     // --- Stop ---
 
     void beginStop() {

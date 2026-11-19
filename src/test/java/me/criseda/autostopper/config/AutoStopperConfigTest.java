@@ -78,12 +78,10 @@ public class AutoStopperConfigTest {
         assertEquals(600, result.snapshot().inactivityTimeoutSeconds());
         assertEquals(StopRetrySettings.defaults(), result.snapshot().stopRetry());
         assertEquals(List.of("server1", "server2"), result.snapshot().serverNames());
-        assertEquals("container1", result.snapshot().serverToContainer().get("server1"));
+        assertEquals("container1", result.snapshot().server("server1").orElseThrow().containerName());
         assertSame(result.snapshot(), config.snapshot());
         assertThrows(UnsupportedOperationException.class,
                 () -> result.snapshot().servers().add(new ServerMapping("x", "y")));
-        assertThrows(UnsupportedOperationException.class,
-                () -> result.snapshot().serverToContainer().put("x", "y"));
     }
 
     @Test
@@ -363,7 +361,7 @@ public class AutoStopperConfigTest {
         ConfigLoadResult result = config.loadConfig();
 
         assertTrue(result.successful());
-        assertEquals("contêneur", result.snapshot().serverToContainer().get("sérver"));
+        assertEquals("contêneur", result.snapshot().server("sérver").orElseThrow().containerName());
     }
 
     @Test
@@ -413,8 +411,8 @@ public class AutoStopperConfigTest {
     @Test
     public void serverMappingIsAnImmutableValue() {
         ServerMapping mapping = new ServerMapping("test-server", "test-container");
-        assertEquals("test-server", mapping.getServerName());
-        assertEquals("test-container", mapping.getContainerName());
+        assertEquals("test-server", mapping.serverName());
+        assertEquals("test-container", mapping.containerName());
     }
 
     private void loadInitialSnapshot() throws IOException {
@@ -425,10 +423,10 @@ public class AutoStopperConfigTest {
     private void assertSnapshotInvariant(ConfigSnapshot snapshot) {
         if (snapshot.inactivityTimeoutSeconds() == 100) {
             assertEquals(List.of("server1"), snapshot.serverNames());
-            assertEquals("container1", snapshot.serverToContainer().get("server1"));
+            assertEquals("container1", snapshot.server("server1").orElseThrow().containerName());
         } else if (snapshot.inactivityTimeoutSeconds() == 200) {
             assertEquals(List.of("server2"), snapshot.serverNames());
-            assertEquals("container2", snapshot.serverToContainer().get("server2"));
+            assertEquals("container2", snapshot.server("server2").orElseThrow().containerName());
         } else {
             fail("unexpected timeout from partial snapshot: " + snapshot.inactivityTimeoutSeconds());
         }

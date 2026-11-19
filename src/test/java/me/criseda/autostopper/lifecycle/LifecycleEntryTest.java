@@ -161,18 +161,6 @@ class LifecycleEntryTest {
     }
 
     @Test
-    void operationOwnershipIsByIdentity() {
-        CompletableFuture<Void> operation = new CompletableFuture<>();
-        entry.attachOperation(operation);
-
-        assertTrue(entry.ownsOperation(operation));
-        entry.detachOperation(new CompletableFuture<>());
-        assertTrue(entry.ownsOperation(operation));
-        entry.detachOperation(operation);
-        assertFalse(entry.ownsOperation(operation));
-    }
-
-    @Test
     void manualStopOwnershipIsByIdentity() {
         readyEntry();
         entry.beginStop();
@@ -354,7 +342,9 @@ class LifecycleEntryTest {
         assertEquals(List.of(waiter), drain.waiters());
         assertTrue(waiter.isDiscarded());
         assertFalse(entry.hasWaiters());
-        assertFalse(entry.ownsOperation(operation));
+        ShutdownDrain secondDrain = new ShutdownDrain();
+        entry.drainForShutdown(secondDrain);
+        assertEquals(List.of(), secondDrain.operations(), "the drained operation is detached");
         assertEquals(Optional.of(ConnectionOutcome.PROXY_SHUTDOWN), entry.lastConnectionOutcome());
     }
 
@@ -415,7 +405,6 @@ class LifecycleEntryTest {
         entry.cancelStop();
         entry.beginStop();
 
-        assertFalse(entry.ownsOperation(operation));
         ShutdownDrain drain = new ShutdownDrain();
         entry.drainForShutdown(drain);
         assertEquals(List.of(), drain.operations());

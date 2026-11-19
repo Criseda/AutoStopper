@@ -52,10 +52,6 @@ public final class AutoStopperMessages {
 
     // --- Root Overview & Help ---
 
-    public static Component pluginHeader(String version) {
-        return pluginHeader(version, false);
-    }
-
     public static Component pluginHeader(String version, boolean isPlayer) {
         if (!isPlayer) {
             return finish(Component.text()
@@ -72,18 +68,6 @@ public final class AutoStopperMessages {
         return finish(Component.text("Empty servers sleep. Players wake them.", MessageTokens.TEXT_PRIMARY));
     }
 
-    public static Component pluginInfo(String version) {
-        return finish(Component.text()
-                .append(Component.text("AutoStopper", MessageTokens.BRAND))
-                .append(Component.text(" " + version, MessageTokens.TEXT_MUTED))
-                .append(Component.text(" " + MessageTokens.SEPARATOR + " ", MessageTokens.TEXT_MUTED))
-                .append(Component.text("Empty servers sleep. Players wake them.", MessageTokens.TEXT_PRIMARY)));
-    }
-
-    public static Component helpHint() {
-        return helpHint(false);
-    }
-
     public static Component helpHint(boolean isPlayer) {
         return finish(Component.text()
                 .append(Component.text("Use ", MessageTokens.TEXT_MUTED))
@@ -93,10 +77,6 @@ public final class AutoStopperMessages {
 
     public static Component helpHeader() {
         return finish(Component.text("AutoStopper Commands", MessageTokens.BRAND));
-    }
-
-    public static Component commandsHeader() {
-        return finish(Component.text("Commands:", MessageTokens.BRAND));
     }
 
     /**
@@ -166,18 +146,6 @@ public final class AutoStopperMessages {
 
     // --- Command Errors & Fuzzy Suggestions ---
 
-    public static Component unknownCommand() {
-        return unknownCommand(false);
-    }
-
-    public static Component unknownCommand(boolean isPlayer) {
-        return finish(Component.text()
-                .append(brandAttention())
-                .append(Component.text("Unknown command. Use ", MessageTokens.FAILURE))
-                .append(command("/autostopper help", "Show available commands", isPlayer))
-                .append(Component.text(" to see available commands.", MessageTokens.FAILURE)));
-    }
-
     public static Component unknownSubcommand(String entered, String suggestion, boolean isPlayer) {
         return finish(Component.text()
                 .append(brandAttention())
@@ -219,52 +187,11 @@ public final class AutoStopperMessages {
                 .append(Component.text("Could not collect server statuses.", MessageTokens.FAILURE)));
     }
 
-    public static Component statusNoMapping(String serverName) {
-        return formatStatusRow(serverName, MessageTokens.MARK_ATTENTION, MessageTokens.FAILURE,
-                "No container mapping", MessageTokens.FAILURE, null);
-    }
-
-    public static Component statusRunning(String serverName, Long minutesSinceActivity) {
-        String activityDetail = formatActivity(minutesSinceActivity);
-        return formatStatusRow(serverName, MessageTokens.DOT_READY, MessageTokens.SUCCESS,
-                "Ready", MessageTokens.SUCCESS, activityDetail);
-    }
-
-    public static Component statusStopped(String serverName) {
-        return formatStatusRow(serverName, MessageTokens.DOT_STOPPED, MessageTokens.TEXT_MUTED,
-                "Sleeping", MessageTokens.TEXT_MUTED, null);
-    }
-
-    public static Component statusMissing(String serverName) {
-        return formatStatusRow(serverName, MessageTokens.MARK_ATTENTION, MessageTokens.FAILURE,
-                "Missing", MessageTokens.FAILURE, "container does not exist");
-    }
-
-    public static Component statusInaccessible(String serverName) {
-        return formatStatusRow(serverName, MessageTokens.MARK_ATTENTION, MessageTokens.FAILURE,
-                "Inaccessible", MessageTokens.FAILURE, "Docker daemon unreachable");
-    }
-
-    public static Component statusTimedOut(String serverName) {
-        return formatStatusRow(serverName, MessageTokens.MARK_ATTENTION, MessageTokens.PROGRESS_WARNING,
-                "Timed out", MessageTokens.PROGRESS_WARNING, "status check did not respond in time");
-    }
-
-    public static Component statusFailed(String serverName) {
-        return formatStatusRow(serverName, MessageTokens.MARK_ATTENTION, MessageTokens.FAILURE,
-                "Failed", MessageTokens.FAILURE, "status check failed");
-    }
-
     /** The overview footer naming how Docker is reached, for example the Engine API endpoint. */
     public static Component statusDockerAccess(String description) {
         return finish(Component.text()
                 .append(Component.text("Docker: ", MessageTokens.TEXT_MUTED))
                 .append(Component.text(description, MessageTokens.TEXT_PRIMARY)));
-    }
-
-    public static Component operationalStatus(String serverName, OperationalServerStatus status,
-            Long minutesSinceActivity) {
-        return operationalStatus(serverName, status, minutesSinceActivity, Instant.now(), false);
     }
 
     /**
@@ -462,11 +389,6 @@ public final class AutoStopperMessages {
     }
 
     private static Component formatStatusRow(String serverName, String glyph, TextColor glyphColor,
-            String stateLabel, TextColor stateColor, String detail) {
-        return formatStatusRow(serverName, glyph, glyphColor, stateLabel, stateColor, detail, false);
-    }
-
-    private static Component formatStatusRow(String serverName, String glyph, TextColor glyphColor,
             String stateLabel, TextColor stateColor, String detail, boolean clickable) {
         TextComponent.Builder name = Component.text()
                 .content(serverName)
@@ -538,12 +460,6 @@ public final class AutoStopperMessages {
                 .append(Component.text("Server is already being started, please wait…", MessageTokens.PROGRESS_WARNING)));
     }
 
-    public static Component serverOfflineStarting() {
-        return finish(Component.text()
-                .append(brandPrefix())
-                .append(Component.text("Server is offline. Starting it up…", MessageTokens.PROGRESS_WARNING)));
-    }
-
     public static Component lifecycleInspecting(String serverName) {
         return finish(Component.text()
                 .append(brandPrefix())
@@ -606,14 +522,6 @@ public final class AutoStopperMessages {
                 .append(brandAttention())
                 .append(Component.text("Try again in a moment with ", MessageTokens.PROGRESS_WARNING))
                 .append(command("/server " + serverName, "Connect to " + serverName, isPlayer)));
-    }
-
-    public static Component serverReady(String serverName) {
-        return finish(Component.text()
-                .append(brandSuccess())
-                .append(Component.text("Server ", MessageTokens.SUCCESS))
-                .append(argument(serverName))
-                .append(Component.text(" is now ready!", MessageTokens.SUCCESS)));
     }
 
     // --- Terminal Failure Outcomes ---
@@ -795,12 +703,6 @@ public final class AutoStopperMessages {
                 .append(Component.text(" " + MessageTokens.SEPARATOR + " " + formatElapsed(elapsed), MessageTokens.TEXT_MUTED)));
     }
 
-    public static Component manualStartFailed(String serverName, Component reason, Duration elapsed) {
-        return finish(Component.text()
-                .append(reason)
-                .append(Component.text(" " + MessageTokens.SEPARATOR + " Waited " + formatElapsed(elapsed) + ".", MessageTokens.TEXT_MUTED)));
-    }
-
     public static Component manualStopStopping(String serverName) {
         return finish(Component.text()
                 .append(brandPrefix())
@@ -842,11 +744,6 @@ public final class AutoStopperMessages {
                 .append(Component.text(": players are waiting to connect.", MessageTokens.FAILURE)));
     }
 
-    public static Component manualStopFailed(String serverName, Component reason) {
-        return finish(Component.text()
-                .append(reason));
-    }
-
     public static Component manualRestartRestarting(String serverName) {
         return finish(Component.text()
                 .append(brandPrefix())
@@ -878,12 +775,6 @@ public final class AutoStopperMessages {
                 .append(Component.text("Cannot restart server ", MessageTokens.FAILURE))
                 .append(argument(serverName))
                 .append(Component.text(": players are waiting to connect.", MessageTokens.FAILURE)));
-    }
-
-    public static Component manualRestartFailed(String serverName, Component reason, Duration elapsed) {
-        return finish(Component.text()
-                .append(reason)
-                .append(Component.text(" " + MessageTokens.SEPARATOR + " Waited " + formatElapsed(elapsed) + ".", MessageTokens.TEXT_MUTED)));
     }
 
     // --- Operator Failure Detail & Help Links ---

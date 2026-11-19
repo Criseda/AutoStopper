@@ -161,24 +161,10 @@ public class AutoStopperPlugin {
         return new ActivityTracker(server, logger, config, serverManager, executor, this, lifecycleCoordinator, telemetry);
     }
 
-    protected ActivityTracker createActivityTracker(AutoStopperConfig config, ServerManager serverManager,
-            AutoStopperExecutor executor, ServerLifecycleCoordinator lifecycleCoordinator) {
-        return createActivityTracker(config, serverManager, executor, lifecycleCoordinator, createTelemetryService());
-    }
-
     protected ServerLifecycleCoordinator createLifecycleCoordinator(ServerManager serverManager,
             AutoStopperExecutor executor, LifecycleTelemetry telemetry) {
         return new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(), executor,
                 System::nanoTime, telemetry);
-    }
-
-    protected ServerLifecycleCoordinator createLifecycleCoordinator(ServerManager serverManager,
-            AutoStopperExecutor executor) {
-        return createLifecycleCoordinator(serverManager, executor, createTelemetryService());
-    }
-
-    protected ServerLifecycleCoordinator createLifecycleCoordinator(ServerManager serverManager) {
-        return new ServerLifecycleCoordinator(logger, serverManager);
     }
 
     protected OperationalStatusService createOperationalStatusService(ServerManager serverManager,

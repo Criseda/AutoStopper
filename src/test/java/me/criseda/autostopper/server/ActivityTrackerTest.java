@@ -18,7 +18,6 @@ import me.criseda.autostopper.lifecycle.ServerLifecycleCoordinator;
 import me.criseda.autostopper.lifecycle.ServerLifecycleState;
 import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
-import me.criseda.autostopper.telemetry.TelemetryOrigin;
 import me.criseda.autostopper.telemetry.TelemetryOutcome;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -101,15 +100,9 @@ public class ActivityTrackerTest {
         verify(logger).info("Initial server activity state:");
         
         // Verify lastActivity was initialized for all servers
-        Map<String, Instant> activity = activityTracker.getAllActivity();
-        assertEquals(2, activity.size());
-        assertTrue(activity.containsKey("server1"));
-        assertTrue(activity.containsKey("server2"));
-        
-        // Verify timestamps are reasonably close to current time
         Instant now = Instant.now();
-        assertTrue(Duration.between(activity.get("server1"), now).getSeconds() < 5);
-        assertTrue(Duration.between(activity.get("server2"), now).getSeconds() < 5);
+        assertTrue(Duration.between(activityTracker.getLastActivity("server1"), now).getSeconds() < 5);
+        assertTrue(Duration.between(activityTracker.getLastActivity("server2"), now).getSeconds() < 5);
     }
 
     @Test

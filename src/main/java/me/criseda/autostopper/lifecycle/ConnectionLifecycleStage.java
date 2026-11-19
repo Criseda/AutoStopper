@@ -13,8 +13,4 @@ public enum ConnectionLifecycleStage {
     CONNECTING,
     SUCCEEDED,
     FAILED;
-
-    public boolean terminal() {
-        return this == SUCCEEDED || this == FAILED;
-    }
 }

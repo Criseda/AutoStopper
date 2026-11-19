@@ -12,12 +12,4 @@ public record ServerMapping(String serverName, String containerName, ReadinessSe
     public ServerMapping(String serverName, String containerName) {
         this(serverName, containerName, ReadinessSettings.defaults());
     }
-
-    public String getServerName() {
-        return serverName;
-    }
-
-    public String getContainerName() {
-        return containerName;
-    }
 }

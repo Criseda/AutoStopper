@@ -4,7 +4,6 @@ import org.slf4j.Logger;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
@@ -40,10 +39,6 @@ public final class LifecycleTelemetryService implements LifecycleTelemetry {
         this.logger = Objects.requireNonNull(logger, "logger");
         this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime");
         this.clock = Objects.requireNonNull(clock, "clock");
-    }
-
-    public LongSupplier nanoTime() {
-        return nanoTime;
     }
 
     public long currentNanos() {
