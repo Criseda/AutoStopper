@@ -20,8 +20,8 @@ time, and there is no separate paid or prioritized channel.
 ## Supported versions
 
 Only the current release is supported. That release is
-[2.3.0](https://github.com/Criseda/AutoStopper/releases/tag/2.3.0) at the time of writing; older
-releases, including 1.1.2, 2.0.0, 2.1.0, 2.1.1, and 2.2.0, are unsupported and receive no fixes. Users of 2.2.0 should read
+[2.3.1](https://github.com/Criseda/AutoStopper/releases/tag/2.3.1) at the time of writing; older
+releases, including 1.1.2, 2.0.0, 2.1.0, 2.1.1, 2.2.0, and 2.3.0, are unsupported and receive no fixes. Users of 2.2.0 should read
 the [2.2.0 to 2.3.0 migration guide](docs/migration-2.2.0-to-2.3.0.md) (the JAR is a drop-in
 replacement); users of 1.1.2 must follow the [1.1.2 to 2.0.0 migration
 guide](docs/migration-1.1.2-to-2.0.0.md) before replacing the artifact.

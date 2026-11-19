@@ -37,7 +37,7 @@ readiness, simultaneous players share one lifecycle operation, and all Docker wo
 Velocity's event and command workers.
 
 > [!IMPORTANT]
-> These instructions describe **AutoStopper 2.3.0**. Install only from the project's Modrinth or
+> These instructions describe **AutoStopper 2.3.1**. Install only from the project's Modrinth or
 > GitHub release pages; the examples install the pinned release from Modrinth, and a manually
 > downloaded JAR should be checked against its published SHA-256 checksum. Users of 2.2.0 can read
 > the [2.2.0 to 2.3.0 migration guide](docs/migration-2.2.0-to-2.3.0.md); users of 1.1.2 must
@@ -142,7 +142,7 @@ services:
       VELOCITY_BUILD_ID: "30"
       # Installs AutoStopper from Modrinth at startup. MINECRAFT_VERSION only
       # selects the download (any version from 1.7.2 to 26.2 works).
-      MODRINTH_PROJECTS: "autostopper:2.3.0"
+      MODRINTH_PROJECTS: "autostopper:2.3.1"
       MINECRAFT_VERSION: "1.21.4"
     ports:
       - "25565:25577"
