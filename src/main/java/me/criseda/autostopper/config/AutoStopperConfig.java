@@ -189,16 +189,13 @@ public class AutoStopperConfig {
             return ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS;
         }
         Object value = root.get(TIMEOUT_KEY);
-        if (!(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)) {
+        // Unlike optional nested keys, an explicit null timeout is an error rather than the default.
+        if (value == null) {
             errors.add(TIMEOUT_KEY + ": expected a positive integer");
             return ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS;
         }
-        long timeout = ((Number) value).longValue();
-        if (timeout <= 0 || timeout > Integer.MAX_VALUE) {
-            errors.add(TIMEOUT_KEY + ": expected a positive integer no greater than " + Integer.MAX_VALUE);
-            return ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS;
-        }
-        return (int) timeout;
+        return parsePositiveInteger(value, TIMEOUT_KEY, ConfigSnapshot.DEFAULT_INACTIVITY_TIMEOUT_SECONDS,
+                Integer.MAX_VALUE, errors);
     }
 
     private List<ServerMapping> parseMappings(Map<?, ?> root, List<String> errors) {
@@ -331,20 +328,10 @@ public class AutoStopperConfig {
         return (int) number;
     }
 
+    /** {@code defaultValue} when {@code value} is null or invalid; invalid values also add an error. */
     private int parsePositiveInteger(Object value, String path, int defaultValue, int maximum, List<String> errors) {
-        if (value == null) {
-            return defaultValue;
-        }
-        if (!(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)) {
-            errors.add(path + ": expected a positive integer");
-            return defaultValue;
-        }
-        long number = ((Number) value).longValue();
-        if (number <= 0 || number > maximum) {
-            errors.add(path + ": expected a positive integer no greater than " + maximum);
-            return defaultValue;
-        }
-        return (int) number;
+        Integer parsed = parseOptionalPositiveInteger(value, path, maximum, errors);
+        return parsed == null ? defaultValue : parsed;
     }
 
     private String parseName(Object value, String path, List<String> errors) {
