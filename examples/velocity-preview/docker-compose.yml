@@ -40,7 +40,7 @@ services:
       # Minecraft version only selects the download; any version from 1.7.2 to 26.2
       # works and it does not have to match your backends. Remove both lines to
       # install the JAR manually instead (see the README).
-      MODRINTH_PROJECTS: "autostopper:2.3.1"
+      MODRINTH_PROJECTS: "autostopper:2.3.2"
       MINECRAFT_VERSION: "1.21.4"
     ports:
       - "25565:25577"
