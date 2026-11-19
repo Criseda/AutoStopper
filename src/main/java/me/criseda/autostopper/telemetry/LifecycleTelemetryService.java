@@ -4,27 +4,19 @@ import org.slf4j.Logger;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.util.Collections;
-import java.util.EnumMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.LongAdder;
 import java.util.function.LongSupplier;
 
 /**
- * Owns bounded process-lifetime lifecycle telemetry aggregation and structured completion logging.
+ * Logs structured lifecycle completions and keeps the bounded per-server history of recent
+ * operations shown by {@code /autostopper status <server>}.
  */
 public final class LifecycleTelemetryService implements LifecycleTelemetry {
     private final Logger logger;
     private final LongSupplier nanoTime;
     private final Clock clock;
 
-    private final Map<TelemetryOperationType, Map<TelemetryOutcome, LongAdder>> outcomeCounters =
-            new ConcurrentHashMap<>();
-    private final Map<TelemetryOperationType, DurationAggregate> durationAggregates =
-            new ConcurrentHashMap<>();
     private final OperationHistory history = new OperationHistory();
 
     public LifecycleTelemetryService(Logger logger) {
@@ -50,7 +42,7 @@ public final class LifecycleTelemetryService implements LifecycleTelemetry {
     }
 
     /**
-     * Records an authoritative lifecycle operation completion, updating aggregates and emitting an INFO log.
+     * Records an authoritative lifecycle operation completion in the recent history and emits an INFO log.
      */
     public void recordOperation(TelemetryOperationType operation, String serverName,
             TelemetryOrigin origin, TelemetryOutcome outcome, Duration elapsed, int waiterCount) {
@@ -71,7 +63,6 @@ public final class LifecycleTelemetryService implements LifecycleTelemetry {
             return;
         }
         try {
-            updateAggregates(record.operation(), record.outcome(), record.elapsed().toNanos());
             history.record(record);
             logCompletion(record);
         } catch (Throwable error) {
@@ -80,40 +71,18 @@ public final class LifecycleTelemetryService implements LifecycleTelemetry {
     }
 
     /**
-     * Records an intermediate stage completion, emitting a DEBUG log and updating stage duration aggregates.
+     * Records an intermediate stage completion, emitting a DEBUG log.
      */
     public void recordStage(TelemetryOperationType stage, String serverName,
             TelemetryOutcome outcome, Duration elapsed) {
         try {
-            TelemetryStageRecord record = new TelemetryStageRecord(stage, serverName, outcome, elapsed);
-            recordStage(record);
+            if (logger.isDebugEnabled()) {
+                logger.debug("AutoStopper lifecycle stage: op={} server={} outcome={} elapsed_ms={}",
+                        stage, serverName, outcome, elapsed.toMillis());
+            }
         } catch (Throwable error) {
             safeLogObservationalError("recordStage", error);
         }
-    }
-
-    /**
-     * Records an intermediate stage completion.
-     */
-    public void recordStage(TelemetryStageRecord record) {
-        if (record == null) {
-            return;
-        }
-        try {
-            updateAggregates(record.stage(), record.outcome(), record.elapsed().toNanos());
-            logStage(record);
-        } catch (Throwable error) {
-            safeLogObservationalError("recordStage", error);
-        }
-    }
-
-    private void updateAggregates(TelemetryOperationType operation, TelemetryOutcome outcome, long durationNanos) {
-        outcomeCounters.computeIfAbsent(operation, op -> new ConcurrentHashMap<>())
-                .computeIfAbsent(outcome, oc -> new LongAdder())
-                .increment();
-
-        durationAggregates.computeIfAbsent(operation, op -> new DurationAggregate())
-                .record(durationNanos);
     }
 
     private void logCompletion(TelemetryRecord record) {
@@ -128,68 +97,12 @@ public final class LifecycleTelemetryService implements LifecycleTelemetry {
         }
     }
 
-    private void logStage(TelemetryStageRecord record) {
-        if (logger.isDebugEnabled()) {
-            logger.debug("AutoStopper lifecycle stage: op={} server={} outcome={} elapsed_ms={}",
-                    record.stage(),
-                    record.serverName(),
-                    record.outcome(),
-                    record.elapsed().toMillis());
-        }
-    }
-
     private void safeLogObservationalError(String context, Throwable error) {
         try {
             logger.debug("AutoStopper telemetry observational recording failed in {}", context, error);
         } catch (Throwable ignored) {
             // Observational failures must never propagate
         }
-    }
-
-    /**
-     * Returns an immutable snapshot of all in-memory telemetry aggregates.
-     */
-    public TelemetrySnapshot snapshot() {
-        Map<TelemetryOperationType, Map<TelemetryOutcome, Long>> outcomeSnapshot = new EnumMap<>(TelemetryOperationType.class);
-        for (Map.Entry<TelemetryOperationType, Map<TelemetryOutcome, LongAdder>> opEntry : outcomeCounters.entrySet()) {
-            Map<TelemetryOutcome, Long> counts = new EnumMap<>(TelemetryOutcome.class);
-            for (Map.Entry<TelemetryOutcome, LongAdder> outcomeEntry : opEntry.getValue().entrySet()) {
-                counts.put(outcomeEntry.getKey(), outcomeEntry.getValue().sum());
-            }
-            outcomeSnapshot.put(opEntry.getKey(), Collections.unmodifiableMap(counts));
-        }
-
-        Map<TelemetryOperationType, DurationAggregate> durationSnapshot = new EnumMap<>(TelemetryOperationType.class);
-        for (Map.Entry<TelemetryOperationType, DurationAggregate> entry : durationAggregates.entrySet()) {
-            durationSnapshot.put(entry.getKey(), entry.getValue().snapshot());
-        }
-
-        return new TelemetrySnapshot(
-                Collections.unmodifiableMap(outcomeSnapshot),
-                Collections.unmodifiableMap(durationSnapshot),
-                clock.instant());
-    }
-
-    public long operationCount(TelemetryOperationType operation) {
-        Map<TelemetryOutcome, LongAdder> counts = outcomeCounters.get(operation);
-        if (counts == null) {
-            return 0L;
-        }
-        return counts.values().stream().mapToLong(LongAdder::sum).sum();
-    }
-
-    public long outcomeCount(TelemetryOperationType operation, TelemetryOutcome outcome) {
-        Map<TelemetryOutcome, LongAdder> counts = outcomeCounters.get(operation);
-        if (counts == null) {
-            return 0L;
-        }
-        LongAdder adder = counts.get(outcome);
-        return adder == null ? 0L : adder.sum();
-    }
-
-    public DurationAggregate duration(TelemetryOperationType operation) {
-        DurationAggregate aggregate = durationAggregates.get(operation);
-        return aggregate == null ? new DurationAggregate() : aggregate.snapshot();
     }
 
     @Override
@@ -203,8 +116,6 @@ public final class LifecycleTelemetryService implements LifecycleTelemetry {
     }
 
     public void clear() {
-        outcomeCounters.clear();
-        durationAggregates.clear();
         history.clear();
     }
 }

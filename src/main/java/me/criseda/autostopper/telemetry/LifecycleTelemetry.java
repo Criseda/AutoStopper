@@ -19,7 +19,7 @@ public interface LifecycleTelemetry {
     Duration elapsedSince(long startNanos);
 
     /**
-     * Records an authoritative lifecycle operation completion, updating aggregates and emitting an INFO log.
+     * Records an authoritative lifecycle operation completion in the recent history and emits an INFO log.
      *
      * @param operation operation category
      * @param serverName target server name
@@ -51,11 +51,6 @@ public interface LifecycleTelemetry {
             Duration elapsed);
 
     /**
-     * Returns an immutable snapshot of in-memory telemetry aggregates.
-     */
-    TelemetrySnapshot snapshot();
-
-    /**
      * Returns the server's recent completed startups, manual operations, and automatic stops, newest
      * first. The list is an immutable snapshot.
      */
@@ -71,7 +66,7 @@ public interface LifecycleTelemetry {
     }
 
     /**
-     * Resets all in-memory telemetry aggregates and recent-operation history.
+     * Resets the recent-operation history.
      */
     void clear();
 }

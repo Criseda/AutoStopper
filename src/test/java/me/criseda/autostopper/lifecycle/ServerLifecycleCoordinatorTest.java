@@ -14,11 +14,11 @@ import me.criseda.autostopper.readiness.ReadinessResult;
 import me.criseda.autostopper.readiness.MinecraftStatusProbe;
 import me.criseda.autostopper.telemetry.LifecycleTelemetry;
 import me.criseda.autostopper.telemetry.LifecycleTelemetryService;
+import me.criseda.autostopper.testing.RecordingLifecycleTelemetry;
 import me.criseda.autostopper.telemetry.TelemetryOperationType;
 import me.criseda.autostopper.telemetry.TelemetryOrigin;
 import me.criseda.autostopper.telemetry.TelemetryOutcome;
 import me.criseda.autostopper.telemetry.TelemetryRecord;
-import me.criseda.autostopper.telemetry.TelemetrySnapshot;
 import net.kyori.adventure.text.Component;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -64,12 +64,14 @@ class ServerLifecycleCoordinatorTest {
     @Mock
     private RegisteredServer targetServer;
 
+    private final RecordingLifecycleTelemetry recorded = new RecordingLifecycleTelemetry();
     private ServerLifecycleCoordinator coordinator;
     private ServerMapping mapping;
 
     @BeforeEach
     void setUp() {
-        coordinator = new ServerLifecycleCoordinator(logger, serverManager);
+        coordinator = new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(),
+                new AutoStopperExecutor(), System::nanoTime, recorded);
         mapping = new ServerMapping("survival", "survival-container");
         lenient().when(serverManager.waitForServerReadyAsync(any(ServerMapping.class)))
                 .thenReturn(CompletableFuture.completedFuture(ReadinessResult.ready(1)));
@@ -1107,9 +1109,8 @@ class ServerLifecycleCoordinatorTest {
 
             assertEquals(ManualStopOutcome.PROXY_SHUTDOWN, stop.join());
             assertEquals(Optional.empty(), coordinator.state("survival"));
-            TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
-            assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.PROXY_SHUTDOWN));
-            assertEquals(0, snapshot.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.STOP_FAILED));
+            assertEquals(1, recorded.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.PROXY_SHUTDOWN));
+            assertEquals(0, recorded.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.STOP_FAILED));
         }
     }
 
@@ -1128,9 +1129,8 @@ class ServerLifecycleCoordinatorTest {
 
             assertEquals(ManualRestartOutcome.PROXY_SHUTDOWN, restart.join());
             verify(serverManager, never()).startServerAsync(any(ServerMapping.class));
-            TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
-            assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.PROXY_SHUTDOWN));
-            assertEquals(0, snapshot.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.STOP_FAILED));
+            assertEquals(1, recorded.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.PROXY_SHUTDOWN));
+            assertEquals(0, recorded.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.STOP_FAILED));
         }
     }
 
@@ -1252,7 +1252,7 @@ class ServerLifecycleCoordinatorTest {
                 .thenReturn(CompletableFuture.completedFuture(Optional.empty()));
 
         assertEquals(ManualStartOutcome.MAPPING_CHANGED, coordinator.requestManualStart(mapping).join());
-        assertEquals(1, coordinator.snapshotTelemetry()
+        assertEquals(1, recorded
                 .outcomeCount(TelemetryOperationType.MANUAL_START, TelemetryOutcome.MAPPING_CHANGED));
     }
 
@@ -1263,7 +1263,7 @@ class ServerLifecycleCoordinatorTest {
 
         assertEquals(ManualRestartOutcome.MAPPING_CHANGED,
                 coordinator.requestManualRestart(mapping, targetServer).join());
-        assertEquals(1, coordinator.snapshotTelemetry()
+        assertEquals(1, recorded
                 .outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.MAPPING_CHANGED));
     }
 
@@ -1284,10 +1284,9 @@ class ServerLifecycleCoordinatorTest {
 
     /** Asserts that shutdown, not a cancellation or failure, ended both the operation and its startup. */
     private void assertManualOperationEndedWithProxyShutdown(TelemetryOperationType type) {
-        TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
-        assertEquals(1, snapshot.outcomeCount(type, TelemetryOutcome.PROXY_SHUTDOWN));
-        assertEquals(1, snapshot.operationCount(type));
-        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.STARTUP, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, recorded.outcomeCount(type, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, recorded.operationCount(type));
+        assertEquals(1, recorded.outcomeCount(TelemetryOperationType.STARTUP, TelemetryOutcome.PROXY_SHUTDOWN));
     }
 
     @Test
@@ -1630,11 +1629,10 @@ class ServerLifecycleCoordinatorTest {
         assertEquals(ConnectionOutcome.CONNECTED, f1.join());
         assertEquals(ConnectionOutcome.CONNECTED, f2.join());
 
-        TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
-        assertEquals(1, snapshot.operationCount(TelemetryOperationType.STARTUP));
-        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.STARTUP, TelemetryOutcome.READY));
-        assertEquals(2, snapshot.operationCount(TelemetryOperationType.CONNECTION_WAIT));
-        assertEquals(2, snapshot.outcomeCount(TelemetryOperationType.CONNECTION_WAIT, TelemetryOutcome.CONNECTED));
+        assertEquals(1, recorded.operationCount(TelemetryOperationType.STARTUP));
+        assertEquals(1, recorded.outcomeCount(TelemetryOperationType.STARTUP, TelemetryOutcome.READY));
+        assertEquals(2, recorded.operationCount(TelemetryOperationType.CONNECTION_WAIT));
+        assertEquals(2, recorded.outcomeCount(TelemetryOperationType.CONNECTION_WAIT, TelemetryOutcome.CONNECTED));
     }
 
     @Test
@@ -1659,13 +1657,12 @@ class ServerLifecycleCoordinatorTest {
         CompletableFuture<ManualRestartOutcome> restartFuture = coordinator.requestManualRestart(mapping);
         assertEquals(ManualRestartOutcome.RESTARTED_AND_READY, restartFuture.join());
 
-        TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
-        assertEquals(1, snapshot.operationCount(TelemetryOperationType.MANUAL_START));
-        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_START, TelemetryOutcome.READY));
-        assertEquals(1, snapshot.operationCount(TelemetryOperationType.MANUAL_STOP));
-        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.STOPPED));
-        assertEquals(1, snapshot.operationCount(TelemetryOperationType.MANUAL_RESTART));
-        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.RESTARTED_AND_READY));
+        assertEquals(1, recorded.operationCount(TelemetryOperationType.MANUAL_START));
+        assertEquals(1, recorded.outcomeCount(TelemetryOperationType.MANUAL_START, TelemetryOutcome.READY));
+        assertEquals(1, recorded.operationCount(TelemetryOperationType.MANUAL_STOP));
+        assertEquals(1, recorded.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.STOPPED));
+        assertEquals(1, recorded.operationCount(TelemetryOperationType.MANUAL_RESTART));
+        assertEquals(1, recorded.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.RESTARTED_AND_READY));
     }
 
     @Test
@@ -1766,11 +1763,10 @@ class ServerLifecycleCoordinatorTest {
         CompletableFuture<ManualRestartOutcome> restartFuture = coordinator.requestManualRestart(mapping);
         assertEquals(ManualRestartOutcome.PROXY_SHUTDOWN, restartFuture.join());
 
-        TelemetrySnapshot snapshot = coordinator.snapshotTelemetry();
-        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.CONNECTION_WAIT, TelemetryOutcome.PROXY_SHUTDOWN));
-        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_START, TelemetryOutcome.PROXY_SHUTDOWN));
-        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.PROXY_SHUTDOWN));
-        assertEquals(1, snapshot.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, recorded.outcomeCount(TelemetryOperationType.CONNECTION_WAIT, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, recorded.outcomeCount(TelemetryOperationType.MANUAL_START, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, recorded.outcomeCount(TelemetryOperationType.MANUAL_STOP, TelemetryOutcome.PROXY_SHUTDOWN));
+        assertEquals(1, recorded.outcomeCount(TelemetryOperationType.MANUAL_RESTART, TelemetryOutcome.PROXY_SHUTDOWN));
     }
 
     @Test
@@ -1820,7 +1816,8 @@ class ServerLifecycleCoordinatorTest {
     /** Replaces the coordinator with one whose executor has a single worker, so queued work runs in order. */
     private AutoStopperExecutor singleWorkerCoordinator() {
         AutoStopperExecutor executor = new AutoStopperExecutor(1, 8);
-        coordinator = new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(), executor);
+        coordinator = new ServerLifecycleCoordinator(logger, serverManager, new ServerHoldRegistry(), executor,
+                System::nanoTime, recorded);
         return executor;
     }
 
