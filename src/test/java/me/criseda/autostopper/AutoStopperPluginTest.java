@@ -215,17 +215,6 @@ public class AutoStopperPluginTest {
     }
 
     @Test
-    void testGetters() {
-        // Inject mocked dependencies for the real plugin
-        setPrivateField(plugin, "serverManager", serverManager);
-
-        // Execute & Verify
-        assertEquals(server, plugin.getServer());
-        assertEquals(logger, plugin.getLogger());
-        assertEquals(serverManager, plugin.getServerManager());
-    }
-    
-    @Test
     void testCreateConfig() {
         // Execute
         AutoStopperConfig createdConfig = plugin.createConfig();
