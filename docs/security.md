@@ -82,10 +82,9 @@ containers through Docker.
 
 You can instead mount `/var/run/docker.sock` into Velocity. Then any process in the proxy container
 has full, host-root-equivalent control of Docker. A read-only bind mount does not change that,
-because API calls still go through. The deprecated custom entrypoint from 2.2.0 and earlier
-examples is the same boundary.
+because API calls still go through.
 
-Without the entrypoint, remove the `autostopper-docker` service and run Velocity as the image's
+Remove the `autostopper-docker` service and run Velocity as the image's
 `bungeecord` user with the socket's group. Find the group ID on the host with
 `stat -c '%g' /var/run/docker.sock`, then set on the Velocity service:
 

@@ -1,7 +1,11 @@
 package me.criseda.autostopper.docker;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 import me.criseda.autostopper.config.DockerEndpoint;
 import me.criseda.autostopper.config.DockerSettings;
@@ -29,9 +33,6 @@ public class DockerBackendSelectorTest {
     Path tempDir;
 
     private final Logger logger = mock(Logger.class);
-    private final CommandRunner commandRunner = (command, timeout) -> {
-        throw new AssertionError("selection must not run the Docker CLI");
-    };
 
     @Test
     public void autoUsesTheEngineApiWithAutoEndpointOnLinux() {
@@ -43,8 +44,7 @@ public class DockerBackendSelectorTest {
 
     @Test
     public void explicitEndpointWins() {
-        DockerSettings settings = new DockerSettings(DockerSettings.Backend.AUTO,
-                Optional.of(DockerEndpoint.tcp("proxy", 2375)));
+        DockerSettings settings = new DockerSettings(Optional.of(DockerEndpoint.tcp("proxy", 2375)));
 
         DockerBackend backend = selector(Map.of("DOCKER_HOST", "ssh://user@host"), "Windows 11").select(settings);
 
@@ -62,7 +62,7 @@ public class DockerBackendSelectorTest {
     }
 
     @Test
-    public void autoFallsBackToTheCliWhereTheApiBackendCannotFollow() throws IOException {
+    public void environmentsTheApiBackendCannotFollowFailClearly() throws IOException {
         Files.writeString(tempDir.resolve("config.json"), "{\"currentContext\":\"rootless\"}",
                 StandardCharsets.UTF_8);
         Map<Map<String, String>, String> cases = Map.of(
@@ -74,16 +74,17 @@ public class DockerBackendSelectorTest {
         cases.forEach((environment, reason) -> {
             DockerBackend backend = selector(environment, "Linux").select(AUTO);
 
-            assertInstanceOf(DockerCliBackend.class, backend, reason);
-            assertEquals("Docker CLI (" + reason + "; deprecated)", backend.describe());
+            assertInstanceOf(UnsupportedDockerAccess.class, backend, reason);
+            assertEquals("unsupported (" + reason + ")", backend.describe());
             assertFalse(backend.describe().contains("user@host"), "addresses are not echoed");
+            verify(logger, atLeastOnce()).error(contains("Cannot reach Docker"), eq(reason),
+                    eq(UnsupportedDockerAccess.REMEDIATION));
         });
 
-        DockerBackendSelector withConfig = new DockerBackendSelector(logger, commandRunner, Map.of(), "Linux",
+        DockerBackendSelector withConfig = new DockerBackendSelector(logger, Map.of(), "Linux",
                 unknownHosts(), tempDir.resolve("config.json"));
-        assertEquals("Docker CLI (Docker context 'rootless' is selected; deprecated)",
-                withConfig.select(AUTO).describe());
-        assertEquals("Docker CLI (Windows host without DOCKER_HOST; deprecated)",
+        assertEquals("unsupported (Docker context 'rootless' is selected)", withConfig.select(AUTO).describe());
+        assertEquals("unsupported (Windows host without DOCKER_HOST)",
                 selector(Map.of(), "Windows 11").select(AUTO).describe());
     }
 
@@ -91,31 +92,18 @@ public class DockerBackendSelectorTest {
     public void defaultContextAndUnreadableConfigKeepTheApi() throws IOException {
         Path config = tempDir.resolve("config.json");
         Files.writeString(config, "{\"currentContext\":\"default\"}", StandardCharsets.UTF_8);
-        assertInstanceOf(EngineApiDockerBackend.class, new DockerBackendSelector(logger, commandRunner,
+        assertInstanceOf(EngineApiDockerBackend.class, new DockerBackendSelector(logger,
                 Map.of("DOCKER_CONTEXT", "default"), "Linux", unknownHosts(), config).select(AUTO));
 
         Files.writeString(config, "{not json", StandardCharsets.UTF_8);
-        assertInstanceOf(EngineApiDockerBackend.class, new DockerBackendSelector(logger, commandRunner,
+        assertInstanceOf(EngineApiDockerBackend.class, new DockerBackendSelector(logger,
                 Map.of(), "Linux", unknownHosts(), config).select(AUTO));
-    }
-
-    @Test
-    public void explicitBackendsAreHonoured() {
-        DockerSettings cli = new DockerSettings(DockerSettings.Backend.CLI, Optional.empty());
-        DockerSettings api = new DockerSettings(DockerSettings.Backend.API, Optional.empty());
-
-        assertEquals("Docker CLI (docker.backend: cli; deprecated)",
-                selector(Map.of("DOCKER_HOST", "unix:///var/run/docker.sock"), "Linux").select(cli).describe());
-        DockerBackend forced = selector(Map.of("DOCKER_HOST", "ssh://host", "DOCKER_CONTEXT", "x"), "Windows 11")
-                .select(api);
-        assertInstanceOf(EngineApiDockerBackend.class, forced);
-        assertEquals("Engine API, endpoint auto (not resolved yet)", forced.describe());
     }
 
     @Test
     public void autoEndpointPrefersTheSidecarThenTheLocalSocket() throws EngineApiException {
         AtomicReference<String> looked = new AtomicReference<>();
-        DockerBackendSelector resolving = new DockerBackendSelector(logger, commandRunner, Map.of(), "Linux",
+        DockerBackendSelector resolving = new DockerBackendSelector(logger, Map.of(), "Linux",
                 (host, timeout) -> {
                     looked.set(host);
                     assertTrue(timeout.compareTo(DockerBackendSelector.SIDECAR_LOOKUP_LIMIT) <= 0);
@@ -135,8 +123,8 @@ public class DockerBackendSelectorTest {
         assertEquals(DockerEndpoint.unix("/var/run/docker.sock"), socket);
         assertEquals("endpoint auto: unix:///var/run/docker.sock (local socket)", local.describe(socket));
 
-        EngineApiDockerBackend.EndpointSource slowDns = new DockerBackendSelector(logger, commandRunner,
-                Map.of(), "Linux", (host, timeout) -> {
+        EngineApiDockerBackend.EndpointSource slowDns = new DockerBackendSelector(logger, Map.of(), "Linux",
+                (host, timeout) -> {
                     throw new TimeoutException();
                 }, null).autoEndpoint();
         assertEquals(DockerEndpoint.unix("/var/run/docker.sock"), slowDns.resolve(deadline(Duration.ofSeconds(30))),
@@ -150,8 +138,8 @@ public class DockerBackendSelectorTest {
                 () -> source.resolve(System.nanoTime() - 1));
         assertEquals(EngineApiException.Kind.TIMED_OUT, expired.kind());
 
-        EngineApiDockerBackend.EndpointSource interrupted = new DockerBackendSelector(logger, commandRunner,
-                Map.of(), "Linux", (host, timeout) -> {
+        EngineApiDockerBackend.EndpointSource interrupted = new DockerBackendSelector(logger, Map.of(), "Linux",
+                (host, timeout) -> {
                     throw new InterruptedException();
                 }, null).autoEndpoint();
         try {
@@ -172,7 +160,7 @@ public class DockerBackendSelectorTest {
     }
 
     private DockerBackendSelector selector(Map<String, String> environment, String osName) {
-        return new DockerBackendSelector(logger, commandRunner, environment, osName, unknownHosts(), null);
+        return new DockerBackendSelector(logger, environment, osName, unknownHosts(), null);
     }
 
     private static HostResolver unknownHosts() {

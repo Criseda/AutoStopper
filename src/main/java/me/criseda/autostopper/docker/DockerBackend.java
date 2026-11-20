@@ -12,7 +12,7 @@ interface DockerBackend {
 
     ContainerHealth health(String containerName, Duration timeout);
 
-    /** Starts a container that was just observed as stopped. */
+    /** Starts a container; one that is already running counts as started. */
     ContainerStatus start(String containerName, Duration timeout);
 
     /** The container's configured stop grace period in seconds, or empty when unset or unreadable. */
@@ -24,6 +24,6 @@ interface DockerBackend {
      */
     ContainerStatus stop(String containerName, Duration deadline);
 
-    /** A short operator-facing description, for example {@code Docker CLI}. */
+    /** A short operator-facing description of how Docker is reached. */
     String describe();
 }

@@ -29,17 +29,15 @@ stop_retry:
   initial_backoff_seconds: 60
   max_backoff_seconds: 300
 
-# How AutoStopper reaches Docker. backend: auto | api | cli
-# endpoint: auto | unix:///path/docker.sock | tcp://host:port
+# How AutoStopper reaches Docker: auto | unix:///path/docker.sock | tcp://host:port
 docker:
-  backend: auto
   endpoint: auto
 
 # Add only server names already registered in Velocity.
 monitored_servers: []
 ```
 
-Configuration files from before 2.3.0 have no `docker` section; it defaults to `auto` for both keys.
+Configuration files from before 2.3.0 have no `docker` section; it defaults to `endpoint: auto`.
 
 All duration fields must be positive whole numbers in their documented unit. Duplicate YAML keys
 are rejected. A reload validates the entire candidate before it becomes active: any error rejects
@@ -129,15 +127,19 @@ use of a host-facing address that is not reachable from the proxy container.
 
 | Field | Default | Contract |
 |---|---:|---|
-| `docker.backend` | `auto` | `api` talks to the Docker Engine API directly. `cli` runs the `docker` CLI (deprecated; planned for removal in 3.0.0). `auto` uses `api`, unless the Docker CLI is pointed somewhere the API backend cannot follow (see below). |
-| `docker.endpoint` | `auto` | `auto`, `unix:///absolute/path/docker.sock`, or `tcp://host:port` (port defaults to `2375`). Must be `auto` with `backend: cli`, because the Docker CLI reads `DOCKER_HOST` instead. |
+| `docker.endpoint` | `auto` | `auto`, `unix:///absolute/path/docker.sock`, or `tcp://host:port` (port defaults to `2375`). |
 
-The Engine API backend needs no Docker CLI in the proxy container. It speaks plain HTTP over the
+`docker.backend` chose between the Engine API and the Docker CLI before 3.0.0. `auto` and `api` are
+still accepted and have no effect; `cli` is rejected, because the Docker CLI backend was removed in
+3.0.0 (see the [3.0.0 migration guide](migration-2.3-to-3.0.0.md)).
+
+AutoStopper talks to the Docker Engine API and needs no Docker CLI in the proxy container. It speaks plain HTTP over the
 Unix socket or TCP, uses unversioned API paths so the daemon's own API version applies, and reads
 status, health, and the stop grace period from a single `GET /containers/{name}/json`. Stops do
 not send `?t=`: the daemon waits for the container's own `StopTimeout`, as `docker stop` does, and
 AutoStopper's deadline is that grace period (at most 10 minutes) plus the 10-second command
-timeout. TLS endpoints are not supported by the API backend.
+timeout. A start is a single `POST /containers/{name}/start`; a container that is already running
+counts as started. TLS, `ssh://` and Windows named-pipe endpoints are not supported.
 
 `endpoint: auto` resolves in this order on every Docker operation:
 
@@ -146,27 +148,30 @@ timeout. TLS endpoints are not supported by the API backend.
    sidecar service name; the lookup waits at most 2 seconds);
 3. `unix:///var/run/docker.sock`.
 
-`backend: auto` falls back to the CLI backend when:
+With `endpoint: auto`, AutoStopper refuses to guess when the environment points the Docker CLI
+somewhere it cannot follow, because the fallback could be a different daemon:
 
 - `DOCKER_HOST` uses `ssh://`, `npipe://`, or TLS (`DOCKER_TLS_VERIFY` or `DOCKER_CERT_PATH` set);
 - no `DOCKER_HOST` is set and a Docker context other than `default` is selected, through
   `DOCKER_CONTEXT` or `currentContext` in the Docker CLI's `config.json`;
 - no `DOCKER_HOST` is set and the proxy runs on Windows.
 
-An explicit `endpoint` always selects the API backend. With `backend: api`, an unsupported
-`DOCKER_HOST` is ignored with a warning and contexts are not consulted.
+In these cases every Docker operation fails as `DAEMON_UNAVAILABLE` without contacting any daemon,
+and the proxy log names the cause (`Cannot reach Docker: DOCKER_HOST uses ssh://, which AutoStopper
+does not support.`). Set `docker.endpoint`, or `DOCKER_HOST`, to a `unix://` or plain `tcp://`
+address, or use the socket-proxy sidecar. An explicit `endpoint` is always used as configured.
 
-The selected backend and endpoint are logged as `Docker access: …` on the first Docker operation
+The selected endpoint is logged as `Docker access: …` on the first Docker operation
 and after a reload that changes the `docker` section, and the resolved endpoint is logged when it
 changes. Every startup and reload preflight logs `AutoStopper <context> preflight Docker access: …`,
 and `/autostopper status` ends with a `Docker:` line. A reload that changes the `docker` section
-applies to the next Docker operation; operations already running finish on the previous backend.
+applies to the next Docker operation; operations already running finish on the previous endpoint.
 
-The API backend reports the same diagnostics as the CLI backend: a missing container is
+Docker failures are classified as diagnostics: a missing container is
 `CONTAINER_MISSING`; a socket the proxy may not open, or HTTP 401/403 from a socket proxy or
 authorization plugin, is `PERMISSION_DENIED`; a missing socket, refused connection, or unresolvable
 host is `DAEMON_UNAVAILABLE`; a request past its deadline is `TIMED_OUT`; anything else is
-`INDETERMINATE`. `CLI_MISSING` only occurs with the CLI backend. Docker response bodies are written
+`INDETERMINATE`. Docker response bodies are written
 to the proxy log only, never to chat.
 
 The examples run the `autostopper-docker` socket proxy on an internal network, so `endpoint: auto`
@@ -202,7 +207,7 @@ entries from the rejected file.
 | `RUNNING_UNVERIFIED` | Docker reports the container running, but AutoStopper has not verified configured readiness in the current lifecycle generation. Player or manual demand performs readiness before connection. |
 | `STOPPING` | An automatic inactivity stop is in progress. |
 | `FAILED` | The latest Docker or lifecycle observation failed. The line includes its age and safe detail; `/autostopper status <server>` adds the remediation. |
-| `DOCKER_UNAVAILABLE` | Docker cannot be reached: the daemon or socket proxy is down, access is denied, or (CLI backend only) the CLI is missing. |
+| `DOCKER_UNAVAILABLE` | Docker cannot be reached: the daemon or socket proxy is down, access is denied, or the configured environment points at an unsupported endpoint. |
 
 Active `STARTING` and `STOPPING` operations take precedence while their coordinator-owned work is
 current. Outside those transitions, a current Docker observation overrides stale idle lifecycle
@@ -220,7 +225,7 @@ and duration. Like runtime holds, this history is kept in memory only: a proxy r
 and a reload clears it for every server whose mapping was removed, added, or changed. Servers whose
 mapping is unchanged keep their history across a reload.
 
-Raw Docker errors (Engine API response bodies, or CLI stderr with the CLI backend) are deliberately
+Raw Docker errors (Engine API response bodies) are deliberately
 restricted to operator logs and are never copied into player messages.
 
 ## Operator lifecycle commands and runtime holds

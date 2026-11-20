@@ -153,7 +153,8 @@ public class AutoStopperConfigTest {
         assertTrue(result.successful());
         assertEquals(DockerSettings.defaults(), result.snapshot().docker());
         String generated = Files.readString(configFile, StandardCharsets.UTF_8);
-        assertTrue(generated.contains("docker:\n  backend: auto\n  endpoint: auto\n"), generated);
+        assertTrue(generated.contains("docker:\n  endpoint: auto\n"), generated);
+        assertFalse(generated.contains("backend"), generated);
 
         writeConfig("monitored_servers: []\n");
         assertEquals(DockerSettings.defaults(), config.loadConfig().snapshot().docker(),
@@ -171,18 +172,16 @@ public class AutoStopperConfigTest {
 
         DockerSettings docker = config.loadConfig().snapshot().docker();
 
-        assertEquals(DockerSettings.Backend.API, docker.backend());
         assertEquals(DockerEndpoint.tcp("autostopper-docker", 2375), docker.endpoint().orElseThrow());
 
         writeConfig("""
                 docker:
-                  backend: cli
+                  backend: auto
                   endpoint: auto
                 monitored_servers: []
                 """);
-        docker = config.loadConfig().snapshot().docker();
-        assertEquals(DockerSettings.Backend.CLI, docker.backend());
-        assertTrue(docker.endpoint().isEmpty());
+        assertEquals(DockerSettings.defaults(), config.loadConfig().snapshot().docker(),
+                "backend: auto and api from 2.x files are still accepted");
     }
 
     @Test
@@ -191,14 +190,13 @@ public class AutoStopperConfigTest {
         ConfigSnapshot previous = config.snapshot();
         for (String[] invalid : List.of(
                 new String[] {"docker: unix:///var/run/docker.sock\n", "docker: expected a mapping"},
-                new String[] {"docker:\n  backend: podman\n", "docker.backend: expected one of auto, api, cli"},
+                new String[] {"docker:\n  backend: podman\n", "docker.backend: expected auto or api"},
+                new String[] {"docker:\n  backend: cli\n", "docker.backend: the Docker CLI backend was removed"},
                 new String[] {"docker:\n  backend: 1\n", "docker.backend"},
                 new String[] {"docker:\n  endpoint: ssh://user@host\n", "docker.endpoint: expected auto"},
                 new String[] {"docker:\n  endpoint: unix://relative.sock\n", "docker.endpoint"},
                 new String[] {"docker:\n  endpoint: tcp://host:70000\n", "docker.endpoint"},
-                new String[] {"docker:\n  endpoint: 2375\n", "docker.endpoint"},
-                new String[] {"docker:\n  backend: cli\n  endpoint: tcp://host:2375\n",
-                        "docker.endpoint: must be auto when docker.backend is cli"})) {
+                new String[] {"docker:\n  endpoint: 2375\n", "docker.endpoint"})) {
             writeConfig(invalid[0] + "monitored_servers: []\n");
 
             ConfigLoadResult result = config.loadConfig();

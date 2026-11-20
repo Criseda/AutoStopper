@@ -305,16 +305,15 @@ public class EngineApiDockerBackendTest {
     }
 
     @Test
-    public void startChecksStatusFirst() throws IOException {
+    public void startSendsOnlyTheStartRequest() throws IOException {
         FakeDockerEngine engine = tcpEngine()
-                .on(INSPECT, Reply.json(200, inspectBody(false, null, null)))
                 .on(START, Reply.empty(204))
-                .on(INSPECT, Reply.json(200, inspectBody(true, null, null)));
+                .on(START, Reply.empty(304));
         DockerManager manager = new DockerManager(logger, backend(engine), TIMEOUT);
 
         assertEquals(ContainerStatus.RUNNING, manager.startContainer("mc"));
-        assertEquals(ContainerStatus.RUNNING, manager.startContainer("mc"));
-        assertEquals(List.of(INSPECT, START, INSPECT), engine.requests());
+        assertEquals(ContainerStatus.RUNNING, manager.startContainer("mc"), "already running counts as started");
+        assertEquals(List.of(START, START), engine.requests(), "no inspect before a start");
     }
 
     @Test

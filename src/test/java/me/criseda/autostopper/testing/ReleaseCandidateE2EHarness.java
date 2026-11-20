@@ -53,7 +53,6 @@ public final class ReleaseCandidateE2EHarness {
     private final Path evidenceDirectory;
     private final Path repositoryDirectory;
     private final Path composeFile;
-    private final Path cliComposeFile;
     private final String projectVersion;
     private final Deadline deadline = new Deadline(GLOBAL_TIMEOUT);
     private String candidateHash;
@@ -67,7 +66,6 @@ public final class ReleaseCandidateE2EHarness {
         this.evidenceDirectory = this.outputDirectory.resolve("evidence");
         this.repositoryDirectory = repositoryDirectory.toAbsolutePath().normalize();
         this.composeFile = this.repositoryDirectory.resolve("e2e/docker-compose.yml");
-        this.cliComposeFile = this.repositoryDirectory.resolve("e2e/docker-compose.cli.yml");
         this.projectVersion = projectVersion;
     }
 
@@ -105,7 +103,6 @@ public final class ReleaseCandidateE2EHarness {
             runScenario(Scenario.HAPPY_PATH, results);
             runScenario(Scenario.NEVER_READY, results);
             runScenario(Scenario.FAILED_STOP, results);
-            runScenario(Scenario.CLI_BACKEND, results);
         } finally {
             writeSummary(results);
             cleanupWorkDirectoryBestEffort();
@@ -127,10 +124,7 @@ public final class ReleaseCandidateE2EHarness {
     private void requireFixture() throws IOException {
         List<Path> required = List.of(
                 composeFile,
-                cliComposeFile,
                 repositoryDirectory.resolve("e2e/docker-api-fault-proxy.js"),
-                repositoryDirectory.resolve("e2e/docker-entrypoint.sh"),
-                repositoryDirectory.resolve("e2e/docker-cli-wrapper.sh"),
                 repositoryDirectory.resolve("e2e/client/Dockerfile"),
                 repositoryDirectory.resolve("e2e/client/package.json"),
                 repositoryDirectory.resolve("e2e/client/package-lock.json"),
@@ -208,12 +202,8 @@ public final class ReleaseCandidateE2EHarness {
                     "Could not create the stopped Minecraft backend for " + scenario.id);
             assertContainerRunning(context.backendContainer, false,
                     "Backend must be stopped before the first client request");
-            // The sidecar topology starts the socket proxy and relay through depends_on; the CLI
-            // topology starts Velocity alone. Neither starts the backend.
-            String[] up = scenario.cli
-                    ? new String[] {"up", "--detach", "--no-deps", "velocity"}
-                    : new String[] {"up", "--detach", "velocity"};
-            requireSuccess(compose(context, IMAGE_TIMEOUT, up),
+            // Velocity's depends_on starts the socket proxy and the relay, but not the backend.
+            requireSuccess(compose(context, IMAGE_TIMEOUT, "up", "--detach", "velocity"),
                     "Could not start the Velocity proxy for " + scenario.id);
             assertContainerRunning(context.backendContainer, false,
                     "Starting the proxy must not start the backend");
@@ -225,11 +215,8 @@ public final class ReleaseCandidateE2EHarness {
                 case HAPPY_PATH -> runHappyPath(context);
                 case NEVER_READY -> runNeverReady(context);
                 case FAILED_STOP -> runFailedStop(context);
-                case CLI_BACKEND -> runCliBackend(context);
             }
-            if (!scenario.cli) {
-                assertOnlyAllowedEngineApiCalls(context);
-            }
+            assertOnlyAllowedEngineApiCalls(context);
         } catch (Throwable error) {
             failure = error;
             throw error;
@@ -324,26 +311,8 @@ public final class ReleaseCandidateE2EHarness {
         }
     }
 
-    /** The deprecated CLI backend: one wake through the CLI and one idle stop, until 3.0.0 removes it. */
-    private void runCliBackend(ScenarioContext context) throws Exception {
-        String output = runClients(context, "cli-backend", List.of("E2ECli"), "spawn", null,
-                Duration.ofMinutes(3));
-        requireContains(output, "\"event\":\"spawn\",\"name\":\"E2ECli\"",
-                "CLI-backend client did not reach the backend");
-        waitForBackendPlayers(context, List.of("E2ECli"));
-        assertAuditCount(context, DockerCall.START, 1, "CLI backend must execute exactly one docker start");
-
-        waitForContainerRunning(context.backendContainer, false, IDLE_STOP_TIMEOUT,
-                "Backend did not stop through the CLI backend");
-        waitForProxyLog(context, "Stopped server: backend", COMMAND_TIMEOUT);
-        assertAuditCount(context, DockerCall.STOP, 1, "CLI backend must execute exactly one docker stop");
-    }
-
     private void assertDockerAccess(ScenarioContext context) throws Exception {
-        String expected = context.scenario.cli
-                ? "Docker access: Docker CLI (docker.backend: cli; deprecated)"
-                : SIDECAR_ENDPOINT_LOG;
-        waitForProxyLog(context, expected, COMMAND_TIMEOUT);
+        waitForProxyLog(context, SIDECAR_ENDPOINT_LOG, COMMAND_TIMEOUT);
         waitForProxyLog(context, "preflight healthy: 1 mapping(s) checked", COMMAND_TIMEOUT);
     }
 
@@ -467,31 +436,15 @@ public final class ReleaseCandidateE2EHarness {
         }
     }
 
-    /**
-     * Audit entries for one call on the backend. The sidecar topology reads the Engine API relay
-     * ({@code AUDIT POST /containers/<name>/start 204}); the CLI topology reads the CLI wrapper
-     * ({@code start <name>}).
-     */
+    /** Engine API relay audit entries for one call on the backend: {@code AUDIT POST /containers/<name>/start 204}. */
     private List<String> auditEntries(ScenarioContext context, DockerCall call) throws Exception {
-        String action = call.name().toLowerCase(Locale.ROOT);
-        String prefix = context.scenario.cli
-                ? null
-                : "AUDIT POST /containers/" + context.backendContainer + "/" + action + " ";
-        String exact = action + " " + context.backendContainer;
-        return dockerAudit(context).lines()
-                .filter(line -> prefix == null ? line.equals(exact) : line.startsWith(prefix))
-                .toList();
+        String prefix = "AUDIT POST /containers/" + context.backendContainer + "/"
+                + call.name().toLowerCase(Locale.ROOT) + " ";
+        return dockerAudit(context).lines().filter(line -> line.startsWith(prefix)).toList();
     }
 
     private String dockerAudit(ScenarioContext context) throws Exception {
-        if (!context.scenario.cli) {
-            return containerLogs(context.faultProxyContainer);
-        }
-        CommandResult audit = command(COMMAND_TIMEOUT, "docker", "exec", context.velocityContainer,
-                "sh", "-c", "test ! -f /tmp/autostopper-e2e-docker-commands.log "
-                        + "|| cat /tmp/autostopper-e2e-docker-commands.log");
-        requireSuccess(audit, "Could not read the proxy Docker command audit");
-        return audit.output();
+        return containerLogs(context.faultProxyContainer);
     }
 
     private String proxyLogs(ScenarioContext context) throws Exception {
@@ -569,8 +522,6 @@ public final class ReleaseCandidateE2EHarness {
                 settings:
                   connection-throttle: -1
                 """, StandardCharsets.UTF_8);
-        Path entrypoint = normalizedScript("e2e/docker-entrypoint.sh", scenarioDirectory.resolve("entrypoint.sh"));
-        Path wrapper = normalizedScript("e2e/docker-cli-wrapper.sh", scenarioDirectory.resolve("docker-wrapper.sh"));
         Path faultProxy = normalizedScript("e2e/docker-api-fault-proxy.js",
                 scenarioDirectory.resolve("docker-api-fault-proxy.js"));
 
@@ -585,8 +536,6 @@ public final class ReleaseCandidateE2EHarness {
         environment.put("E2E_VELOCITY_PORT", Integer.toString(availablePort()));
         environment.put("E2E_BACKEND_DATA", composePath(backendData));
         environment.put("E2E_VELOCITY_DATA", composePath(velocityData));
-        environment.put("E2E_ENTRYPOINT", composePath(entrypoint));
-        environment.put("E2E_DOCKER_WRAPPER", composePath(wrapper));
         environment.put("E2E_CLIENT_IMAGE", clientImage);
         environment.put("E2E_VELOCITY_IMAGE", velocityImage());
         environment.put("E2E_VELOCITY_VERSION", velocityVersion());
@@ -609,7 +558,6 @@ public final class ReleaseCandidateE2EHarness {
                   max_attempts: 2
                   initial_backoff_seconds: 1
                   max_backoff_seconds: 1
-                %s
                 monitored_servers:
                   - server_name: backend
                     container_name: %s
@@ -621,8 +569,7 @@ public final class ReleaseCandidateE2EHarness {
                       timeout_seconds: %d
                       connect_timeout_millis: 500
                       read_timeout_millis: 1000
-                """.formatted(scenario.cli ? "docker:\n  backend: cli" : "# docker: defaults (auto)",
-                backendContainer, readinessPort, readinessTimeout);
+                """.formatted(backendContainer, readinessPort, readinessTimeout);
     }
 
     private String velocityConfig() {
@@ -710,9 +657,6 @@ public final class ReleaseCandidateE2EHarness {
         List<String> command = new ArrayList<>(List.of(
                 "docker", "compose", "--ansi", "never", "--project-name", context.project,
                 "--file", composeFile.toString()));
-        if (context.scenario.cli) {
-            command.addAll(List.of("--file", cliComposeFile.toString()));
-        }
         command.addAll(List.of(arguments));
         return command;
     }
@@ -747,17 +691,10 @@ public final class ReleaseCandidateE2EHarness {
                 () -> rawCommand(COMMAND_TIMEOUT, "docker", "inspect", context.velocityContainer));
         captureBestEffort(context.evidence.resolve("backend-inspect.json"),
                 () -> rawCommand(COMMAND_TIMEOUT, "docker", "inspect", context.backendContainer));
-        if (context.scenario.cli) {
-            captureBestEffort(context.evidence.resolve("docker-commands.log"),
-                    () -> rawCommand(COMMAND_TIMEOUT, "docker", "exec", context.velocityContainer,
-                            "sh", "-c", "test ! -f /tmp/autostopper-e2e-docker-commands.log "
-                                    + "|| cat /tmp/autostopper-e2e-docker-commands.log"));
-        } else {
-            captureBestEffort(context.evidence.resolve("docker-api-audit.log"),
-                    () -> rawCommand(COMMAND_TIMEOUT, "docker", "logs", context.faultProxyContainer));
-            captureBestEffort(context.evidence.resolve("socket-proxy.log"),
-                    () -> rawCommand(COMMAND_TIMEOUT, "docker", "logs", context.socketProxyContainer));
-        }
+        captureBestEffort(context.evidence.resolve("docker-api-audit.log"),
+                () -> rawCommand(COMMAND_TIMEOUT, "docker", "logs", context.faultProxyContainer));
+        captureBestEffort(context.evidence.resolve("socket-proxy.log"),
+                () -> rawCommand(COMMAND_TIMEOUT, "docker", "logs", context.socketProxyContainer));
         captureBestEffort(context.evidence.resolve("project-containers.txt"),
                 () -> rawCommand(COMMAND_TIMEOUT, "docker", "ps", "--all", "--no-trunc", "--filter",
                         "label=com.docker.compose.project=" + context.project));
@@ -949,18 +886,14 @@ public final class ReleaseCandidateE2EHarness {
     }
 
     private enum Scenario {
-        HAPPY_PATH("happy-path", false),
-        NEVER_READY("never-ready", false),
-        FAILED_STOP("failed-stop", false),
-        CLI_BACKEND("cli-backend", true);
+        HAPPY_PATH("happy-path"),
+        NEVER_READY("never-ready"),
+        FAILED_STOP("failed-stop");
 
         private final String id;
-        /** Uses the deprecated CLI backend and the entrypoint topology instead of the socket proxy. */
-        private final boolean cli;
 
-        Scenario(String id, boolean cli) {
+        Scenario(String id) {
             this.id = id;
-            this.cli = cli;
         }
     }
 

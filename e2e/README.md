@@ -8,7 +8,7 @@ failed-stop retry.
 
 ## Topology
 
-The default scenarios (`happy-path`, `never-ready`, `failed-stop`) use the
+The scenarios (`happy-path`, `never-ready`, `failed-stop`) use the
 socket-proxy topology from the examples. Velocity runs the stock
 `itzg/mc-proxy` image with no entrypoint and no socket mount, has no `docker`
 configuration, and finds Docker through `endpoint: auto`:
@@ -30,16 +30,9 @@ velocity --tcp--> autostopper-docker --unix--> docker-api-fault-proxy --unix--> 
   mapped backend reached Docker. `happy-path` also checks that the socket
   proxy refuses container create and list with 403.
 
-The `cli-backend` scenario keeps the deprecated Docker CLI backend covered
-until it is removed in 3.0.0. It layers `docker-compose.cli.yml` over the base
-file: the 2.2.0-style entrypoint installs the CLI, mounts the socket into
-Velocity, and wraps the CLI with an audit log (`docker-cli-wrapper.sh`). It
-covers one wake and one idle stop.
-
 ## Security
 
-The test-only relay, and Velocity in the `cli-backend` scenario, receive
-`/var/run/docker.sock`. Access to that socket is host-root-equivalent: run
+The test-only relay receives `/var/run/docker.sock`. Access to that socket is host-root-equivalent: run
 this only on an isolated development or CI machine, never on an untrusted
 shared Docker host. The fixture uses unique names and only removes resources
 from its own generated Compose projects.
@@ -67,7 +60,7 @@ disposable; that mode is test-only and does not change the public example.
 The harness writes its candidate manifest and scenario evidence under
 `target/release-candidate-e2e/evidence/`. Scenario work directories are always
 cleaned. On failure, proxy/backend/client logs, the Engine API audit
-(`docker-api-audit.log`) or CLI audit (`docker-commands.log`), the socket-proxy
+(`docker-api-audit.log`), the socket-proxy
 log, Compose state, inspections, and project-scoped resource listings remain
 as evidence.
 

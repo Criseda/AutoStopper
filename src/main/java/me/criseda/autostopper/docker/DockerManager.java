@@ -11,9 +11,9 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * Container operations with AutoStopper's deadline and stop-grace semantics. The transport is a
- * {@link DockerBackend} chosen from the current {@link DockerSettings}; a reload that changes them
- * takes effect on the next operation, while operations already running keep their backend.
+ * Container operations with AutoStopper's deadline and stop-grace semantics. The endpoint is chosen
+ * from the current {@link DockerSettings}; a reload that changes them takes effect on the next
+ * operation, while operations already running keep their backend.
  */
 public final class DockerManager {
     private static final Duration DEFAULT_COMMAND_TIMEOUT = Duration.ofSeconds(10);
@@ -28,20 +28,9 @@ public final class DockerManager {
     private final Object selectionLock = new Object();
     private volatile Selection selection;
 
-    /** Uses the Docker CLI only, regardless of configuration. */
-    public DockerManager(Logger logger, CommandRunner commandRunner) {
-        this(logger, commandRunner, DEFAULT_COMMAND_TIMEOUT);
-    }
-
-    /** Uses the Docker CLI only, regardless of configuration. */
-    public DockerManager(Logger logger, CommandRunner commandRunner, Duration commandTimeout) {
-        this(logger, new DockerCliBackend(logger, commandRunner, "Docker CLI"), commandTimeout);
-    }
-
-    /** Selects the backend and endpoint from {@code settings} on first use and after each change. */
-    public DockerManager(Logger logger, CommandRunner commandRunner, Supplier<DockerSettings> settings) {
-        this(logger, DEFAULT_COMMAND_TIMEOUT, settings,
-                new DockerBackendSelector(logger, commandRunner)::select);
+    /** Selects the endpoint from {@code settings} on first use and after each change. */
+    public DockerManager(Logger logger, Supplier<DockerSettings> settings) {
+        this(logger, DEFAULT_COMMAND_TIMEOUT, settings, new DockerBackendSelector(logger)::select);
     }
 
     DockerManager(Logger logger, DockerBackend backend, Duration commandTimeout) {
@@ -90,32 +79,13 @@ public final class DockerManager {
         return backend().health(containerName, boundedCommandTimeout(timeout));
     }
 
+    /**
+     * Starts a container. There is no status check first: callers have just inspected it, and the
+     * daemon itself reports a container that is already running or missing.
+     */
     public ContainerStatus startContainer(String containerName) {
-        DockerBackend backend = backend();
-        ContainerStatus status = backend.inspect(containerName, commandTimeout).status();
-
-        switch (status) {
-            case RUNNING:
-                logger.info("Container {} is already running.", containerName);
-                return ContainerStatus.RUNNING;
-            case STOPPED:
-                break;
-            case MISSING:
-                logger.error("Cannot start container {}: container does not exist.", containerName);
-                return status;
-            case INACCESSIBLE:
-                logger.error("Cannot start container {}: Docker daemon is inaccessible.", containerName);
-                return status;
-            case TIMED_OUT:
-                logger.error("Cannot start container {}: status check timed out.", containerName);
-                return status;
-            case FAILED:
-                logger.error("Cannot start container {}: status check failed.", containerName);
-                return status;
-        }
-
         logger.info("Starting container: {}", containerName);
-        return backend.start(containerName, commandTimeout);
+        return backend().start(containerName, commandTimeout);
     }
 
     public ContainerStatus stopContainer(String containerName) {
