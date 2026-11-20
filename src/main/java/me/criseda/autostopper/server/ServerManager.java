@@ -47,8 +47,8 @@ public class ServerManager {
         this.readinessChecker = readinessChecker;
     }
 
-    public Optional<ContainerStatus> getServerStatus(ServerMapping mapping) {
-        return Optional.of(dockerManager.getContainerStatus(mapping.containerName()));
+    public ContainerStatus getServerStatus(ServerMapping mapping) {
+        return dockerManager.getContainerStatus(mapping.containerName());
     }
 
     public ContainerInspection inspectContainer(ServerMapping mapping) {
@@ -84,7 +84,7 @@ public class ServerManager {
         return server.getServer(name);
     }
 
-    public CompletableFuture<Optional<ContainerStatus>> getServerStatusAsync(ServerMapping mapping) {
+    public CompletableFuture<ContainerStatus> getServerStatusAsync(ServerMapping mapping) {
         return executor.supply(() -> getServerStatus(mapping));
     }
 

@@ -372,7 +372,6 @@ class AutoStopperMessagesTest {
                 AutoStopperMessages.mappingChanged("survival"),
                 AutoStopperMessages.overloaded(),
                 AutoStopperMessages.statusCheckError("survival"),
-                AutoStopperMessages.noContainerMapping("survival"),
                 AutoStopperMessages.containerMissing("survival"),
                 AutoStopperMessages.dockerUnavailable("manage", "survival"),
                 AutoStopperMessages.statusCheckTimedOut("survival"),

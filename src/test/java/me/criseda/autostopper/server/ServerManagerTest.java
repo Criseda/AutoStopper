@@ -77,10 +77,10 @@ public class ServerManagerTest {
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.RUNNING);
         
         // Execute
-        Optional<ContainerStatus> result = serverManager.getServerStatus(SERVER1);
+        ContainerStatus result = serverManager.getServerStatus(SERVER1);
         
         // Verify
-        assertEquals(Optional.of(ContainerStatus.RUNNING), result);
+        assertEquals(ContainerStatus.RUNNING, result);
         verify(dockerManager).getContainerStatus("container1");
     }
     
@@ -90,10 +90,10 @@ public class ServerManagerTest {
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.STOPPED);
         
         // Execute
-        Optional<ContainerStatus> result = serverManager.getServerStatus(SERVER1);
+        ContainerStatus result = serverManager.getServerStatus(SERVER1);
         
         // Verify
-        assertEquals(Optional.of(ContainerStatus.STOPPED), result);
+        assertEquals(ContainerStatus.STOPPED, result);
         verify(dockerManager).getContainerStatus("container1");
     }
     
@@ -174,7 +174,7 @@ public class ServerManagerTest {
                     new ServerMapping("server2", "container2", slowStart));
 
             // With one worker, a blocking wait would hold it for the whole 30-second readiness window.
-            assertEquals(Optional.of(ContainerStatus.STOPPED), realReadiness.getServerStatusAsync(
+            assertEquals(ContainerStatus.STOPPED, realReadiness.getServerStatusAsync(
                     new ServerMapping("server3", "container3")).orTimeout(5, TimeUnit.SECONDS).join());
             assertFalse(first.isDone());
             assertFalse(second.isDone());
@@ -204,10 +204,10 @@ public class ServerManagerTest {
         when(dockerManager.getContainerStatus("container1")).thenReturn(ContainerStatus.STOPPED);
 
         // Execute
-        Optional<ContainerStatus> result = serverManager.getServerStatusAsync(SERVER1).join();
+        ContainerStatus result = serverManager.getServerStatusAsync(SERVER1).join();
 
         // Verify
-        assertEquals(Optional.of(ContainerStatus.STOPPED), result);
+        assertEquals(ContainerStatus.STOPPED, result);
         verify(dockerManager).getContainerStatus("container1");
     }
 
@@ -299,7 +299,7 @@ public class ServerManagerTest {
         ServerMapping captured = serverManager.getServerMapping("server1").orElseThrow();
         assertEquals("new-container", serverManager.getServerMapping("server1").orElseThrow().containerName());
 
-        assertEquals(Optional.of(ContainerStatus.STOPPED), serverManager.getServerStatus(captured));
+        assertEquals(ContainerStatus.STOPPED, serverManager.getServerStatus(captured));
         assertEquals(ContainerStatus.RUNNING, serverManager.startServer(captured));
         assertSame(ready, serverManager.waitForServerReadyAsync(captured).join());
         verify(dockerManager, never()).getContainerStatus("new-container");

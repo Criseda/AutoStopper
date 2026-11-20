@@ -33,7 +33,6 @@ public enum TelemetryOutcome {
 
     // Configuration & container mapping issues
     MAPPING_CHANGED,
-    NO_MAPPING,
     CONTAINER_MISSING,
 
     // Docker daemon & infrastructure failures

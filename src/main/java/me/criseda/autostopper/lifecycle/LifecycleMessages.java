@@ -31,7 +31,6 @@ final class LifecycleMessages {
     static Component startupFailure(String serverName, StartupOutcome outcome,
             ReadinessResult readinessFailure) {
         return switch (outcome) {
-            case STATUS_NO_MAPPING -> AutoStopperMessages.noContainerMapping(serverName);
             case STATUS_MISSING, START_MISSING -> AutoStopperMessages.containerMissing(serverName);
             case STATUS_INACCESSIBLE -> AutoStopperMessages.dockerUnavailable("manage", serverName);
             case START_INACCESSIBLE -> AutoStopperMessages.dockerUnavailable("start", serverName);
