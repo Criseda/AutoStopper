@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -129,17 +130,20 @@ public class AutoStopperConfig {
             errors.add(DOCKER_KEY + ": expected a mapping");
             return defaults;
         }
-        DockerSettings.Backend backend = DockerSettings.Backend.AUTO;
+        // docker.backend chose between the Engine API and the Docker CLI until 3.0.0 removed the CLI.
+        // auto and api both mean the Engine API now, so older files keep loading.
         Object backendValue = docker.get("backend");
         if (backendValue != null) {
-            Optional<DockerSettings.Backend> parsed = backendValue instanceof String name
-                    ? DockerSettings.Backend.fromConfigValue(name)
-                    : Optional.empty();
-            if (parsed.isEmpty()) {
-                errors.add(DOCKER_KEY + ".backend: expected one of auto, api, cli");
+            String backend = backendValue instanceof String name ? name.toLowerCase(Locale.ROOT) : "";
+            if ("cli".equals(backend)) {
+                errors.add(DOCKER_KEY + ".backend: the Docker CLI backend was removed in 3.0.0; "
+                        + "remove the key, or set it to auto");
                 return defaults;
             }
-            backend = parsed.get();
+            if (!DockerSettings.AUTO.equals(backend) && !"api".equals(backend)) {
+                errors.add(DOCKER_KEY + ".backend: expected auto or api");
+                return defaults;
+            }
         }
         Optional<DockerEndpoint> endpoint = Optional.empty();
         Object endpointValue = docker.get("endpoint");
@@ -150,12 +154,7 @@ public class AutoStopperConfig {
                 return defaults;
             }
         }
-        if (backend == DockerSettings.Backend.CLI && endpoint.isPresent()) {
-            errors.add(DOCKER_KEY + ".endpoint: must be auto when docker.backend is cli; "
-                    + "the Docker CLI reads DOCKER_HOST instead");
-            return defaults;
-        }
-        return new DockerSettings(backend, endpoint);
+        return new DockerSettings(endpoint);
     }
 
     private StopRetrySettings parseStopRetry(Object value, List<String> errors) {
@@ -365,10 +364,8 @@ public class AutoStopperConfig {
             writer.write("  initial_backoff_seconds: "
                     + StopRetrySettings.DEFAULT_INITIAL_BACKOFF_SECONDS + "\n");
             writer.write("  max_backoff_seconds: " + StopRetrySettings.DEFAULT_MAX_BACKOFF_SECONDS + "\n\n");
-            writer.write("# How AutoStopper reaches Docker. backend: auto | api | cli\n");
-            writer.write("# endpoint: auto | unix:///path/docker.sock | tcp://host:port\n");
+            writer.write("# How AutoStopper reaches Docker: auto | unix:///path/docker.sock | tcp://host:port\n");
             writer.write(DOCKER_KEY + ":\n");
-            writer.write("  backend: " + DockerSettings.AUTO + "\n");
             writer.write("  endpoint: " + DockerSettings.AUTO + "\n\n");
             writer.write("# Add only server names already registered in Velocity.\n");
             writer.write(SERVERS_KEY + ": []\n\n");
@@ -395,8 +392,7 @@ public class AutoStopperConfig {
         logger.info("- Stop retries: {} attempts, {}-{} second backoff",
                 snapshot.stopRetry().maxAttempts(), snapshot.stopRetry().initialBackoff().toSeconds(),
                 snapshot.stopRetry().maxBackoff().toSeconds());
-        logger.info("- Docker: backend {}, endpoint {}",
-                snapshot.docker().backend().configValue(), snapshot.docker().endpointConfigValue());
+        logger.info("- Docker: endpoint {}", snapshot.docker().endpointConfigValue());
         logger.info("- Monitored servers: {}", String.join(", ", snapshot.serverNames()));
     }
 

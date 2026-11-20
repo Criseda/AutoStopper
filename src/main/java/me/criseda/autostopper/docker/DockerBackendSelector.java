@@ -18,11 +18,13 @@ import java.util.Optional;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Chooses a {@link DockerBackend} for {@link DockerSettings}. {@code backend: auto} uses the Engine
- * API unless the environment points the Docker CLI somewhere the API backend cannot follow: an
- * {@code ssh://} or TLS {@code DOCKER_HOST}, a selected Docker context, or a Windows host without
- * {@code DOCKER_HOST}. Selection runs on a worker thread; it reads the Docker CLI config file at
- * most once per settings change.
+ * Chooses how to reach Docker for {@link DockerSettings}. A configured endpoint wins; otherwise a
+ * {@code unix://} or plain {@code tcp://} {@code DOCKER_HOST}, then the socket-proxy sidecar, then
+ * the local socket. An environment that points the Docker CLI somewhere the Engine API backend
+ * cannot follow (an {@code ssh://} or TLS {@code DOCKER_HOST}, a selected Docker context, or a
+ * Windows host without {@code DOCKER_HOST}) gets {@link UnsupportedDockerAccess} instead of a
+ * different daemon. Selection runs on a worker thread; it reads the Docker CLI config file at most
+ * once per settings change.
  */
 final class DockerBackendSelector {
     static final String SIDECAR_HOST = "autostopper-docker";
@@ -33,21 +35,19 @@ final class DockerBackendSelector {
     private static final long MAX_DOCKER_CONFIG_BYTES = 1024 * 1024;
 
     private final Logger logger;
-    private final CommandRunner commandRunner;
     private final Map<String, String> environment;
     private final String osName;
     private final HostResolver resolver;
     private final Path dockerConfigFile;
 
-    DockerBackendSelector(Logger logger, CommandRunner commandRunner) {
-        this(logger, commandRunner, System.getenv(), System.getProperty("os.name", ""), HostResolver.system(),
+    DockerBackendSelector(Logger logger) {
+        this(logger, System.getenv(), System.getProperty("os.name", ""), HostResolver.system(),
                 defaultDockerConfigFile(System.getenv()));
     }
 
-    DockerBackendSelector(Logger logger, CommandRunner commandRunner, Map<String, String> environment,
-            String osName, HostResolver resolver, Path dockerConfigFile) {
+    DockerBackendSelector(Logger logger, Map<String, String> environment, String osName, HostResolver resolver,
+            Path dockerConfigFile) {
         this.logger = logger;
-        this.commandRunner = commandRunner;
         this.environment = Map.copyOf(environment);
         this.osName = osName;
         this.resolver = resolver;
@@ -55,9 +55,6 @@ final class DockerBackendSelector {
     }
 
     DockerBackend select(DockerSettings settings) {
-        if (settings.backend() == DockerSettings.Backend.CLI) {
-            return cli("docker.backend: cli");
-        }
         if (settings.endpoint().isPresent()) {
             return api(fixed(settings.endpoint().get(), "configured"));
         }
@@ -65,23 +62,17 @@ final class DockerBackendSelector {
         String dockerHost = env("DOCKER_HOST");
         if (dockerHost != null) {
             Optional<String> unsupported = unsupportedDockerHost(dockerHost);
-            if (unsupported.isEmpty()) {
-                return api(fixed(DockerEndpoint.parse(dockerHost).orElseThrow(), "from DOCKER_HOST"));
+            if (unsupported.isPresent()) {
+                return unsupported(unsupported.get());
             }
-            if (settings.backend() == DockerSettings.Backend.AUTO) {
-                return cli(unsupported.get());
-            }
-            logger.warn("Ignoring DOCKER_HOST for the Engine API backend: {}", unsupported.get());
-            return api(autoEndpoint());
+            return api(fixed(DockerEndpoint.parse(dockerHost).orElseThrow(), "from DOCKER_HOST"));
         }
-        if (settings.backend() == DockerSettings.Backend.AUTO) {
-            Optional<String> context = selectedContext();
-            if (context.isPresent()) {
-                return cli("Docker context '" + context.get() + "' is selected");
-            }
-            if (osName.toLowerCase(Locale.ROOT).startsWith("windows")) {
-                return cli("Windows host without DOCKER_HOST");
-            }
+        Optional<String> context = selectedContext();
+        if (context.isPresent()) {
+            return unsupported("Docker context '" + context.get() + "' is selected");
+        }
+        if (osName.toLowerCase(Locale.ROOT).startsWith("windows")) {
+            return unsupported("Windows host without DOCKER_HOST");
         }
         return api(autoEndpoint());
     }
@@ -125,8 +116,10 @@ final class DockerBackendSelector {
         }
     }
 
-    private DockerBackend cli(String reason) {
-        return new DockerCliBackend(logger, commandRunner, "Docker CLI (" + reason + "; deprecated)");
+    private DockerBackend unsupported(String reason) {
+        logger.error("Cannot reach Docker: {}, which AutoStopper does not support. {}", reason,
+                UnsupportedDockerAccess.REMEDIATION);
+        return new UnsupportedDockerAccess(reason);
     }
 
     private DockerBackend api(EngineApiDockerBackend.EndpointSource endpoints) {

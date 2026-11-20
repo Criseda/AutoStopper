@@ -4,6 +4,24 @@ All notable AutoStopper changes are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- With `endpoint: auto`, an `ssh://`, `npipe://` or TLS `DOCKER_HOST`, a selected Docker context, or
+  a Windows host without `DOCKER_HOST` no longer falls back to the Docker CLI. AutoStopper now
+  contacts no daemon in these cases. Every Docker operation reports `DAEMON_UNAVAILABLE`, and the
+  proxy log names the cause and the fix. `docker.backend: api` no longer ignores such a
+  `DOCKER_HOST` in favour of the sidecar or the local socket (#146).
+- Waking a server sends one Docker inspect instead of two: the start request no longer re-checks the
+  container first (#146).
+
+### Removed
+
+- The Docker CLI backend, deprecated since 2.3.0. `docker.backend: cli` is now a configuration
+  error, `auto` and `api` are accepted but have no effect, and the generated `config.yml` no longer
+  contains the key. The `CLI_MISSING` Docker diagnostic is gone. The
+  [2.3.x to 3.0.0 migration guide](docs/migration-2.3-to-3.0.0.md) covers moving off the CLI
+  backend and the custom entrypoint pattern (#146).
+
 ## [2.3.2] - 2026-11-19
 
 ### Changed

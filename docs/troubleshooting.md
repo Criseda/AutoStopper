@@ -50,7 +50,7 @@ readiness failure detail and follow the actions under [Readiness failures](#read
 | `configured container does not exist` / `MISSING` | `CONTAINER_MISSING` | Run `docker ps -a` on the Docker host, create the backend with `docker compose create` or `up`, or correct `container_name`. AutoStopper never creates containers. |
 | `Docker status check timed out` / `Timed out` | `TIMED_OUT` | Check daemon responsiveness, disk pressure, host load, and stuck Docker operations. Every Docker request has a bounded deadline; retry after the daemon recovers. A request in flight while the Docker daemon restarts can time out once. |
 | `Docker status check failed` / `FAILED` | `INDETERMINATE` | Run `docker inspect <container>` on the Docker host and review the raw error in the proxy log. Correct the Docker/container error before retrying. |
-| `Docker CLI could not be found` | `CLI_MISSING` | Only with the deprecated CLI backend (`docker.backend: cli`, or `auto` falling back to it). Install the `docker` CLI in the proxy container, or remove the cause of the fallback; see [Docker access](configuration.md#docker-access). |
+| `Docker endpoint is not supported: …` | `DAEMON_UNAVAILABLE` | `DOCKER_HOST` uses `ssh://`, `npipe://` or TLS, a Docker context is selected, or the proxy runs on Windows without `DOCKER_HOST`. AutoStopper contacts no daemon in these cases. Set `docker.endpoint` (or `DOCKER_HOST`) to a `unix://` or plain `tcp://` address, or use the socket proxy; see [Docker access](configuration.md#docker-access). |
 
 If status races a successful reload or a newer lifecycle operation, AutoStopper discards the older
 Docker result rather than applying it to the replacement mapping or newer state. Retry
@@ -207,7 +207,7 @@ never creates containers. See [Docker diagnostics](#docker-diagnostics).
 ### DOCKER_INACCESSIBLE
 
 The proxy cannot reach the Docker daemon: the daemon or socket proxy is down, the socket proxy
-refused the request, socket permission is denied, or (CLI backend only) the CLI is missing. Follow the matching row in [Docker diagnostics](#docker-diagnostics), then retry.
+refused the request, socket permission is denied, or the environment points at an unsupported Docker endpoint. Follow the matching row in [Docker diagnostics](#docker-diagnostics), then retry.
 
 ### STATUS_TIMED_OUT
 

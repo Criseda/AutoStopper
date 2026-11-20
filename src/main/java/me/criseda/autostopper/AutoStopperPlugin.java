@@ -13,7 +13,6 @@ import me.criseda.autostopper.config.AutoStopperConfig;
 import me.criseda.autostopper.config.ConfigLoadResult;
 import me.criseda.autostopper.config.ConfigSnapshot;
 import me.criseda.autostopper.docker.DockerManager;
-import me.criseda.autostopper.docker.ProcessCommandRunner;
 import me.criseda.autostopper.executor.AutoStopperExecutor;
 import me.criseda.autostopper.listeners.ConnectionListener;
 import me.criseda.autostopper.listeners.ServerPreConnectListener;
@@ -148,8 +147,7 @@ public class AutoStopperPlugin {
     }
 
     protected ServerManager createServerManager(AutoStopperConfig config, AutoStopperExecutor executor) {
-        DockerManager dockerManager = new DockerManager(logger, new ProcessCommandRunner(),
-                () -> config.snapshot().docker());
+        DockerManager dockerManager = new DockerManager(logger, () -> config.snapshot().docker());
         return new ServerManager(server, logger, config, dockerManager, executor);
     }
 

@@ -120,7 +120,8 @@ setup, so the JAR does not need to change.
 
 ## Deprecated
 
-These keep working in 2.3.x and are planned for removal in 3.0.0:
+These keep working in 2.3.x and were removed in 3.0.0; see the
+[2.3.x to 3.0.0 migration guide](migration-2.3-to-3.0.0.md):
 
 - **The custom entrypoint pattern** (`docker-entrypoint.sh`, boot-time `apt-get install docker.io`,
   `exec /usr/bin/run-bungeecord.sh`). It overrides the image's real entrypoint and depends on an

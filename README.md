@@ -268,9 +268,8 @@ it finds Docker.
   [Direct socket mount](docs/security.md#direct-socket-mount).
 - **Velocity outside Docker.** Run the proxy as a user in the `docker` group. AutoStopper uses
   `/var/run/docker.sock`, or `DOCKER_HOST` when it is a `unix://` or plain `tcp://` address.
-- **The Docker CLI backend.** Set `docker.backend: cli` when the daemon is reached in a way the
-  Engine API backend does not support, such as `ssh://` or TLS. The proxy then needs the `docker`
-  CLI. This backend is deprecated and planned for removal in 3.0.0.
+  `ssh://`, TLS and Windows named-pipe endpoints are not supported; point `docker.endpoint` at a
+  plain `tcp://` or `unix://` address, or run the socket proxy.
 
 ## Behavior
 
