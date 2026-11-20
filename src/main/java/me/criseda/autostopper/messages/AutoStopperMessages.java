@@ -316,7 +316,6 @@ public final class AutoStopperMessages {
             case PLAYER_CONNECTION -> "for a player";
             case MANUAL_COMMAND -> "by command";
             case ACTIVITY_TRACKER -> "after inactivity";
-            case STATUS_POLL -> "by a status check";
             case INTERNAL -> "by the proxy";
         };
     }

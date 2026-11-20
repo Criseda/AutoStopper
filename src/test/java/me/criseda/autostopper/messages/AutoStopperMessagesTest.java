@@ -250,14 +250,19 @@ class AutoStopperMessagesTest {
     void statusDetailHistoryCoversEveryOrigin() {
         Instant at = Instant.EPOCH;
         List<String> lines = AutoStopperMessages.statusDetailHistory(List.of(
-                new TelemetryRecord(TelemetryOperationType.STARTUP, "s", TelemetryOrigin.STATUS_POLL,
+                new TelemetryRecord(TelemetryOperationType.STARTUP, "s", TelemetryOrigin.PLAYER_CONNECTION,
                         TelemetryOutcome.READY, Duration.ZERO, 0, at),
+                new TelemetryRecord(TelemetryOperationType.AUTOMATIC_STOP, "s", TelemetryOrigin.ACTIVITY_TRACKER,
+                        TelemetryOutcome.STOPPED, Duration.ofSeconds(3), 0, at),
                 new TelemetryRecord(TelemetryOperationType.STARTUP, "s", TelemetryOrigin.INTERNAL,
                         TelemetryOutcome.PROXY_SHUTDOWN, Duration.ofMillis(800), 0, at)), at, false)
                 .stream().map(AutoStopperMessagesTest::plainText).toList();
 
-        assertEquals("    just now (1970-01-01T00:00:00Z) · Startup by a status check · READY · 0 ms", lines.get(1));
-        assertEquals("    just now (1970-01-01T00:00:00Z) · Startup by the proxy · PROXY_SHUTDOWN · 800 ms", lines.get(2));
+        assertEquals(4, lines.size(), "a header and one line per record; MANUAL_COMMAND is covered above");
+        assertEquals("    just now (1970-01-01T00:00:00Z) · Startup for a player · READY · 0 ms", lines.get(1));
+        assertEquals("    just now (1970-01-01T00:00:00Z) · Automatic stop after inactivity · STOPPED · 3s",
+                lines.get(2));
+        assertEquals("    just now (1970-01-01T00:00:00Z) · Startup by the proxy · PROXY_SHUTDOWN · 800 ms", lines.get(3));
     }
 
     @Test

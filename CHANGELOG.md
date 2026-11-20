@@ -24,6 +24,8 @@ All notable AutoStopper changes are documented here.
 - The `NO_MAPPING` telemetry outcome, its troubleshooting entry, and the "has no container mapping"
   player message. No code path produced them: a reload that removes a mapping during a startup
   ends it as `MAPPING_CHANGED`, as before (#162).
+- The `STATUS_POLL` telemetry origin. Status checks and preflight never start a lifecycle operation,
+  so no lifecycle log line carried it (#162).
 
 ## [2.3.2] - 2026-11-19
 

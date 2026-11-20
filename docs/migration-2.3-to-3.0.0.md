@@ -15,6 +15,7 @@ sidecar, or a socket mounted into Velocity), the upgrade is a drop-in JAR swap.
 | The `CLI_MISSING` Docker diagnostic. | Removed. | Update any log alerting that matches it. |
 | Each wake-up inspected the container twice: once to decide, and once more just before the start. | The start is sent directly after the first inspect. A container that is already running counts as started. | None. |
 | The `NO_MAPPING` telemetry outcome and the "has no container mapping" player message, documented for a reload that removed a mapping during a startup. | Removed. Nothing produced them: a reload that removes a mapping retires the startup, which ends as `MAPPING_CHANGED`. | Update any log alerting that matches `NO_MAPPING`. |
+| The `STATUS_POLL` telemetry `origin`, documented for operations started by status checks or preflight. | Removed. Status checks and preflight never start a lifecycle operation, so no record ever carried it. | Update any log parsing that lists the origins. |
 | The custom `docker-entrypoint.sh` pattern from the 2.2.0 examples. | No longer documented or tested. The CLI it installs is never used. | Move to the socket proxy (see the [2.2.0 to 2.3.0 guide](migration-2.2.0-to-2.3.0.md#moving-to-the-sidecar)), or keep the socket mount without the entrypoint (see [Direct socket mount](security.md#direct-socket-mount)). |
 
 ## Upgrade
