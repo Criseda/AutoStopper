@@ -198,6 +198,7 @@ status request, but only that backend is exercised directly.
 - [Troubleshooting](docs/troubleshooting.md) covers every failure outcome you can see in chat or logs
 - [Configuration reference](docs/configuration.md)
 - [Security guidance](docs/security.md)
+- [Migrating from 2.3.x to 3.0.0](docs/migration-2.3-to-3.0.0.md) (removes the Docker CLI backend)
 - [Migrating from 2.2.0 to 2.3.0](docs/migration-2.2.0-to-2.3.0.md) (drop-in; optional move to the
   socket proxy)
 - [Migrating from 1.1.2 to 2.0.0](docs/migration-1.1.2-to-2.0.0.md)

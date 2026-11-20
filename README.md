@@ -21,7 +21,7 @@
   <a href="#installation">Installation</a> ·
   <a href="docs/configuration.md">Configuration</a> ·
   <a href="docs/troubleshooting.md">Troubleshooting</a> ·
-  <a href="docs/migration-2.2.0-to-2.3.0.md">Migration</a> ·
+  <a href="docs/migration-2.3-to-3.0.0.md">Migration</a> ·
   <a href="docs/releasing.md">Releasing</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="CODE_OF_CONDUCT.md">Code of Conduct</a> ·
@@ -37,11 +37,13 @@ readiness, simultaneous players share one lifecycle operation, and all Docker wo
 Velocity's event and command workers.
 
 > [!IMPORTANT]
-> These instructions describe **AutoStopper 2.3.2**. Install only from the project's Modrinth or
+> These instructions describe **AutoStopper 3.0.0**. Install only from the project's Modrinth or
 > GitHub release pages; the examples install the pinned release from Modrinth, and a manually
-> downloaded JAR should be checked against its published SHA-256 checksum. Users of 2.2.0 can read
-> the [2.2.0 to 2.3.0 migration guide](docs/migration-2.2.0-to-2.3.0.md); users of 1.1.2 must
-> follow the complete [1.1.2 to 2.0.0 migration guide](docs/migration-1.1.2-to-2.0.0.md) first.
+> downloaded JAR should be checked against its published SHA-256 checksum. Users of 2.3.x should
+> read the [2.3.x to 3.0.0 migration guide](docs/migration-2.3-to-3.0.0.md), which removes the Docker
+> CLI backend; users of 2.2.0 should read the [2.2.0 to 2.3.0 guide](docs/migration-2.2.0-to-2.3.0.md)
+> first, and users of 1.1.2 must follow the complete
+> [1.1.2 to 2.0.0 migration guide](docs/migration-1.1.2-to-2.0.0.md) before either.
 
 ## Why AutoStopper?
 
@@ -142,7 +144,7 @@ services:
       VELOCITY_BUILD_ID: "30"
       # Installs AutoStopper from Modrinth at startup. MINECRAFT_VERSION only
       # selects the download (any version from 1.7.2 to 26.2 works).
-      MODRINTH_PROJECTS: "autostopper:2.3.2"
+      MODRINTH_PROJECTS: "autostopper:3.0.0"
       MINECRAFT_VERSION: "1.21.4"
     ports:
       - "25565:25577"
@@ -251,9 +253,11 @@ game or on the console, `/autostopper status` shows each server's state.
   from [GitHub Releases](https://github.com/Criseda/AutoStopper/releases) at
   `velocity_server/plugins/AutoStopper.jar`. Use one method only: with both, Velocity loads
   whichever copy it finds first and refuses the other.
-- **Upgrading from 2.2.0:** the JAR is a drop-in replacement, and the
-  [migration guide](docs/migration-2.2.0-to-2.3.0.md) shows how to move an entrypoint deployment to
-  the socket proxy. These steps need AutoStopper 2.3.0 or newer; for 2.2.0 or earlier, use the
+- **Upgrading from 2.3.x:** the JAR is a drop-in replacement unless you set `docker.backend: cli`
+  or reach Docker over `ssh://`, TLS, a Docker context, or a Windows named pipe; the
+  [3.0.0 migration guide](docs/migration-2.3-to-3.0.0.md) covers each case. From 2.2.0, the
+  [2.2.0 to 2.3.0 guide](docs/migration-2.2.0-to-2.3.0.md) shows how to move an entrypoint
+  deployment to the socket proxy; for 2.2.0 or earlier, use the
   [examples from that release](https://github.com/Criseda/AutoStopper/tree/2.2.0/examples).
 - **Something wrong?** See [troubleshooting](docs/troubleshooting.md).
 
