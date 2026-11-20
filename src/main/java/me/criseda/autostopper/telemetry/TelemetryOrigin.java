@@ -20,11 +20,6 @@ public enum TelemetryOrigin {
     ACTIVITY_TRACKER,
 
     /**
-     * Initiated by operational status polling or preflight diagnostics.
-     */
-    STATUS_POLL,
-
-    /**
      * Initiated by internal proxy lifecycle events such as reload or shutdown.
      */
     INTERNAL
