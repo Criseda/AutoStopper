@@ -20,10 +20,11 @@ time, and there is no separate paid or prioritized channel.
 ## Supported versions
 
 Only the current release is supported. That release is
-[2.3.2](https://github.com/Criseda/AutoStopper/releases/tag/2.3.2) at the time of writing; older
-releases, including 1.1.2, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0, and 2.3.1, are unsupported and receive no fixes. Users of 2.2.0 should read
-the [2.2.0 to 2.3.0 migration guide](docs/migration-2.2.0-to-2.3.0.md) (the JAR is a drop-in
-replacement); users of 1.1.2 must follow the [1.1.2 to 2.0.0 migration
+[3.0.0](https://github.com/Criseda/AutoStopper/releases/tag/3.0.0) at the time of writing; older
+releases, including 1.1.2, 2.0.0, 2.1.0, 2.1.1, 2.2.0, 2.3.0, 2.3.1, and 2.3.2, are unsupported and receive no fixes. Users of 2.3.x should read
+the [2.3.x to 3.0.0 migration guide](docs/migration-2.3-to-3.0.0.md), which removes the Docker CLI backend;
+users of 2.2.0 should read the [2.2.0 to 2.3.0 migration guide](docs/migration-2.2.0-to-2.3.0.md) first;
+users of 1.1.2 must follow the [1.1.2 to 2.0.0 migration
 guide](docs/migration-1.1.2-to-2.0.0.md) before replacing the artifact.
 
 Install only from the project's GitHub or Modrinth release pages and verify the published SHA-256

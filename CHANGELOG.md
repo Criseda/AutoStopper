@@ -4,6 +4,8 @@ All notable AutoStopper changes are documented here.
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-20
+
 ### Changed
 
 - With `endpoint: auto`, an `ssh://`, `npipe://` or TLS `DOCKER_HOST`, a selected Docker context, or
@@ -284,6 +286,7 @@ mappings, pinned examples, and Docker security boundary all require operator rev
 
 - Last 1.x migration source and prototype release tag.
 
+[3.0.0]: https://github.com/Criseda/AutoStopper/compare/2.3.2...3.0.0
 [2.3.2]: https://github.com/Criseda/AutoStopper/compare/2.3.1...2.3.2
 [2.3.1]: https://github.com/Criseda/AutoStopper/compare/2.3.0...2.3.1
 [2.3.0]: https://github.com/Criseda/AutoStopper/compare/2.2.0...2.3.0
