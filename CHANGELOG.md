@@ -16,6 +16,8 @@ All notable AutoStopper changes are documented here.
 
 ### Removed
 
+- The public `AutoStopperPlugin.getServer()`, `getLogger()` and `getServerManager()` methods. AutoStopper
+  never used them, and they were not a supported integration point (#162).
 - The Docker CLI backend, deprecated since 2.3.0. `docker.backend: cli` is now a configuration
   error, `auto` and `api` are accepted but have no effect, and the generated `config.yml` no longer
   contains the key. The `CLI_MISSING` Docker diagnostic is gone. The

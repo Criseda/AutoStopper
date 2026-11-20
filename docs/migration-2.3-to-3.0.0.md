@@ -55,6 +55,12 @@ Find the line that applies to you:
   tcp://localhost:2375 without TLS" and set `docker.endpoint: tcp://localhost:2375`. Anyone on
   the machine can then control Docker, so only do this on a single-user development machine.
 
+## Other plugins
+
+`AutoStopperPlugin` no longer has the public `getServer()`, `getLogger()` and `getServerManager()`
+methods. AutoStopper never used them, and they were never a supported API. A plugin that reached
+into AutoStopper through them should talk to Velocity or Docker directly instead.
+
 ## Rollback
 
 The 3.0.0 configuration also loads in 2.3.x, so going back is a JAR swap: restore the 2.3.2 JAR (or

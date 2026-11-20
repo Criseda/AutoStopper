@@ -38,7 +38,6 @@ public class AutoStopperPlugin {
     private final PluginContainer pluginContainer;
 
     private AutoStopperConfig config;
-    private ServerManager serverManager;
     private ActivityTracker activityTracker;
     private ServerLifecycleCoordinator lifecycleCoordinator;
     private AutoStopperExecutor executor;
@@ -69,7 +68,7 @@ public class AutoStopperPlugin {
 		// Initialize server management
 		this.telemetry = createTelemetryService();
 		this.executor = createExecutor();
-		this.serverManager = createServerManager(config, executor);
+		ServerManager serverManager = createServerManager(config, executor);
 		this.lifecycleCoordinator = createLifecycleCoordinator(serverManager, executor, telemetry);
 		this.operationalStatus = createOperationalStatusService(serverManager, lifecycleCoordinator);
 		
@@ -121,18 +120,6 @@ public class AutoStopperPlugin {
             }
 		}
 	}
-
-    public ProxyServer getServer() {
-        return server;
-    }
-
-    public Logger getLogger() {
-        return logger;
-    }
-
-    public ServerManager getServerManager() {
-        return serverManager;
-    }
 
     protected AutoStopperConfig createConfig() {
         return new AutoStopperConfig(dataDirectory, logger, name -> server.getServer(name).isPresent());
