@@ -26,7 +26,6 @@ import java.time.Instant;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -179,13 +178,8 @@ public final class ActivityTracker {
 
         // If no players are connected, check if the server is actually running
         long lifecycleRevision = lifecycleCoordinator.statusSnapshot(mapping).revision();
-        Optional<ContainerStatus> status = serverManager.getServerStatus(mapping);
-        if (status.isEmpty()) {
-            removeActivityIfUnchanged(serverName, activityAtScanStart);
-            return;
-        }
-
-        switch (status.get()) {
+        ContainerStatus status = serverManager.getServerStatus(mapping);
+        switch (status) {
             case STOPPED:
                 removeActivityIfUnchanged(serverName, activityAtScanStart);
                 // The container may have been stopped outside AutoStopper; a stale READY would
@@ -197,7 +191,7 @@ public final class ActivityTracker {
                 return;
             case INACCESSIBLE, TIMED_OUT, FAILED:
                 logger.warn("Server {} status is {}; retaining activity and skipping inactivity shutdown",
-                        serverName, status.get());
+                        serverName, status);
                 return;
             case RUNNING:
                 break;

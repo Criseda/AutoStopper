@@ -21,6 +21,9 @@ All notable AutoStopper changes are documented here.
   contains the key. The `CLI_MISSING` Docker diagnostic is gone. The
   [2.3.x to 3.0.0 migration guide](docs/migration-2.3-to-3.0.0.md) covers moving off the CLI
   backend and the custom entrypoint pattern (#146).
+- The `NO_MAPPING` telemetry outcome, its troubleshooting entry, and the "has no container mapping"
+  player message. No code path produced them: a reload that removes a mapping during a startup
+  ends it as `MAPPING_CHANGED`, as before (#162).
 
 ## [2.3.2] - 2026-11-19
 

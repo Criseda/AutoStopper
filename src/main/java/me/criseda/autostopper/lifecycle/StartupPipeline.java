@@ -16,7 +16,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
@@ -126,19 +125,13 @@ final class StartupPipeline {
     }
 
     private void onStatus(LifecycleEntry entry, ServerMapping mapping, CompletableFuture<StartupOutcome> operation,
-            Optional<ContainerStatus> status, Duration elapsed) {
+            ContainerStatus containerStatus, Duration elapsed) {
         TelemetryOperationType type = Stage.STATUS.telemetryType;
-        if (status == null) {
+        if (containerStatus == null) {
             recordStageFailure(entry, mapping, operation, type, TelemetryOutcome.STATUS_FAILED,
                     StartupOutcome.STATUS_ERROR, elapsed);
             return;
         }
-        if (status.isEmpty()) {
-            recordStageFailure(entry, mapping, operation, type, TelemetryOutcome.NO_MAPPING,
-                    StartupOutcome.STATUS_NO_MAPPING, elapsed);
-            return;
-        }
-        ContainerStatus containerStatus = status.get();
         telemetry.recordStage(type, mapping.serverName(), TelemetryOutcome.from(containerStatus), elapsed);
         switch (containerStatus) {
             case RUNNING -> launchReadiness(entry, mapping, operation, false);

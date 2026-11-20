@@ -9,7 +9,6 @@ import me.criseda.autostopper.telemetry.TelemetryOutcome;
 enum StartupOutcome {
     READY_RUNNING(true, ConnectionOutcome.CONNECTED),
     READY_AFTER_START(true, ConnectionOutcome.CONNECTED),
-    STATUS_NO_MAPPING(false, ConnectionOutcome.STATUS_FAILED),
     STATUS_MISSING(false, ConnectionOutcome.CONTAINER_MISSING),
     STATUS_INACCESSIBLE(false, ConnectionOutcome.DOCKER_INACCESSIBLE),
     STATUS_TIMED_OUT(false, ConnectionOutcome.STATUS_FAILED),
@@ -46,7 +45,6 @@ enum StartupOutcome {
     TelemetryOutcome toTelemetryOutcome() {
         return switch (this) {
             case READY_RUNNING, READY_AFTER_START -> TelemetryOutcome.READY;
-            case STATUS_NO_MAPPING -> TelemetryOutcome.NO_MAPPING;
             case STATUS_MISSING, START_MISSING -> TelemetryOutcome.CONTAINER_MISSING;
             case STATUS_INACCESSIBLE, START_INACCESSIBLE -> TelemetryOutcome.DOCKER_INACCESSIBLE;
             case STATUS_TIMED_OUT -> TelemetryOutcome.STATUS_TIMED_OUT;
@@ -63,7 +61,6 @@ enum StartupOutcome {
     ManualStartOutcome toManualStartOutcome() {
         return switch (this) {
             case READY_RUNNING, READY_AFTER_START -> ManualStartOutcome.READY;
-            case STATUS_NO_MAPPING -> ManualStartOutcome.MAPPING_CHANGED;
             case CANCELLED -> ManualStartOutcome.CANCELLED;
             case STATUS_MISSING, START_MISSING -> ManualStartOutcome.CONTAINER_MISSING;
             case STATUS_INACCESSIBLE, START_INACCESSIBLE -> ManualStartOutcome.DOCKER_INACCESSIBLE;
@@ -80,7 +77,6 @@ enum StartupOutcome {
     ManualRestartOutcome toManualRestartOutcome() {
         return switch (this) {
             case READY_RUNNING, READY_AFTER_START -> ManualRestartOutcome.RESTARTED_AND_READY;
-            case STATUS_NO_MAPPING -> ManualRestartOutcome.MAPPING_CHANGED;
             case CANCELLED -> ManualRestartOutcome.CANCELLED;
             case STATUS_MISSING, START_MISSING -> ManualRestartOutcome.CONTAINER_MISSING;
             case STATUS_INACCESSIBLE, START_INACCESSIBLE -> ManualRestartOutcome.DOCKER_INACCESSIBLE;
@@ -94,7 +90,6 @@ enum StartupOutcome {
 
     String failureDetail() {
         return switch (this) {
-            case STATUS_NO_MAPPING -> "no active container mapping";
             case STATUS_MISSING, START_MISSING -> "configured container does not exist";
             case STATUS_INACCESSIBLE, START_INACCESSIBLE -> "Docker is unavailable";
             case STATUS_TIMED_OUT, START_TIMED_OUT -> "Docker operation timed out";
@@ -109,7 +104,6 @@ enum StartupOutcome {
 
     String remediation() {
         return switch (this) {
-            case STATUS_NO_MAPPING -> "Reload a valid monitored server mapping.";
             case STATUS_MISSING, START_MISSING -> "Create the container or correct container_name, then retry.";
             case STATUS_INACCESSIBLE, START_INACCESSIBLE -> "Restore Docker daemon and socket access, then retry.";
             case STATUS_TIMED_OUT, START_TIMED_OUT -> "Check Docker daemon responsiveness and host load, then retry.";

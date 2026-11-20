@@ -293,13 +293,6 @@ Usually no action is needed; the player can retry once the other connection fini
 The player left the proxy before the server became ready or before the connection finished. No
 action is needed; the shared startup continues for any other waiting players.
 
-### NO_MAPPING
-
-The startup status check found no active container mapping for the server, usually because a reload
-removed it while the startup was queued. Players see a no-container-mapping message, and a manual
-start or restart reports [MAPPING_CHANGED](#mapping_changed). Confirm the server
-is still in `monitored_servers`, reload a valid configuration, then retry.
-
 ## Success and no-op outcomes
 
 These codes report success, a stage result, or a request that was already satisfied. No action is

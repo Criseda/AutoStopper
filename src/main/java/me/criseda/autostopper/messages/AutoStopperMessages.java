@@ -508,10 +508,6 @@ public final class AutoStopperMessages {
                 .append(Component.text("AutoStopper is overloaded right now; try again in a moment.", MessageTokens.FAILURE)));
     }
 
-    public static Component noContainerMapping(String serverName) {
-        return failure("Server ", serverName, " has no container mapping.");
-    }
-
     public static Component containerMissing(String serverName) {
         return failure("The container for server ", serverName, " does not exist.");
     }

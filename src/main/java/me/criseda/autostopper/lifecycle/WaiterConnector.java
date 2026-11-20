@@ -20,7 +20,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -208,7 +207,7 @@ final class WaiterConnector {
         if (runtime.isShutdown()) {
             return;
         }
-        CompletableFuture<Optional<ContainerStatus>> statusFuture;
+        CompletableFuture<ContainerStatus> statusFuture;
         try {
             statusFuture = Objects.requireNonNull(serverManager.getServerStatusAsync(mapping), "status future");
         } catch (RuntimeException error) {
@@ -216,7 +215,7 @@ final class WaiterConnector {
             return;
         }
         statusFuture.whenComplete((status, error) -> {
-            if (error != null || status == null || status.orElse(null) != ContainerStatus.STOPPED) {
+            if (error != null || status != ContainerStatus.STOPPED) {
                 return;
             }
             runtime.markStoppedIfUnchanged(mapping, expectedRevision).ifPresent(ignored -> logger.info(
